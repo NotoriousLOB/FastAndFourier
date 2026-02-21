@@ -15,9 +15,19 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdatomic.h>
 #include <dlfcn.h>
 #include <unistd.h>
 #include <sys/stat.h>
+
+/* JIT logging control */
+static int dspir_jit_verbose_level = 0;
+
+void dspir_jit_set_verbose(int level) {
+    dspir_jit_verbose_level = level;
+}
+
+#define JIT_LOG(...) do { if (dspir_jit_verbose_level) fprintf(stderr, __VA_ARGS__); } while(0)
 
 /* Platform-specific dynamic library extension */
 #ifdef __APPLE__
@@ -89,14 +99,19 @@ static int get_cache_dir(char *buf, size_t bufsize) {
 static void ensure_cache_dir(void) {
     char path[256];
     if (get_cache_dir(path, sizeof(path)) != 0) return;
-    
+
     /* Create directory if it doesn't exist (mkdir -p equivalent) */
     struct stat st;
     if (stat(path, &st) != 0) {
-        /* Try to create parent directory first */
+        /* Derive parent from cache path by trimming last component */
         char parent[256];
-        snprintf(parent, sizeof(parent), "%s/.cache", getenv("HOME"));
-        mkdir(parent, 0755);
+        strncpy(parent, path, sizeof(parent) - 1);
+        parent[sizeof(parent) - 1] = '\0';
+        char *last_slash = strrchr(parent, '/');
+        if (last_slash) {
+            *last_slash = '\0';
+            mkdir(parent, 0755);
+        }
         mkdir(path, 0755);
     }
 }
@@ -150,7 +165,7 @@ static int try_load_cached_kernel(dspir_jit_ctx *ctx, const dspir_transform *t, 
     
     ctx->from_cache = 1;
     ctx->c_path[0] = '\0';  /* No C source for cached kernels */
-    printf("[JIT] Loaded cached kernel: %s\n", ctx->so_path);
+    JIT_LOG("[JIT] Loaded cached kernel: %s\n", ctx->so_path);
     return 1;
 }
 
@@ -192,7 +207,7 @@ static void save_kernel_to_cache(dspir_jit_ctx *ctx, const dspir_transform *t, u
     
     fclose(src);
     fclose(dst);
-    printf("[JIT] Saved kernel to cache: %s\n", cached_so);
+    JIT_LOG("[JIT] Saved kernel to cache: %s\n", cached_so);
 }
 
 /**
@@ -247,170 +262,9 @@ static dspir_arch_type detect_arch(void) {
 #endif
 }
 
-/**
- * @brief Find best base size for mixed-radix decomposition
- * 
- * For large transforms, we decompose N = N1 * N2 and use a base kernel
- * of size N1, calling it N2 times. This dramatically reduces code size.
- * 
- * Returns 0 if no decomposition is beneficial (use full unroll)
- */
-static size_t find_best_base_size(size_t n) {
-    /* For small transforms, full unroll is faster */
-    if (n <= 256) {
-        return 0;  /* No decomposition - use full unroll */
-    }
-    
-    /* Prefer power-of-2 base sizes that divide n evenly */
-    /* Try sizes in order of preference (larger = fewer calls) */
-    size_t candidates[] = {256, 128, 64, 32, 16};
-    
-    for (size_t i = 0; i < sizeof(candidates)/sizeof(candidates[0]); i++) {
-        size_t base = candidates[i];
-        if (n % base == 0 && n / base >= 2) {
-            return base;  /* Found good decomposition */
-        }
-    }
-    
-    return 0;  /* No good decomposition found */
-}
-
-/**
- * @brief Generate inlined FFT kernel for small base size
- * 
- * This generates a static inline function that can be called
- * multiple times by the main kernel, avoiding code duplication.
- */
-static void emit_base_fft_kernel(FILE *f, size_t base_size, int use_simd, int inplace) {
-    const char *ptr = inplace ? "data" : "regs";
-    
-    fprintf(f, "/* Base FFT kernel for size %zu */\n", base_size);
-    fprintf(f, "static inline void fft_base_%zu(float *restrict %s, size_t offset, size_t stride) {\n", 
-            base_size, ptr);
-    fprintf(f, "    (void)offset; (void)stride;\n");
-    
-    /* Generate butterfly operations for base_size FFT */
-    /* This is a simplified radix-2 Cooley-Tukey */
-    size_t stages = 0;
-    size_t temp = base_size;
-    while (temp > 1) {
-        temp >>= 1;
-        stages++;
-    }
-    
-    /* For each stage */
-    for (size_t stage = 0; stage < stages; stage++) {
-        size_t butterfly_size = 1 << stage;  /* Distance between butterfly pairs */
-        size_t group_size = butterfly_size << 1;
-        size_t num_groups = base_size / group_size;
-        
-        fprintf(f, "    /* Stage %zu: butterfly size %zu */\n", stage, butterfly_size);
-        
-        /* Generate butterflies for this stage */
-        for (size_t g = 0; g < num_groups; g++) {
-            for (size_t b = 0; b < butterfly_size; b++) {
-                size_t idx0 = g * group_size + b;
-                size_t idx1 = idx0 + butterfly_size;
-                
-                /* Twiddle index for this butterfly */
-                size_t twiddle_idx = b * num_groups;
-                
-                if (stage == 0) {
-                    /* First stage: no twiddle multiplication needed (twiddle = 1) */
-                    fprintf(f, "    { /* BFLY2 %zu,%zu */\n", idx0, idx1);
-                    fprintf(f, "        float ar = %s[%zu], ai = %s[%zu];\n", 
-                            ptr, idx0 * 2, ptr, idx0 * 2 + 1);
-                    fprintf(f, "        float br = %s[%zu], bi = %s[%zu];\n", 
-                            ptr, idx1 * 2, ptr, idx1 * 2 + 1);
-                    fprintf(f, "        %s[%zu] = ar + br; %s[%zu] = ai + bi;\n", 
-                            ptr, idx0 * 2, ptr, idx0 * 2 + 1);
-                    fprintf(f, "        %s[%zu] = ar - br; %s[%zu] = ai - bi;\n", 
-                            ptr, idx1 * 2, ptr, idx1 * 2 + 1);
-                    fprintf(f, "    }\n");
-                } else {
-                    /* Later stages: include twiddle multiplication */
-                    fprintf(f, "    { /* BFLY2 %zu,%zu with twiddle %zu */\n", idx0, idx1, twiddle_idx);
-                    fprintf(f, "        float ar = %s[%zu], ai = %s[%zu];\n", 
-                            ptr, idx0 * 2, ptr, idx0 * 2 + 1);
-                    fprintf(f, "        float br = %s[%zu], bi = %s[%zu];\n", 
-                            ptr, idx1 * 2, ptr, idx1 * 2 + 1);
-                    fprintf(f, "        float wr = tw[%zu*2], wi = tw[%zu*2+1];\n", 
-                            twiddle_idx, twiddle_idx);
-                    fprintf(f, "        float t_re = br * wr - bi * wi;\n");
-                    fprintf(f, "        float t_im = br * wi + bi * wr;\n");
-                    fprintf(f, "        %s[%zu] = ar + t_re; %s[%zu] = ai + t_im;\n", 
-                            ptr, idx0 * 2, ptr, idx0 * 2 + 1);
-                    fprintf(f, "        %s[%zu] = ar - t_re; %s[%zu] = ai - t_im;\n", 
-                            ptr, idx1 * 2, ptr, idx1 * 2 + 1);
-                    fprintf(f, "    }\n");
-                }
-            }
-        }
-    }
-    
-    fprintf(f, "}\n\n");
-}
-
-/**
- * @brief Generate scalar C code for BFLY2 (interleaved complex)
- */
-static void emit_scalar_bfly2(FILE *f, uint8_t a0, uint8_t a1, int inplace) {
-    if (inplace) {
-        fprintf(f, "    {\n");
-        fprintf(f, "        float ar = data[%u], ai = data[%u];\n", a0 * 2, a0 * 2 + 1);
-        fprintf(f, "        float br = data[%u], bi = data[%u];\n", a1 * 2, a1 * 2 + 1);
-        fprintf(f, "        data[%u] = ar + br; data[%u] = ai + bi;\n", a0 * 2, a0 * 2 + 1);
-        fprintf(f, "        data[%u] = ar - br; data[%u] = ai - bi;\n", a1 * 2, a1 * 2 + 1);
-        fprintf(f, "    }\n");
-    } else {
-        fprintf(f, "    {\n");
-        fprintf(f, "        float ar = regs[%u], ai = regs[%u];\n", a0 * 2, a0 * 2 + 1);
-        fprintf(f, "        float br = regs[%u], bi = regs[%u];\n", a1 * 2, a1 * 2 + 1);
-        fprintf(f, "        regs[%u] = ar + br; regs[%u] = ai + bi;\n", a0 * 2, a0 * 2 + 1);
-        fprintf(f, "        regs[%u] = ar - br; regs[%u] = ai - bi;\n", a1 * 2, a1 * 2 + 1);
-        fprintf(f, "    }\n");
-    }
-}
-
-/**
- * @brief Generate NEON SIMD code for BFLY2 (2 complex butterflies at once)
- */
-static void emit_neon_bfly2(FILE *f, uint8_t a0, uint8_t a1, int inplace) {
-    /* 
-     * NEON optimized butterfly for 2 complex pairs:
-     * Load: [a0_r, a0_i, a1_r, a1_i] and [b0_r, b0_i, b1_r, b1_i]
-     * Result: [a0+b0, a1+b1] and [a0-b0, a1-b1]
-     */
-    const char *ptr = inplace ? "data" : "regs";
-    
-    fprintf(f, "    {\n");
-    fprintf(f, "        float32x2_t a = vld1_f32(&%s[%u]);\n", ptr, a0 * 2);
-    fprintf(f, "        float32x2_t b = vld1_f32(&%s[%u]);\n", ptr, a1 * 2);
-    fprintf(f, "        vst1_f32(&%s[%u], vadd_f32(a, b));\n", ptr, a0 * 2);
-    fprintf(f, "        vst1_f32(&%s[%u], vsub_f32(a, b));\n", ptr, a1 * 2);
-    fprintf(f, "    }\n");
-}
-
-/**
- * @brief Generate scalar C code for twiddle multiply
- */
-static void emit_scalar_twiddle_mul(FILE *f, uint8_t a0, uint8_t a1, int inplace) {
-    if (inplace) {
-        fprintf(f, "    {\n");
-        fprintf(f, "        float re = data[%u], im = data[%u];\n", a0 * 2, a0 * 2 + 1);
-        fprintf(f, "        float wr = tw[%u*2], wi = tw[%u*2+1];\n", a1, a1);
-        fprintf(f, "        data[%u] = re*wr - im*wi;\n", a0 * 2);
-        fprintf(f, "        data[%u] = re*wi + im*wr;\n", a0 * 2 + 1);
-        fprintf(f, "    }\n");
-    } else {
-        fprintf(f, "    {\n");
-        fprintf(f, "        float re = regs[%u], im = regs[%u];\n", a0 * 2, a0 * 2 + 1);
-        fprintf(f, "        float wr = tw[%u*2], wi = tw[%u*2+1];\n", a1, a1);
-        fprintf(f, "        regs[%u] = re*wr - im*wi;\n", a0 * 2);
-        fprintf(f, "        regs[%u] = re*wi + im*wr;\n", a0 * 2 + 1);
-        fprintf(f, "    }\n");
-    }
-}
+/* Dead code removed: find_best_base_size, emit_base_fft_kernel, emit_scalar_bfly2,
+ * emit_neon_bfly2, emit_scalar_twiddle_mul were never called from the live path.
+ * The live JIT path uses emit_split_bfly2() and emit_split_twiddle_mul(). */
 
 /**
  * @brief Generate split-plane BFLY2 (separate real/imag arrays)
@@ -495,80 +349,8 @@ static void emit_neon_split_twiddle_mul_f64(FILE *f, uint8_t base_idx) {
     fprintf(f, "    }\n");
 }
 
-/**
- * @brief Generate AVX-512 SIMD code for BFLY2 (16 complex butterflies at once)
- * 
- * Processes 16 complex elements (32 floats) in a single AVX-512 register pair.
- * This gives maximum throughput on x86_64 with AVX-512 support.
- */
-static void emit_avx512_bfly2(FILE *f, uint8_t base_idx, int inplace) {
-    const char *ptr = inplace ? "data" : "regs";
-    
-    fprintf(f, "    { /* AVX-512 BFLY2 batch at %u */\n", base_idx);
-    fprintf(f, "        __m512 ar = _mm512_load_ps(&%s[%u]);\n", ptr, base_idx * 2);
-    fprintf(f, "        __m512 ai = _mm512_load_ps(&%s[%u]);\n", ptr, base_idx * 2 + 16);
-    fprintf(f, "        __m512 br = _mm512_load_ps(&%s[%u]);\n", ptr, base_idx * 2 + 32);
-    fprintf(f, "        __m512 bi = _mm512_load_ps(&%s[%u]);\n", ptr, base_idx * 2 + 48);
-    fprintf(f, "        _mm512_store_ps(&%s[%u], _mm512_add_ps(ar, br));\n", ptr, base_idx * 2);
-    fprintf(f, "        _mm512_store_ps(&%s[%u], _mm512_add_ps(ai, bi));\n", ptr, base_idx * 2 + 16);
-    fprintf(f, "        _mm512_store_ps(&%s[%u], _mm512_sub_ps(ar, br));\n", ptr, base_idx * 2 + 32);
-    fprintf(f, "        _mm512_store_ps(&%s[%u], _mm512_sub_ps(ai, bi));\n", ptr, base_idx * 2 + 48);
-    fprintf(f, "    }\n");
-}
-
-/**
- * @brief Generate AVX-512 SIMD code for twiddle multiply
- * 
- * Uses AVX-512 FMA for complex multiplication:
- * (a + ib) * (c + id) = (ac - bd) + i(ad + bc)
- * Processes 16 complex values at once.
- */
-static void emit_avx512_twiddle_mul(FILE *f, uint8_t base_idx, int inplace) {
-    const char *ptr = inplace ? "data" : "regs";
-    
-    fprintf(f, "    { /* AVX-512 TWIDDLE_MUL batch at %u */\n", base_idx);
-    fprintf(f, "        __m512 r = _mm512_load_ps(&%s[%u]);\n", ptr, base_idx * 2);
-    fprintf(f, "        __m512 i = _mm512_load_ps(&%s[%u]);\n", ptr, base_idx * 2 + 16);
-    fprintf(f, "        __m512 wr = _mm512_load_ps(&tw[%u*2]);\n", base_idx);
-    fprintf(f, "        __m512 wi = _mm512_load_ps(&tw[%u*2+16]);\n", base_idx);
-    /* Complex multiply: (r + ii) * (wr + i*wi) = (r*wr - i*wi) + i(r*wi + i*wr) */
-    fprintf(f, "        __m512 t1 = _mm512_mul_ps(r, wr);\n");
-    fprintf(f, "        __m512 t2 = _mm512_fmsub_ps(i, wi, t1);\n");
-    fprintf(f, "        __m512 t3 = _mm512_mul_ps(r, wi);\n");
-    fprintf(f, "        __m512 t4 = _mm512_fmadd_ps(i, wr, t3);\n");
-    fprintf(f, "        _mm512_store_ps(&%s[%u], t2);\n", ptr, base_idx * 2);
-    fprintf(f, "        _mm512_store_ps(&%s[%u], t4);\n", ptr, base_idx * 2 + 16);
-    fprintf(f, "    }\n");
-}
-
-/**
- * @brief Generate NEON SIMD code for twiddle multiply
- * 
- * Uses NEON complex multiplication:
-     * (a + ib) * (c + id) = (ac - bd) + i(ad + bc)
- * Can process 2 complex values at once with float32x4_t
- */
-static void emit_neon_twiddle_mul(FILE *f, uint8_t a0, uint8_t a1, int inplace) {
-    const char *ptr = inplace ? "data" : "regs";
-    
-    /* 
-     * NEON complex multiply:
-     * Let v = [re, im, x, x] (we only use first 2 elements)
-     * Let w = [wr, wi, x, x] (twiddle)
-     * 
-     * result_real = re*wr - im*wi
-     * result_imag = re*wi + im*wr
-     */
-    fprintf(f, "    {\n");
-    fprintf(f, "        float32x2_t v = vld1_f32(&%s[%u]);\n", ptr, a0 * 2);
-    fprintf(f, "        float wr = tw[%u*2], wi = tw[%u*2+1];\n", a1, a1);
-    fprintf(f, "        float re = vget_lane_f32(v, 0), im = vget_lane_f32(v, 1);\n");
-    fprintf(f, "        float32x2_t r;\n");
-    fprintf(f, "        r = vset_lane_f32(re*wr - im*wi, r, 0);\n");
-    fprintf(f, "        r = vset_lane_f32(re*wi + im*wr, r, 1);\n");
-    fprintf(f, "        vst1_f32(&%s[%u], r);\n", ptr, a0 * 2);
-    fprintf(f, "    }\n");
-}
+/* Dead code removed: emit_avx512_bfly2, emit_avx512_twiddle_mul, emit_neon_twiddle_mul
+ * were never called from dspir_jit_generate_c_ex(). The live path uses split-plane emitters. */
 
 /**
  * @brief Generate C source code from IR with SIMD and in-place support
@@ -924,9 +706,9 @@ int dspir_jit_compile_ex(dspir_jit_ctx *ctx, dspir_transform *t, uint32_t flags)
     /* Detect architecture */
     dspir_arch_type arch = detect_arch();
     
-    /* Generate unique temp file names */
-    static int counter = 0;
-    int id = counter++;
+    /* Generate unique temp file names (thread-safe) */
+    static _Atomic int counter = 0;
+    int id = atomic_fetch_add(&counter, 1);
     snprintf(ctx->c_path, sizeof(ctx->c_path), "/tmp/dspir_jit_%d_%d.c", getpid(), id);
     snprintf(ctx->so_path, sizeof(ctx->so_path), "/tmp/dspir_jit_%d_%d%s", getpid(), id, DSPIR_SO_EXT);
     
@@ -936,16 +718,16 @@ int dspir_jit_compile_ex(dspir_jit_ctx *ctx, dspir_transform *t, uint32_t flags)
     /* Get file size for debugging */
     struct stat st;
     if (stat(ctx->c_path, &st) == 0) {
-        printf("[JIT] Generated C source: %.1f KB\n", st.st_size / 1024.0);
+        JIT_LOG("[JIT] Generated C source: %.1f KB\n", st.st_size / 1024.0);
     }
     
     /* Compile to shared library */
-    printf("[JIT] Compiling (this may take a moment)...\n");
+    JIT_LOG("[JIT] Compiling (this may take a moment)...\n");
     if (dspir_jit_compile_c(ctx, ctx->c_path, ctx->so_path, arch, flags) != 0) {
         fprintf(stderr, "[JIT] Compilation failed\n");
         return -1;
     }
-    printf("[JIT] Compilation successful\n");
+    JIT_LOG("[JIT] Compilation successful\n");
     
     /* Load the compiled library */
     ctx->handle = dlopen(ctx->so_path, RTLD_NOW | RTLD_LOCAL);

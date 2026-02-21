@@ -25,6 +25,53 @@
 #define DSPIR_STACK_THRESHOLD (256 * 1024)  /* 256KB */
 
 /**
+ * @brief Compute maximum register index used by a transform
+ * 
+ * Scans all instructions to find the highest register index referenced.
+ * This allows allocating only the register file space actually needed.
+ */
+static size_t compute_max_registers(const dspir_transform *t) {
+    size_t max_reg = 0;
+    
+    for (size_t i = 0; i < t->n_inst; i++) {
+        const dspir_inst *inst = &t->code[i];
+        uint8_t op = DSPIR_GET_OP(inst->packed);
+        
+        /* Skip NOP and END */
+        if (op == DSPIR_NOP || op == DSPIR_END) continue;
+        
+        /* Check a0, a1, a2 based on opcode type */
+        if (inst->a0 > max_reg) max_reg = inst->a0;
+        
+        /* For opcodes that use a1 as register index */
+        if (op != DSPIR_LOAD_CONST && op != DSPIR_FFT_STAGE && 
+            op != DSPIR_DCT_STAGE && op != DSPIR_DST_STAGE) {
+            if (inst->a1 > max_reg) max_reg = inst->a1;
+        }
+        
+        /* For opcodes that use a2 */
+        if (op == DSPIR_FMA || op == DSPIR_FMUL || op == DSPIR_FADD || 
+            op == DSPIR_FSUB || op == DSPIR_POLY_FIR || op == DSPIR_POLY_IIR) {
+            if (inst->a2 > max_reg) max_reg = inst->a2;
+        }
+    }
+    
+    /* Add padding for complex operations and alignment */
+    /* For interleaved layout, we need 2 * (max_reg + 1) entries */
+    /* Round up to multiple of 64 for cache line alignment */
+    size_t num_regs = (max_reg + 1) * 2;
+    num_regs = (num_regs + 63) & ~63;  /* Align to 64 */
+    
+    /* Minimum size for small transforms */
+    if (num_regs < 64) num_regs = 64;
+    
+    /* Cap at maximum to prevent overflow */
+    if (num_regs > DSPIR_MAX_REGISTERS) num_regs = DSPIR_MAX_REGISTERS;
+    
+    return num_regs;
+}
+
+/**
  * @brief Allocate aligned memory for register file
  * 
  * For small transforms, uses stack allocation.
@@ -81,10 +128,11 @@ int dspir_vm_execute_f32(const dspir_transform *t,
     #undef DT_END_224
 #endif
 
-    /* Register file - heap allocated for large transforms */
-    float *regs = (float*)alloc_regs(DSPIR_MAX_REGISTERS * sizeof(float));
+    /* Compute and allocate register file based on actual transform needs */
+    size_t num_regs = compute_max_registers(t);
+    float *regs = (float*)alloc_regs(num_regs * sizeof(float));
     if (!regs) return -1;
-    memset(regs, 0, DSPIR_MAX_REGISTERS * sizeof(float));
+    memset(regs, 0, num_regs * sizeof(float));
     
     /* Twiddle pointer - may be NULL for transforms that don't need twiddles */
     const float *tw = (const float *)t->twiddles[0];
@@ -214,31 +262,33 @@ label_BFLY4:
     case DSPIR_BFLY4:
 #endif
         {
-            /* Radix-4 butterfly for complex data */
-            /* Input: r0,r1,r2,r3 (real), r4,r5,r6,r7 (imag) */
-            /* Output: Same registers, transformed */
+            /* Radix-4 butterfly for complex data
+             * Register file is interleaved: regs[2*i]=real, regs[2*i+1]=imag
+             * a0 = base register index (complex element index)
+             * Operates on 4 consecutive complex elements at base, base+1, base+2, base+3
+             */
             uint32_t base = inst->a0;
-            if (base + 7 < DSPIR_MAX_REGISTERS) {
-                float r0 = regs[base],     i0 = regs[base + 4];
-                float r1 = regs[base + 1], i1 = regs[base + 5];
-                float r2 = regs[base + 2], i2 = regs[base + 6];
-                float r3 = regs[base + 3], i3 = regs[base + 7];
-                
+            if (base * 2 + 7 < DSPIR_MAX_REGISTERS) {
+                float r0 = regs[base * 2],     i0 = regs[base * 2 + 1];
+                float r1 = regs[base * 2 + 2], i1 = regs[base * 2 + 3];
+                float r2 = regs[base * 2 + 4], i2 = regs[base * 2 + 5];
+                float r3 = regs[base * 2 + 6], i3 = regs[base * 2 + 7];
+
                 /* Stage 1: Two radix-2 butterflies */
                 float t0r = r0 + r2, t0i = i0 + i2;
                 float t1r = r0 - r2, t1i = i0 - i2;
                 float t2r = r1 + r3, t2i = i1 + i3;
                 float t3r = r1 - r3, t3i = i1 - i3;
-                
+
                 /* Stage 2: Final butterfly with twiddle (j multiplication) */
-                regs[base]     = t0r + t2r;
-                regs[base + 4] = t0i + t2i;
-                regs[base + 1] = t1r + t3i;  /* t3 * j */
-                regs[base + 5] = t1i - t3r;
-                regs[base + 2] = t0r - t2r;
-                regs[base + 6] = t0i - t2i;
-                regs[base + 3] = t1r - t3i;
-                regs[base + 7] = t1i + t3r;
+                regs[base * 2]     = t0r + t2r;
+                regs[base * 2 + 1] = t0i + t2i;
+                regs[base * 2 + 2] = t1r + t3i;  /* t3 * j */
+                regs[base * 2 + 3] = t1i - t3r;
+                regs[base * 2 + 4] = t0r - t2r;
+                regs[base * 2 + 5] = t0i - t2i;
+                regs[base * 2 + 6] = t1r - t3i;
+                regs[base * 2 + 7] = t1i + t3r;
             }
         }
         DISPATCH();
@@ -249,38 +299,38 @@ label_BFLY8:
     case DSPIR_BFLY8:
 #endif
         {
-            /* Radix-8 butterfly - more efficient for larger FFTs */
+            /* Radix-8 butterfly for complex data
+             * Register file is interleaved: regs[2*i]=real, regs[2*i+1]=imag
+             * a0 = base register index (complex element index)
+             * Operates on 8 consecutive complex elements
+             */
             uint32_t base = inst->a0;
-            if (base + 15 < DSPIR_MAX_REGISTERS) {
-                /* Load 8 complex values */
-                float r[8], i[8];
+            if (base * 2 + 15 < DSPIR_MAX_REGISTERS) {
+                /* Load 8 complex values from interleaved layout */
+                float r[8], im[8];
                 for (int k = 0; k < 8; k++) {
-                    r[k] = regs[base + k];
-                    i[k] = regs[base + k + 8];
+                    r[k]  = regs[base * 2 + 2 * k];
+                    im[k] = regs[base * 2 + 2 * k + 1];
                 }
-                
+
                 /* 8-point DFT using Cooley-Tukey */
                 /* Stage 1: 4 radix-2 butterflies */
                 float s1r[8], s1i[8];
                 for (int k = 0; k < 4; k++) {
                     s1r[k]     = r[k] + r[k + 4];
-                    s1i[k]     = i[k] + i[k + 4];
+                    s1i[k]     = im[k] + im[k + 4];
                     s1r[k + 4] = r[k] - r[k + 4];
-                    s1i[k + 4] = i[k] - i[k + 4];
+                    s1i[k + 4] = im[k] - im[k + 4];
                 }
-                
+
                 /* Stage 2: 2 radix-4 butterflies with twiddles */
                 float s2r[8], s2i[8];
                 /* First radix-4 (no twiddle) */
-                s2r[0] = s1r[0] + s1r[2];
-                s2i[0] = s1i[0] + s1i[2];
-                s2r[1] = s1r[1] + s1i[3];
-                s2i[1] = s1i[1] - s1r[3];
-                s2r[2] = s1r[0] - s1r[2];
-                s2i[2] = s1i[0] - s1i[2];
-                s2r[3] = s1r[1] - s1i[3];
-                s2i[3] = s1i[1] + s1r[3];
-                
+                s2r[0] = s1r[0] + s1r[2]; s2i[0] = s1i[0] + s1i[2];
+                s2r[1] = s1r[1] + s1i[3]; s2i[1] = s1i[1] - s1r[3];
+                s2r[2] = s1r[0] - s1r[2]; s2i[2] = s1i[0] - s1i[2];
+                s2r[3] = s1r[1] - s1i[3]; s2i[3] = s1i[1] + s1r[3];
+
                 /* Second radix-4 (with W_8 twiddles) */
                 const float c = 0.7071067811865476f; /* cos(pi/4) */
                 float t4r = c * (s1r[4] + s1i[4]);
@@ -291,22 +341,18 @@ label_BFLY8:
                 float t6i = -c * (s1r[6] + s1i[6]);
                 float t7r = s1r[7];
                 float t7i = s1i[7];
-                
-                s2r[4] = t4r + t6r;
-                s2i[4] = t4i + t6i;
-                s2r[5] = t5r + t7i;
-                s2i[5] = t5i - t7r;
-                s2r[6] = t4r - t6r;
-                s2i[6] = t4i - t6i;
-                s2r[7] = t5r - t7i;
-                s2i[7] = t5i + t7r;
-                
-                /* Stage 3: Final combination */
+
+                s2r[4] = t4r + t6r; s2i[4] = t4i + t6i;
+                s2r[5] = t5r + t7i; s2i[5] = t5i - t7r;
+                s2r[6] = t4r - t6r; s2i[6] = t4i - t6i;
+                s2r[7] = t5r - t7i; s2i[7] = t5i + t7r;
+
+                /* Stage 3: Final combination — write back interleaved */
                 for (int k = 0; k < 4; k++) {
-                    regs[base + 2*k]     = s2r[k] + s2r[k + 4];
-                    regs[base + 2*k + 1] = s2r[k] - s2r[k + 4];
-                    regs[base + 2*k + 8] = s2i[k] + s2i[k + 4];
-                    regs[base + 2*k + 9] = s2i[k] - s2i[k + 4];
+                    regs[base * 2 + 4 * k]     = s2r[k] + s2r[k + 4];
+                    regs[base * 2 + 4 * k + 1] = s2i[k] + s2i[k + 4];
+                    regs[base * 2 + 4 * k + 2] = s2r[k] - s2r[k + 4];
+                    regs[base * 2 + 4 * k + 3] = s2i[k] - s2i[k + 4];
                 }
             }
         }
@@ -405,36 +451,42 @@ label_FFT_STAGE:
     case DSPIR_FFT_STAGE:
 #endif
         {
-            /* Execute complete FFT stage */
+            /* Execute complete FFT stage with complex butterflies
+             * Register file is interleaved: regs[2*i]=real, regs[2*i+1]=imag
+             */
             size_t radix = inst->a0;
             size_t stride = inst->a1;
             size_t tw_base = inst->a2;
             size_t ngroups = t->n / (radix * stride);
-            
+
             for (size_t g = 0; g < ngroups; g++) {
                 size_t base = g * radix * stride;
-                
-                /* Load inputs */
-                float *rgroup = &regs[base];
-                
-                /* Apply butterflies with twiddle factors */
+
                 for (size_t r = 0; r < radix / 2; r++) {
-                    size_t idx1 = r * stride;
-                    size_t idx2 = (r + radix / 2) * stride;
-                    
-                    float a = rgroup[idx1];
-                    float b = rgroup[idx2];
-                    
-                    if (tw_base + r < t->twiddle_sizes[0] / 2) {
+                    size_t idx1 = base + r * stride;
+                    size_t idx2 = base + (r + radix / 2) * stride;
+
+                    /* Read complex values from interleaved layout */
+                    float ar = regs[idx1 * 2];
+                    float ai = regs[idx1 * 2 + 1];
+                    float br = regs[idx2 * 2];
+                    float bi = regs[idx2 * 2 + 1];
+
+                    if (tw && tw_base + r < t->twiddle_sizes[0]) {
                         float wr = tw[(tw_base + r) * 2];
                         float wi = tw[(tw_base + r) * 2 + 1];
-                        float br = b * wr;
-                        float bi = b * wi;
-                        rgroup[idx1] = a + br;
-                        rgroup[idx2] = a - br;
+                        /* Complex multiply: (br + i*bi) * (wr + i*wi) */
+                        float tw_re = br * wr - bi * wi;
+                        float tw_im = br * wi + bi * wr;
+                        regs[idx1 * 2]     = ar + tw_re;
+                        regs[idx1 * 2 + 1] = ai + tw_im;
+                        regs[idx2 * 2]     = ar - tw_re;
+                        regs[idx2 * 2 + 1] = ai - tw_im;
                     } else {
-                        rgroup[idx1] = a + b;
-                        rgroup[idx2] = a - b;
+                        regs[idx1 * 2]     = ar + br;
+                        regs[idx1 * 2 + 1] = ai + bi;
+                        regs[idx2 * 2]     = ar - br;
+                        regs[idx2 * 2 + 1] = ai - bi;
                     }
                 }
             }
@@ -471,19 +523,19 @@ label_DST_STAGE:
     case DSPIR_DST_STAGE:
 #endif
         {
-            /* DST stage */
+            /* DST stage — differs from DCT by negated twiddle for alternating elements */
             size_t stride = inst->a1;
             size_t nstage = t->n / stride;
-            
+
             for (size_t i = 0; i < nstage / 2; i++) {
                 size_t j = nstage - 1 - i;
                 if (i * stride < DSPIR_MAX_REGISTERS && j * stride < DSPIR_MAX_REGISTERS) {
                     float a = regs[i * stride];
                     float b = regs[j * stride];
-                    
-                    /* DST-II butterfly */
+
+                    /* DST-II butterfly — negate twiddle for sine basis */
                     regs[i * stride] = a + b;
-                    regs[j * stride] = (a - b) * tw[i];
+                    regs[j * stride] = (a - b) * (-tw[i]);
                 }
             }
         }
@@ -770,10 +822,11 @@ int dspir_vm_execute_f64(const dspir_transform *t,
     if (!t || !out || !in) return -1;
     if (!t->code || t->n_inst == 0) return -1;
     
-    /* Register file - heap allocated for large transforms */
-    double *regs = (double*)alloc_regs(DSPIR_MAX_REGISTERS * sizeof(double));
+    /* Compute and allocate register file based on actual transform needs */
+    size_t num_regs = compute_max_registers(t);
+    double *regs = (double*)alloc_regs(num_regs * sizeof(double));
     if (!regs) return -1;
-    memset(regs, 0, DSPIR_MAX_REGISTERS * sizeof(double));
+    memset(regs, 0, num_regs * sizeof(double));
     
     const double *tw = (const double *)t->twiddles[0];
     
@@ -821,40 +874,40 @@ int dspir_vm_execute_f64(const dspir_transform *t,
             }
             case DSPIR_BFLY4: {
                 uint32_t base = inst->a0;
-                if (base + 7 < DSPIR_MAX_REGISTERS) {
-                    double r0 = regs[base],     i0 = regs[base + 4];
-                    double r1 = regs[base + 1], i1 = regs[base + 5];
-                    double r2 = regs[base + 2], i2 = regs[base + 6];
-                    double r3 = regs[base + 3], i3 = regs[base + 7];
+                if (base * 2 + 7 < DSPIR_MAX_REGISTERS) {
+                    double r0 = regs[base * 2],     i0 = regs[base * 2 + 1];
+                    double r1 = regs[base * 2 + 2], i1 = regs[base * 2 + 3];
+                    double r2 = regs[base * 2 + 4], i2 = regs[base * 2 + 5];
+                    double r3 = regs[base * 2 + 6], i3 = regs[base * 2 + 7];
                     double t0r = r0 + r2, t0i = i0 + i2;
                     double t1r = r0 - r2, t1i = i0 - i2;
                     double t2r = r1 + r3, t2i = i1 + i3;
                     double t3r = r1 - r3, t3i = i1 - i3;
-                    regs[base]     = t0r + t2r;
-                    regs[base + 4] = t0i + t2i;
-                    regs[base + 1] = t1r + t3i;
-                    regs[base + 5] = t1i - t3r;
-                    regs[base + 2] = t0r - t2r;
-                    regs[base + 6] = t0i - t2i;
-                    regs[base + 3] = t1r - t3i;
-                    regs[base + 7] = t1i + t3r;
+                    regs[base * 2]     = t0r + t2r;
+                    regs[base * 2 + 1] = t0i + t2i;
+                    regs[base * 2 + 2] = t1r + t3i;
+                    regs[base * 2 + 3] = t1i - t3r;
+                    regs[base * 2 + 4] = t0r - t2r;
+                    regs[base * 2 + 5] = t0i - t2i;
+                    regs[base * 2 + 6] = t1r - t3i;
+                    regs[base * 2 + 7] = t1i + t3r;
                 }
                 break;
             }
             case DSPIR_BFLY8: {
                 uint32_t base = inst->a0;
-                if (base + 15 < DSPIR_MAX_REGISTERS) {
-                    double r[8], i[8];
+                if (base * 2 + 15 < DSPIR_MAX_REGISTERS) {
+                    double r[8], im[8];
                     for (int k = 0; k < 8; k++) {
-                        r[k] = regs[base + k];
-                        i[k] = regs[base + k + 8];
+                        r[k]  = regs[base * 2 + 2 * k];
+                        im[k] = regs[base * 2 + 2 * k + 1];
                     }
                     double s1r[8], s1i[8];
                     for (int k = 0; k < 4; k++) {
                         s1r[k]     = r[k] + r[k + 4];
-                        s1i[k]     = i[k] + i[k + 4];
+                        s1i[k]     = im[k] + im[k + 4];
                         s1r[k + 4] = r[k] - r[k + 4];
-                        s1i[k + 4] = i[k] - i[k + 4];
+                        s1i[k + 4] = im[k] - im[k + 4];
                     }
                     double s2r[8], s2i[8];
                     s2r[0] = s1r[0] + s1r[2]; s2i[0] = s1i[0] + s1i[2];
@@ -875,10 +928,10 @@ int dspir_vm_execute_f64(const dspir_transform *t,
                     s2r[6] = t4r - t6r; s2i[6] = t4i - t6i;
                     s2r[7] = t5r - t7i; s2i[7] = t5i + t7r;
                     for (int k = 0; k < 4; k++) {
-                        regs[base + 2*k]     = s2r[k] + s2r[k + 4];
-                        regs[base + 2*k + 1] = s2r[k] - s2r[k + 4];
-                        regs[base + 2*k + 8] = s2i[k] + s2i[k + 4];
-                        regs[base + 2*k + 9] = s2i[k] - s2i[k + 4];
+                        regs[base * 2 + 4 * k]     = s2r[k] + s2r[k + 4];
+                        regs[base * 2 + 4 * k + 1] = s2i[k] + s2i[k + 4];
+                        regs[base * 2 + 4 * k + 2] = s2r[k] - s2r[k + 4];
+                        regs[base * 2 + 4 * k + 3] = s2i[k] - s2i[k + 4];
                     }
                 }
                 break;
@@ -1002,10 +1055,12 @@ int dspir_execute_split_f32(const dspir_transform *t,
         uint8_t op = DSPIR_GET_OP(inst->packed);
         
         switch (op) {
+            case DSPIR_NOP:
+                break;
             case DSPIR_LOAD: {
                 size_t in_idx = inst->a1;
                 size_t reg_idx = inst->a0;
-                if (reg_idx < t->n) {
+                if (reg_idx < t->n && in_idx < t->n) {
                     regs_re[reg_idx] = in_re[in_idx];
                     regs_im[reg_idx] = in_im[in_idx];
                 }
@@ -1020,6 +1075,14 @@ int dspir_execute_split_f32(const dspir_transform *t,
                 }
                 break;
             }
+            case DSPIR_LOAD_CONST: {
+                if (inst->a0 < t->n) {
+                    union { uint32_t u; float f; } caster;
+                    caster.u = inst->a1;
+                    regs_re[inst->a0] = caster.f;
+                }
+                break;
+            }
             case DSPIR_BFLY2: {
                 uint32_t a0 = inst->a0;
                 uint32_t a1 = inst->a1;
@@ -1031,14 +1094,179 @@ int dspir_execute_split_f32(const dspir_transform *t,
                 }
                 break;
             }
+            case DSPIR_BFLY4: {
+                uint32_t base = inst->a0;
+                if (base + 3 < t->n) {
+                    float r0 = regs_re[base],     i0 = regs_im[base];
+                    float r1 = regs_re[base + 1], i1 = regs_im[base + 1];
+                    float r2 = regs_re[base + 2], i2 = regs_im[base + 2];
+                    float r3 = regs_re[base + 3], i3 = regs_im[base + 3];
+                    float t0r = r0 + r2, t0i = i0 + i2;
+                    float t1r = r0 - r2, t1i = i0 - i2;
+                    float t2r = r1 + r3, t2i = i1 + i3;
+                    float t3r = r1 - r3, t3i = i1 - i3;
+                    regs_re[base]     = t0r + t2r; regs_im[base]     = t0i + t2i;
+                    regs_re[base + 1] = t1r + t3i; regs_im[base + 1] = t1i - t3r;
+                    regs_re[base + 2] = t0r - t2r; regs_im[base + 2] = t0i - t2i;
+                    regs_re[base + 3] = t1r - t3i; regs_im[base + 3] = t1i + t3r;
+                }
+                break;
+            }
+            case DSPIR_BFLY8: {
+                uint32_t base = inst->a0;
+                if (base + 7 < t->n) {
+                    float r[8], im[8];
+                    for (int k = 0; k < 8; k++) {
+                        r[k]  = regs_re[base + k];
+                        im[k] = regs_im[base + k];
+                    }
+                    float s1r[8], s1i[8];
+                    for (int k = 0; k < 4; k++) {
+                        s1r[k]     = r[k] + r[k + 4]; s1i[k]     = im[k] + im[k + 4];
+                        s1r[k + 4] = r[k] - r[k + 4]; s1i[k + 4] = im[k] - im[k + 4];
+                    }
+                    float s2r[8], s2i[8];
+                    s2r[0] = s1r[0] + s1r[2]; s2i[0] = s1i[0] + s1i[2];
+                    s2r[1] = s1r[1] + s1i[3]; s2i[1] = s1i[1] - s1r[3];
+                    s2r[2] = s1r[0] - s1r[2]; s2i[2] = s1i[0] - s1i[2];
+                    s2r[3] = s1r[1] - s1i[3]; s2i[3] = s1i[1] + s1r[3];
+                    const float c = 0.7071067811865476f;
+                    float t4r = c * (s1r[4] + s1i[4]), t4i = c * (s1i[4] - s1r[4]);
+                    float t5r = -s1i[5], t5i = s1r[5];
+                    float t6r = c * (s1i[6] - s1r[6]), t6i = -c * (s1r[6] + s1i[6]);
+                    float t7r = s1r[7], t7i = s1i[7];
+                    s2r[4] = t4r + t6r; s2i[4] = t4i + t6i;
+                    s2r[5] = t5r + t7i; s2i[5] = t5i - t7r;
+                    s2r[6] = t4r - t6r; s2i[6] = t4i - t6i;
+                    s2r[7] = t5r - t7i; s2i[7] = t5i + t7r;
+                    for (int k = 0; k < 4; k++) {
+                        regs_re[base + 2*k]     = s2r[k] + s2r[k + 4];
+                        regs_im[base + 2*k]     = s2i[k] + s2i[k + 4];
+                        regs_re[base + 2*k + 1] = s2r[k] - s2r[k + 4];
+                        regs_im[base + 2*k + 1] = s2i[k] - s2i[k + 4];
+                    }
+                }
+                break;
+            }
             case DSPIR_TWIDDLE_MUL: {
                 uint32_t a0 = inst->a0;
                 uint32_t a1 = inst->a1;
-                if (a0 < t->n && a1 < t->n) {
+                if (a0 < t->n && tw) {
                     float r = regs_re[a0], i = regs_im[a0];
                     float wr = tw[a1 * 2], wi = tw[a1 * 2 + 1];
                     regs_re[a0] = r * wr - i * wi;
                     regs_im[a0] = r * wi + i * wr;
+                }
+                break;
+            }
+            case DSPIR_TWIDDLE_MUL_CONJ: {
+                uint32_t a0 = inst->a0;
+                uint32_t a1 = inst->a1;
+                if (a0 < t->n && tw) {
+                    float r = regs_re[a0], i = regs_im[a0];
+                    float wr = tw[a1 * 2], wi = -tw[a1 * 2 + 1];
+                    regs_re[a0] = r * wr - i * wi;
+                    regs_im[a0] = r * wi + i * wr;
+                }
+                break;
+            }
+            case DSPIR_FMA:
+                if (inst->a0 < t->n && inst->a1 < t->n && inst->a2 < t->n)
+                    regs_re[inst->a0] = regs_re[inst->a0] * regs_re[inst->a1] + regs_re[inst->a2];
+                break;
+            case DSPIR_FMUL:
+                if (inst->a0 < t->n && inst->a1 < t->n && inst->a2 < t->n)
+                    regs_re[inst->a0] = regs_re[inst->a1] * regs_re[inst->a2];
+                break;
+            case DSPIR_FADD:
+                if (inst->a0 < t->n && inst->a1 < t->n && inst->a2 < t->n)
+                    regs_re[inst->a0] = regs_re[inst->a1] + regs_re[inst->a2];
+                break;
+            case DSPIR_FSUB:
+                if (inst->a0 < t->n && inst->a1 < t->n && inst->a2 < t->n)
+                    regs_re[inst->a0] = regs_re[inst->a1] - regs_re[inst->a2];
+                break;
+            case DSPIR_BARRIER:
+                __asm__ volatile("" ::: "memory");
+                break;
+            case DSPIR_FFT_STAGE: {
+                size_t radix = inst->a0;
+                size_t stride = inst->a1;
+                size_t tw_base = inst->a2;
+                size_t ngroups = t->n / (radix * stride);
+                for (size_t g = 0; g < ngroups; g++) {
+                    size_t gbase = g * radix * stride;
+                    for (size_t r = 0; r < radix / 2; r++) {
+                        size_t idx1 = gbase + r * stride;
+                        size_t idx2 = gbase + (r + radix / 2) * stride;
+                        if (idx1 < t->n && idx2 < t->n) {
+                            float ar = regs_re[idx1], ai = regs_im[idx1];
+                            float br = regs_re[idx2], bi = regs_im[idx2];
+                            if (tw && tw_base + r < t->twiddle_sizes[0]) {
+                                float wr = tw[(tw_base + r) * 2];
+                                float wi = tw[(tw_base + r) * 2 + 1];
+                                float tw_re = br * wr - bi * wi;
+                                float tw_im = br * wi + bi * wr;
+                                regs_re[idx1] = ar + tw_re; regs_im[idx1] = ai + tw_im;
+                                regs_re[idx2] = ar - tw_re; regs_im[idx2] = ai - tw_im;
+                            } else {
+                                regs_re[idx1] = ar + br; regs_im[idx1] = ai + bi;
+                                regs_re[idx2] = ar - br; regs_im[idx2] = ai - bi;
+                            }
+                        }
+                    }
+                }
+                break;
+            }
+            case DSPIR_DCT_STAGE: {
+                size_t stride = inst->a1;
+                size_t nstage = t->n / stride;
+                for (size_t i = 0; i < nstage / 2; i++) {
+                    size_t j = nstage - 1 - i;
+                    if (i * stride < t->n && j * stride < t->n && tw) {
+                        float a = regs_re[i * stride];
+                        float b = regs_re[j * stride];
+                        regs_re[i * stride] = a + b;
+                        regs_re[j * stride] = (a - b) * tw[i];
+                    }
+                }
+                break;
+            }
+            case DSPIR_DST_STAGE: {
+                size_t stride = inst->a1;
+                size_t nstage = t->n / stride;
+                for (size_t i = 0; i < nstage / 2; i++) {
+                    size_t j = nstage - 1 - i;
+                    if (i * stride < t->n && j * stride < t->n && tw) {
+                        float a = regs_re[i * stride];
+                        float b = regs_re[j * stride];
+                        regs_re[i * stride] = a + b;
+                        regs_re[j * stride] = (a - b) * (-tw[i]);
+                    }
+                }
+                break;
+            }
+            case DSPIR_LIFT_PRED: {
+                if (inst->a0 < t->n && inst->a1 < t->n) {
+                    union { uint32_t u; float f; } cv;
+                    cv.u = inst->a2;
+                    regs_re[inst->a0] += regs_re[inst->a1] * cv.f;
+                }
+                break;
+            }
+            case DSPIR_LIFT_UPD: {
+                if (inst->a0 < t->n && inst->a1 < t->n) {
+                    union { uint32_t u; float f; } cv;
+                    cv.u = inst->a2;
+                    regs_re[inst->a0] += regs_re[inst->a1] * cv.f;
+                }
+                break;
+            }
+            case DSPIR_LIFT_SCALE: {
+                if (inst->a0 < t->n) {
+                    union { uint32_t u; float f; } cv;
+                    cv.u = inst->a2;
+                    regs_re[inst->a0] *= cv.f;
                 }
                 break;
             }
@@ -1087,10 +1315,12 @@ int dspir_execute_split_f64(const dspir_transform *t,
         uint8_t op = DSPIR_GET_OP(inst->packed);
         
         switch (op) {
+            case DSPIR_NOP:
+                break;
             case DSPIR_LOAD: {
                 size_t in_idx = inst->a1;
                 size_t reg_idx = inst->a0;
-                if (reg_idx < t->n) {
+                if (reg_idx < t->n && in_idx < t->n) {
                     regs_re[reg_idx] = in_re[in_idx];
                     regs_im[reg_idx] = in_im[in_idx];
                 }
@@ -1105,6 +1335,14 @@ int dspir_execute_split_f64(const dspir_transform *t,
                 }
                 break;
             }
+            case DSPIR_LOAD_CONST: {
+                if (inst->a0 < t->n) {
+                    union { uint32_t u; float f; } caster;
+                    caster.u = inst->a1;
+                    regs_re[inst->a0] = (double)caster.f;
+                }
+                break;
+            }
             case DSPIR_BFLY2: {
                 uint32_t a0 = inst->a0;
                 uint32_t a1 = inst->a1;
@@ -1116,14 +1354,179 @@ int dspir_execute_split_f64(const dspir_transform *t,
                 }
                 break;
             }
+            case DSPIR_BFLY4: {
+                uint32_t base = inst->a0;
+                if (base + 3 < t->n) {
+                    double r0 = regs_re[base],     i0 = regs_im[base];
+                    double r1 = regs_re[base + 1], i1 = regs_im[base + 1];
+                    double r2 = regs_re[base + 2], i2 = regs_im[base + 2];
+                    double r3 = regs_re[base + 3], i3 = regs_im[base + 3];
+                    double t0r = r0 + r2, t0i = i0 + i2;
+                    double t1r = r0 - r2, t1i = i0 - i2;
+                    double t2r = r1 + r3, t2i = i1 + i3;
+                    double t3r = r1 - r3, t3i = i1 - i3;
+                    regs_re[base]     = t0r + t2r; regs_im[base]     = t0i + t2i;
+                    regs_re[base + 1] = t1r + t3i; regs_im[base + 1] = t1i - t3r;
+                    regs_re[base + 2] = t0r - t2r; regs_im[base + 2] = t0i - t2i;
+                    regs_re[base + 3] = t1r - t3i; regs_im[base + 3] = t1i + t3r;
+                }
+                break;
+            }
+            case DSPIR_BFLY8: {
+                uint32_t base = inst->a0;
+                if (base + 7 < t->n) {
+                    double r[8], im[8];
+                    for (int k = 0; k < 8; k++) {
+                        r[k]  = regs_re[base + k];
+                        im[k] = regs_im[base + k];
+                    }
+                    double s1r[8], s1i[8];
+                    for (int k = 0; k < 4; k++) {
+                        s1r[k]     = r[k] + r[k + 4]; s1i[k]     = im[k] + im[k + 4];
+                        s1r[k + 4] = r[k] - r[k + 4]; s1i[k + 4] = im[k] - im[k + 4];
+                    }
+                    double s2r[8], s2i[8];
+                    s2r[0] = s1r[0] + s1r[2]; s2i[0] = s1i[0] + s1i[2];
+                    s2r[1] = s1r[1] + s1i[3]; s2i[1] = s1i[1] - s1r[3];
+                    s2r[2] = s1r[0] - s1r[2]; s2i[2] = s1i[0] - s1i[2];
+                    s2r[3] = s1r[1] - s1i[3]; s2i[3] = s1i[1] + s1r[3];
+                    const double c = 0.7071067811865476;
+                    double t4r = c * (s1r[4] + s1i[4]), t4i = c * (s1i[4] - s1r[4]);
+                    double t5r = -s1i[5], t5i = s1r[5];
+                    double t6r = c * (s1i[6] - s1r[6]), t6i = -c * (s1r[6] + s1i[6]);
+                    double t7r = s1r[7], t7i = s1i[7];
+                    s2r[4] = t4r + t6r; s2i[4] = t4i + t6i;
+                    s2r[5] = t5r + t7i; s2i[5] = t5i - t7r;
+                    s2r[6] = t4r - t6r; s2i[6] = t4i - t6i;
+                    s2r[7] = t5r - t7i; s2i[7] = t5i + t7r;
+                    for (int k = 0; k < 4; k++) {
+                        regs_re[base + 2*k]     = s2r[k] + s2r[k + 4];
+                        regs_im[base + 2*k]     = s2i[k] + s2i[k + 4];
+                        regs_re[base + 2*k + 1] = s2r[k] - s2r[k + 4];
+                        regs_im[base + 2*k + 1] = s2i[k] - s2i[k + 4];
+                    }
+                }
+                break;
+            }
             case DSPIR_TWIDDLE_MUL: {
                 uint32_t a0 = inst->a0;
                 uint32_t a1 = inst->a1;
-                if (a0 < t->n && a1 < t->n) {
+                if (a0 < t->n && tw) {
                     double r = regs_re[a0], i = regs_im[a0];
                     double wr = tw[a1 * 2], wi = tw[a1 * 2 + 1];
                     regs_re[a0] = r * wr - i * wi;
                     regs_im[a0] = r * wi + i * wr;
+                }
+                break;
+            }
+            case DSPIR_TWIDDLE_MUL_CONJ: {
+                uint32_t a0 = inst->a0;
+                uint32_t a1 = inst->a1;
+                if (a0 < t->n && tw) {
+                    double r = regs_re[a0], i = regs_im[a0];
+                    double wr = tw[a1 * 2], wi = -tw[a1 * 2 + 1];
+                    regs_re[a0] = r * wr - i * wi;
+                    regs_im[a0] = r * wi + i * wr;
+                }
+                break;
+            }
+            case DSPIR_FMA:
+                if (inst->a0 < t->n && inst->a1 < t->n && inst->a2 < t->n)
+                    regs_re[inst->a0] = regs_re[inst->a0] * regs_re[inst->a1] + regs_re[inst->a2];
+                break;
+            case DSPIR_FMUL:
+                if (inst->a0 < t->n && inst->a1 < t->n && inst->a2 < t->n)
+                    regs_re[inst->a0] = regs_re[inst->a1] * regs_re[inst->a2];
+                break;
+            case DSPIR_FADD:
+                if (inst->a0 < t->n && inst->a1 < t->n && inst->a2 < t->n)
+                    regs_re[inst->a0] = regs_re[inst->a1] + regs_re[inst->a2];
+                break;
+            case DSPIR_FSUB:
+                if (inst->a0 < t->n && inst->a1 < t->n && inst->a2 < t->n)
+                    regs_re[inst->a0] = regs_re[inst->a1] - regs_re[inst->a2];
+                break;
+            case DSPIR_BARRIER:
+                __asm__ volatile("" ::: "memory");
+                break;
+            case DSPIR_FFT_STAGE: {
+                size_t radix = inst->a0;
+                size_t stride = inst->a1;
+                size_t tw_base = inst->a2;
+                size_t ngroups = t->n / (radix * stride);
+                for (size_t g = 0; g < ngroups; g++) {
+                    size_t gbase = g * radix * stride;
+                    for (size_t r = 0; r < radix / 2; r++) {
+                        size_t idx1 = gbase + r * stride;
+                        size_t idx2 = gbase + (r + radix / 2) * stride;
+                        if (idx1 < t->n && idx2 < t->n) {
+                            double ar = regs_re[idx1], ai = regs_im[idx1];
+                            double br = regs_re[idx2], bi = regs_im[idx2];
+                            if (tw && tw_base + r < t->twiddle_sizes[0]) {
+                                double wr = tw[(tw_base + r) * 2];
+                                double wi = tw[(tw_base + r) * 2 + 1];
+                                double tw_re = br * wr - bi * wi;
+                                double tw_im = br * wi + bi * wr;
+                                regs_re[idx1] = ar + tw_re; regs_im[idx1] = ai + tw_im;
+                                regs_re[idx2] = ar - tw_re; regs_im[idx2] = ai - tw_im;
+                            } else {
+                                regs_re[idx1] = ar + br; regs_im[idx1] = ai + bi;
+                                regs_re[idx2] = ar - br; regs_im[idx2] = ai - bi;
+                            }
+                        }
+                    }
+                }
+                break;
+            }
+            case DSPIR_DCT_STAGE: {
+                size_t stride = inst->a1;
+                size_t nstage = t->n / stride;
+                for (size_t i = 0; i < nstage / 2; i++) {
+                    size_t j = nstage - 1 - i;
+                    if (i * stride < t->n && j * stride < t->n && tw) {
+                        double a = regs_re[i * stride];
+                        double b = regs_re[j * stride];
+                        regs_re[i * stride] = a + b;
+                        regs_re[j * stride] = (a - b) * tw[i];
+                    }
+                }
+                break;
+            }
+            case DSPIR_DST_STAGE: {
+                size_t stride = inst->a1;
+                size_t nstage = t->n / stride;
+                for (size_t i = 0; i < nstage / 2; i++) {
+                    size_t j = nstage - 1 - i;
+                    if (i * stride < t->n && j * stride < t->n && tw) {
+                        double a = regs_re[i * stride];
+                        double b = regs_re[j * stride];
+                        regs_re[i * stride] = a + b;
+                        regs_re[j * stride] = (a - b) * (-tw[i]);
+                    }
+                }
+                break;
+            }
+            case DSPIR_LIFT_PRED: {
+                if (inst->a0 < t->n && inst->a1 < t->n) {
+                    union { uint32_t u; float f; } cv;
+                    cv.u = inst->a2;
+                    regs_re[inst->a0] += regs_re[inst->a1] * (double)cv.f;
+                }
+                break;
+            }
+            case DSPIR_LIFT_UPD: {
+                if (inst->a0 < t->n && inst->a1 < t->n) {
+                    union { uint32_t u; float f; } cv;
+                    cv.u = inst->a2;
+                    regs_re[inst->a0] += regs_re[inst->a1] * (double)cv.f;
+                }
+                break;
+            }
+            case DSPIR_LIFT_SCALE: {
+                if (inst->a0 < t->n) {
+                    union { uint32_t u; float f; } cv;
+                    cv.u = inst->a2;
+                    regs_re[inst->a0] *= (double)cv.f;
                 }
                 break;
             }

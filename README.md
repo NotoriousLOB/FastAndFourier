@@ -239,26 +239,34 @@ Split-plane mode provides significantly better vectorization by storing real and
 
 | Transform | Size | VM (us) | JIT (us) | Speedup |
 |-----------|------|---------|----------|---------|
-| FFT | 16 | 0.85 | 0.079 | **10.8x** |
-| FFT | 32 | 1.99 | 0.235 | **8.5x** |
-| FFT | 64 | 1.99 | 0.735 | **2.7x** |
-| DCT-II | 16 | 0.85 | - | - |
-| DCT-II | 64 | 1.99 | - | - |
-| Haar | 16 | 0.75 | - | - |
-| Haar | 64 | 1.15 | - | - |
+| FFT | 16 | 0.985 | 0.079 | **12.5x** |
+| FFT | 32 | - | 0.235 | - |
+| FFT | 64 | 2.82 | 0.735 | **3.8x** |
+| FFT | 128 | 5.44 | - | - |
+| DCT-II | 16 | 0.970 | - | - |
+| DCT-II | 64 | 2.80 | - | - |
+| DCT-II | 128 | 5.42 | - | - |
+| Haar | 16 | 0.791 | - | - |
+| Haar | 64 | 1.44 | - | - |
+| Haar | 128 | 2.17 | - | - |
+| MDCT | 16 | 0.968 | - | - |
+| MDCT | 64 | 2.80 | - | - |
+| MDCT | 128 | 5.42 | - | - |
 
-### Split-Plane vs Standard (VM Execution)
+### VM Execution Throughput (Interleaved)
 
-| Precision | Size | Standard (M/s) | Split-Plane (M/s) | Improvement |
-|-----------|------|----------------|-------------------|-------------|
-| FP32 | 16 | 22.7 | 43.2 | **1.9x** |
-| FP32 | 64 | 33.8 | 42.6 | **1.3x** |
-| FP32 | 256 | 30.2 | 35.3 | **1.2x** |
-| FP32 | 1024 | 29.5 | 30.9 | **1.05x** |
-| FP64 | 16 | 21.2 | 38.6 | **1.8x** |
-| FP64 | 64 | 32.3 | 41.4 | **1.3x** |
-| FP64 | 256 | 29.6 | 34.5 | **1.2x** |
-| FP64 | 1024 | 28.1 | 30.1 | **1.07x** |
+| Transform | Size | Throughput (M/s) | Performance |
+|-----------|------|------------------|-------------|
+| FFT (FP32) | 16 | 16.24 | ~33 GFLOPS |
+| FFT (FP32) | 64 | 22.71 | ~69 GFLOPS |
+| FFT (FP32) | 128 | 23.54 | ~85 GFLOPS |
+| DCT-II | 16 | 16.52 | ~33 GFLOPS |
+| DCT-II | 64 | 22.85 | ~69 GFLOPS |
+| DST-II | 64 | 22.84 | ~69 GFLOPS |
+| Haar | 16 | 20.25 | ~41 GFLOPS |
+| Haar | 64 | 44.41 | ~135 GFLOPS |
+| Haar | 1024 | 78.12 | ~281 GFLOPS |
+| MDCT | 64 | 22.87 | ~69 GFLOPS |
 
 ### JIT Throughput by Transform Size
 
@@ -272,12 +280,34 @@ Split-plane mode provides significantly better vectorization by storing real and
 
 | Transform | N | Time (us) | GFLOPS |
 |-----------|---|-----------|--------|
-| FFT | 16 | 0.72 | 0.44 |
-| FFT | 64 | 2.02 | 0.95 |
-| FFT | 256 | 8.50 | 1.20 |
-| FFT | 1024 | 34.8 | 1.47 |
-| FFT | 4096 | 167 | 1.47 |
-| FFT | 8192 | 218 | 2.44 |
+| FFT | 16 | 0.98 | 0.33 |
+| FFT | 64 | 2.80 | 0.69 |
+| FFT | 256 | 12.0 | 0.85 |
+| FFT | 1024 | 52.9 | 0.97 |
+| FFT | 4096 | 247 | 1.00 |
+| FFT | 8192 | 316 | 1.69 |
+
+*Complexity verified: O(N log N) with 41% RMS deviation*
+
+### Library Comparison (Release Build)
+
+Throughput comparison with popular FFT libraries on ARM Cortex-A78 (all using complex-to-complex):
+
+| Size | FAF (VM) | FAF (JIT) | KissFFT | NotoriousFFT | FFTW3 |
+|------|----------|-----------|---------|--------------|-------|
+| 16 | 16.1 M/s | **203 M/s** | 122.6 M/s | 197.0 M/s | **275 M/s** |
+| 64 | 23.1 M/s | **87 M/s** | 83.1 M/s | 130.0 M/s | **238 M/s** |
+| 256 | 21.5 M/s | - | 62.6 M/s | 94.7 M/s | **206 M/s** |
+| 1024 | 19.4 M/s | - | 51.7 M/s | 74.2 M/s | **175 M/s** |
+| 4096 | 16.6 M/s | - | 43.3 M/s | 60.0 M/s | **155 M/s** |
+
+**Notes:**
+- All benchmarks measure **in-cache performance** (repeated transforms on same buffers)
+- FFTW3's lead comes from highly optimized assembly kernels with better scaling
+- **JIT scaling**: Our JIT drops from 202 M/s (16-point) to 60 M/s (128-point) - 70% decrease
+- **FFTW3 scaling**: FFTW3 drops from 275 M/s (16-point) to 206 M/s (256-point) - only 25% decrease
+- JIT compilation fails above 128 points due to excessive compile times
+- Real-world throughput streaming from memory will be bandwidth-limited (~10-20 GB/s)
 
 ## Architecture Support
 
@@ -311,4 +341,5 @@ MIT License - see [LICENSE](LICENSE) file.
 - FFT algorithms based on Cooley-Tukey
 - Wavelet transforms using lifting scheme
 - JIT approach inspired by GNU Lightning and LLVM ORC
+- Benchmark comparisons use [Kiss FFT](https://github.com/mborgerding/kissfft), [Notorious FFT](https://github.com/NotoriousLOB/Notorious-FFT), and [FFTW3](http://www.fftw.org/)
 - Benchmark comparisons use Kiss FFT, PocketFFT, and minFFT

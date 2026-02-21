@@ -57,6 +57,17 @@ if(ENABLE_EXTERNAL_BENCHMARKS)
     if(NOT mufft_POPULATED)
         FetchContent_Populate(mufft)
     endif()
+
+    # Notorious FFT - header only
+    FetchContent_Declare(
+        notoriousfft
+        GIT_REPOSITORY https://github.com/NotoriousLOB/Notorious-FFT.git
+        GIT_TAG master
+    )
+    FetchContent_GetProperties(notoriousfft)
+    if(NOT notoriousfft_POPULATED)
+        FetchContent_Populate(notoriousfft)
+    endif()
 endif()
 
 # Find FFTW3 (system or build from source)
@@ -105,6 +116,8 @@ if(ENABLE_EXTERNAL_BENCHMARKS)
         ${pocketfft_SOURCE_DIR}
         ${minfft_SOURCE_DIR}
         ${mufft_SOURCE_DIR}
+        ${notoriousfft_SOURCE_DIR}/include
+        ${kissfft_SOURCE_DIR}
     )
 endif()
 
@@ -116,7 +129,7 @@ target_link_libraries(fastandfourier_benchmarks
 )
 
 if(ENABLE_EXTERNAL_BENCHMARKS)
-    target_link_libraries(fastandfourier_benchmarks kissfft-float)
+    target_link_libraries(fastandfourier_benchmarks kissfft::kissfft-float)
     if(FFTW3F_FOUND)
         target_link_libraries(fastandfourier_benchmarks ${FFTW3F_LIBRARIES})
         target_compile_definitions(fastandfourier_benchmarks PRIVATE HAS_FFTW3=1)

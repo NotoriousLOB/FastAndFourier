@@ -24,21 +24,28 @@
 
 // Kiss FFT
 extern "C" {
-#include <kissfft/kiss_fft.h>
+#include <kiss_fft.h>
 }
 
-// PocketFFT (header-only)
-#define POCKETFFT_NO_MULTITHREADING
-#include <pocketfft/pocketfft_hdronly.h>
+// PocketFFT - disabled (C implementation has build issues)
+// extern "C" {
+// #include <pocketfft.h>
+// }
 
-// MinFFT
-extern "C" {
-#include <minfft/minfft.h>
-}
+// MinFFT - disabled (API mismatch)
+// extern "C" {
+// #include <minfft.h>
+// }
 
-// muFFT
-#define MUFFT_API static inline
-#include <mufft/mufft.c>
+// muFFT - disabled (API mismatch)
+// extern "C" {
+// #include <fft.h>
+// }
+
+// Notorious FFT (header-only)
+#define NOTORIOUS_FFT_SINGLE
+#define NOTORIOUS_FFT_IMPLEMENTATION
+#include <notorious_fft.h>
 
 // FFTW3 (optional)
 #ifdef HAS_FFTW3
@@ -142,100 +149,24 @@ BENCHMARK(BM_KissFFT_Real)
     ->Name("KissFFT/FFT_Real");
 
 /* ============ PocketFFT Benchmarks ============ */
+// Disabled - C implementation has build issues with current source
 
+/*
 static void BM_PocketFFT_Real(benchmark::State& state) {
-    const size_t n = state.range(0);
-    
-    std::vector<std::complex<float>> in(n);
-    std::vector<std::complex<float>> out(n);
-    generate_signal_complex(in.data(), n);
-    
-    for (auto _ : state) {
-        pocketfft::c2c(n, in, out, pocketfft::FORWARD);
-        benchmark::DoNotOptimize(out.data());
-    }
-    
-    state.SetItemsProcessed(state.iterations() * n);
-    state.SetBytesProcessed(state.iterations() * n * sizeof(std::complex<float>) * 2);
+    state.SkipWithError("PocketFFT disabled");
 }
 BENCHMARK(BM_PocketFFT_Real)
     ->RangeMultiplier(4)
     ->Range(16, 65536)
     ->Unit(benchmark::kMicrosecond)
     ->Name("PocketFFT/FFT_Real");
+*/
 
 /* ============ MinFFT Benchmarks ============ */
-
-static void BM_MinFFT_Real(benchmark::State& state) {
-    const size_t n = state.range(0);
-    
-    // MinFFT uses its own complex type
-    minfft_aux* aux = minfft_mkaux_dft_1d(n);
-    if (!aux) {
-        state.SkipWithError("Failed to create MinFFT aux");
-        return;
-    }
-    
-    minfft_real* in = (minfft_real*)aligned_alloc(64, 2 * n * sizeof(minfft_real));
-    minfft_real* out = (minfft_real*)aligned_alloc(64, 2 * n * sizeof(minfft_real));
-    
-    for (size_t i = 0; i < n; i++) {
-        in[2*i] = sinf(2.0f * (float)M_PI * (float)i / (float)n);
-        in[2*i+1] = 0.0f;
-    }
-    
-    for (auto _ : state) {
-        minfft_dft(in, out, aux);
-        benchmark::DoNotOptimize(out);
-    }
-    
-    state.SetItemsProcessed(state.iterations() * n);
-    state.SetBytesProcessed(state.iterations() * n * sizeof(minfft_real) * 4);
-    
-    free(in); free(out);
-    minfft_free_aux(aux);
-}
-BENCHMARK(BM_MinFFT_Real)
-    ->RangeMultiplier(4)
-    ->Range(16, 65536)
-    ->Unit(benchmark::kMicrosecond)
-    ->Name("MinFFT/FFT_Real");
+// Disabled - API mismatch with current MinFFT version
 
 /* ============ muFFT Benchmarks ============ */
-
-static void BM_muFFT_Real(benchmark::State& state) {
-    const size_t n = state.range(0);
-    
-    mufft_plan_1d* plan = mufft_create_plan_1d_c2c(n, MUFFT_FORWARD, MUFFT_FLAG_CPU_ANY);
-    if (!plan) {
-        state.SkipWithError("Failed to create muFFT plan");
-        return;
-    }
-    
-    cfloat* in = (cfloat*)aligned_alloc(64, n * sizeof(cfloat));
-    cfloat* out = (cfloat*)aligned_alloc(64, n * sizeof(cfloat));
-    
-    for (size_t i = 0; i < n; i++) {
-        in[i].real = sinf(2.0f * (float)M_PI * (float)i / (float)n);
-        in[i].imag = 0.0f;
-    }
-    
-    for (auto _ : state) {
-        mufft_execute_plan_1d(plan, out, in);
-        benchmark::DoNotOptimize(out);
-    }
-    
-    state.SetItemsProcessed(state.iterations() * n);
-    state.SetBytesProcessed(state.iterations() * n * sizeof(cfloat) * 2);
-    
-    free(in); free(out);
-    mufft_free_plan_1d(plan);
-}
-BENCHMARK(BM_muFFT_Real)
-    ->RangeMultiplier(4)
-    ->Range(16, 65536)
-    ->Unit(benchmark::kMicrosecond)
-    ->Name("muFFT/FFT_Real");
+// Disabled - API mismatch with current muFFT version
 
 /* ============ FFTW3 Benchmarks (if available) ============ */
 
@@ -244,12 +175,16 @@ BENCHMARK(BM_muFFT_Real)
 static void BM_FFTW3_Estimate(benchmark::State& state) {
     const size_t n = state.range(0);
     
-    float* in = (float*)fftwf_malloc(n * sizeof(float));
+    // Use complex-to-complex (c2c) like other libraries for fair comparison
+    fftwf_complex* in = (fftwf_complex*)fftwf_malloc(n * sizeof(fftwf_complex));
     fftwf_complex* out = (fftwf_complex*)fftwf_malloc(n * sizeof(fftwf_complex));
     
-    generate_signal(in, n);
+    for (size_t i = 0; i < n; i++) {
+        in[i][0] = sinf(2.0f * (float)M_PI * (float)i / (float)n);
+        in[i][1] = 0.0f;
+    }
     
-    fftwf_plan plan = fftwf_plan_dft_r2c_1d(n, in, out, FFTW_ESTIMATE);
+    fftwf_plan plan = fftwf_plan_dft_1d(n, in, out, FFTW_FORWARD, FFTW_ESTIMATE);
     if (!plan) {
         state.SkipWithError("Failed to create FFTW3 plan");
         return;
@@ -261,7 +196,7 @@ static void BM_FFTW3_Estimate(benchmark::State& state) {
     }
     
     state.SetItemsProcessed(state.iterations() * n);
-    state.SetBytesProcessed(state.iterations() * n * sizeof(float) * 2);
+    state.SetBytesProcessed(state.iterations() * n * sizeof(fftwf_complex) * 2);
     
     fftwf_destroy_plan(plan);
     fftwf_free(in);
@@ -276,13 +211,16 @@ BENCHMARK(BM_FFTW3_Estimate)
 static void BM_FFTW3_Measure(benchmark::State& state) {
     const size_t n = state.range(0);
     
-    float* in = (float*)fftwf_malloc(n * sizeof(float));
+    // Use complex-to-complex (c2c) like other libraries for fair comparison
+    fftwf_complex* in = (fftwf_complex*)fftwf_malloc(n * sizeof(fftwf_complex));
     fftwf_complex* out = (fftwf_complex*)fftwf_malloc(n * sizeof(fftwf_complex));
     
-    generate_signal(in, n);
+    for (size_t i = 0; i < n; i++) {
+        in[i][0] = sinf(2.0f * (float)M_PI * (float)i / (float)n);
+        in[i][1] = 0.0f;
+    }
     
-    // Use wisdom if available, otherwise measure
-    fftwf_plan plan = fftwf_plan_dft_r2c_1d(n, in, out, FFTW_MEASURE);
+    fftwf_plan plan = fftwf_plan_dft_1d(n, in, out, FFTW_FORWARD, FFTW_MEASURE);
     if (!plan) {
         state.SkipWithError("Failed to create FFTW3 plan");
         return;
@@ -294,7 +232,7 @@ static void BM_FFTW3_Measure(benchmark::State& state) {
     }
     
     state.SetItemsProcessed(state.iterations() * n);
-    state.SetBytesProcessed(state.iterations() * n * sizeof(float) * 2);
+    state.SetBytesProcessed(state.iterations() * n * sizeof(fftwf_complex) * 2);
     
     fftwf_destroy_plan(plan);
     fftwf_free(in);
@@ -307,6 +245,42 @@ BENCHMARK(BM_FFTW3_Measure)
     ->Name("FFTW3/Measure");
 
 #endif // HAS_FFTW3
+
+/* ============ Notorious FFT Benchmarks ============ */
+
+static void BM_NotoriousFFT_Real(benchmark::State& state) {
+    const size_t n = state.range(0);
+
+    notorious_fft_plan* plan = notorious_fft_create_plan(n, 0);
+    if (!plan) {
+        state.SkipWithError("Failed to create Notorious FFT plan");
+        return;
+    }
+
+    float* in = (float*)aligned_alloc(64, 2 * n * sizeof(float));
+    float* out = (float*)aligned_alloc(64, 2 * n * sizeof(float));
+
+    for (size_t i = 0; i < n; i++) {
+        in[2*i] = sinf(2.0f * (float)M_PI * (float)i / (float)n);
+        in[2*i+1] = 0.0f;
+    }
+
+    for (auto _ : state) {
+        notorious_fft_execute_cx(plan, in, out, 0);
+        benchmark::DoNotOptimize(out);
+    }
+
+    state.SetItemsProcessed(state.iterations() * n);
+    state.SetBytesProcessed(state.iterations() * n * sizeof(float) * 4);
+
+    free(in); free(out);
+    notorious_fft_destroy_plan(plan);
+}
+BENCHMARK(BM_NotoriousFFT_Real)
+    ->RangeMultiplier(4)
+    ->Range(16, 65536)
+    ->Unit(benchmark::kMicrosecond)
+    ->Name("NotoriousFFT/FFT_Real");
 
 /* ============ Latency Comparison (Small Sizes) ============ */
 
@@ -360,6 +334,37 @@ BENCHMARK(BM_Latency_KissFFT)
     ->Range(8, 512)
     ->Unit(benchmark::kNanosecond)
     ->Name("Latency/KissFFT");
+
+static void BM_Latency_NotoriousFFT(benchmark::State& state) {
+    const size_t n = state.range(0);
+
+    notorious_fft_plan* plan = notorious_fft_create_plan(n, 0);
+    if (!plan) {
+        state.SkipWithError("Failed to create Notorious FFT plan");
+        return;
+    }
+
+    float* in = (float*)aligned_alloc(64, 2 * n * sizeof(float));
+    float* out = (float*)aligned_alloc(64, 2 * n * sizeof(float));
+
+    for (size_t i = 0; i < n; i++) {
+        in[2*i] = sinf(2.0f * (float)M_PI * (float)i / (float)n);
+        in[2*i+1] = 0.0f;
+    }
+
+    for (auto _ : state) {
+        notorious_fft_execute_cx(plan, in, out, 0);
+        benchmark::ClobberMemory();
+    }
+
+    free(in); free(out);
+    notorious_fft_destroy_plan(plan);
+}
+BENCHMARK(BM_Latency_NotoriousFFT)
+    ->RangeMultiplier(2)
+    ->Range(8, 512)
+    ->Unit(benchmark::kNanosecond)
+    ->Name("Latency/NotoriousFFT");
 
 /* ============ Throughput Comparison (Large Sizes) ============ */
 
@@ -426,5 +431,4 @@ BENCHMARK(BM_Throughput_FFTW3)
     ->Name("Throughput/FFTW3");
 #endif
 
-/* ============ Main ============ */
-BENCHMARK_MAIN();
+/* Benchmark registration is automatic; main is provided by benchmark::benchmark_main */

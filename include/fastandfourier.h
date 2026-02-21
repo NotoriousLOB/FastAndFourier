@@ -496,6 +496,12 @@ dspir_kernel_fn dspir_jit_get_kernel(dspir_jit_ctx *ctx);
 void dspir_jit_destroy(dspir_jit_ctx *ctx);
 
 /**
+ * @brief Set JIT logging verbosity
+ * @param level 0 = silent (default), 1 = verbose
+ */
+void dspir_jit_set_verbose(int level);
+
+/**
  * @brief Execute transform using JIT with extended options
  * @param t Transform to execute
  * @param out Output buffer (must be aligned)

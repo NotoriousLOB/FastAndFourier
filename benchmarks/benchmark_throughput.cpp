@@ -68,6 +68,9 @@ static void BM_Scaling_FFT(benchmark::State& state) {
         dspir_execute_f32(t, out, in);
     }
     
+    /* Set complexity N for auto-complexity calculation */
+    state.SetComplexityN(n);
+    
     /* Report GFLOPS (5*N*log2(N) operations per FFT) */
     size_t ops = 5 * n * (size_t)log2(n);
     state.counters["GFLOPS"] = benchmark::Counter(
