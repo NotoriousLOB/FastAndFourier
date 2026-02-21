@@ -289,6 +289,7 @@ Split-plane mode provides significantly better vectorization by storing real and
 ## Documentation
 
 - [API Reference](docs/API.md) - Complete API documentation
+- [Chirp DSL](CHIRP.md) - Scheme-like DSL for DSP pipelines with 140+ builtins
 - [Performance Analysis](ANALYSIS.md) - Detailed benchmark analysis
 - [Architecture Overview](docs/ARCHITECTURE.md) - IR and VM design
 - [Building Guide](docs/BUILDING.md) - Advanced build options
