@@ -1,0 +1,193 @@
+# Build directories
+build/
+build-*/
+cmake-build-*/
+out/
+install/
+dist/
+
+# CMake generated files
+CMakeCache.txt
+CMakeFiles/
+CMakeScripts/
+Testing/
+Makefile.cmake
+Makefile
+!Makefile
+cmake_install.cmake
+install_manifest.txt
+compile_commands.json
+CTestTestfile.cmake
+_deps/
+
+# Compiled Object files
+*.slo
+*.lo
+*.o
+*.obj
+*.ko
+*.elf
+
+# Precompiled Headers
+*.gch
+*.pch
+
+# Compiled Dynamic libraries
+*.so
+*.so.*
+*.dylib
+*.dll
+
+# Compiled Static libraries
+*.lai
+*.la
+*.a
+*.lib
+
+# Executables
+*.exe
+*.out
+*.app
+*.i*86
+*.x86_64
+*.hex
+
+# Debug files
+*.dSYM/
+*.su
+*.idb
+*.pdb
+*.ilk
+*.exp
+
+# Coverage files
+*.gcno
+*.gcda
+*.gcov
+coverage/
+lcov.info
+coverage.info
+htmlcov/
+
+# IDE - Visual Studio
+.vs/
+.vscode/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.vcxproj
+*.vcxproj.filters
+ipch/
+*.aps
+*.ncb
+*.opensdf
+*.sdf
+*.cachefile
+*.VC.db
+*.VC.VC.opendb
+
+# IDE - CLion/JetBrains
+.idea/
+*.iml
+*.iws
+atlassian-ide-plugin.xml
+
+# IDE - Xcode
+*.xcodeproj/
+*.xcworkspace/
+DerivedData/
+*.moved-aside
+*.pbxuser
+!default.pbxuser
+*.mode1v3
+!default.mode1v3
+*.mode2v3
+!default.mode2v3
+*.perspectivev3
+!default.perspectivev3
+xcuserdata/
+*.hmap
+*.ipa
+
+# IDE - Eclipse
+.project
+.cproject
+.settings/
+.classpath
+
+# IDE - Code::Blocks
+*.cbp
+*.layout
+
+# IDE - KDevelop
+*.kdev4
+.kdev4/
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# Temporary files
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+.*.swp
+.*.swo
+*~
+.#*
+\#*\#
+
+# Package files
+*.7z
+*.dmg
+*.gz
+*.iso
+*.jar
+*.rar
+*.tar
+*.zip
+
+# Documentation generated files
+docs/html/
+docs/latex/
+docs/xml/
+doxygen_warnings.txt
+
+# JIT compilation temporary files
+dspir_jit_*.c
+dspir_jit_*.so
+dspir_jit_*.dylib
+dspir_jit_*.dll
+/tmp/dspir_jit_*
+
+# Benchmark and test outputs
+*.bench
+*.test
+benchmark_results/
+test_results/
+*.log
+
+# Core dumps
+core
+core.*
+vmon
+
+# Python (for scripts)
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+
+# Node (for documentation)
+node_modules/
+npm-debug.log*

@@ -1,0 +1,33 @@
+# Doxyfile for FastAndFourier
+
+PROJECT_NAME           = "FastAndFourier"
+PROJECT_NUMBER         = @PROJECT_VERSION@
+PROJECT_BRIEF          = "High-Performance DSP Library with IR and JIT"
+
+OUTPUT_DIRECTORY       = @CMAKE_BINARY_DIR@/docs
+INPUT                  = @CMAKE_SOURCE_DIR@/include \
+                         @CMAKE_SOURCE_DIR@/src \
+                         @CMAKE_SOURCE_DIR@/docs
+
+RECURSIVE              = YES
+FILE_PATTERNS          = *.h *.hpp *.c *.cpp *.md
+
+EXTRACT_ALL            = YES
+EXTRACT_PRIVATE        = NO
+EXTRACT_STATIC         = YES
+
+GENERATE_HTML          = YES
+GENERATE_LATEX         = NO
+
+HTML_OUTPUT            = html
+
+USE_MDFILE_AS_MAINPAGE = @CMAKE_SOURCE_DIR@/docs/README.md
+
+OPTIMIZE_OUTPUT_FOR_C  = YES
+
+ENABLE_PREPROCESSING   = YES
+MACRO_EXPANSION        = YES
+
+QUIET                  = NO
+WARNINGS               = YES
+WARN_IF_UNDOCUMENTED   = YES
