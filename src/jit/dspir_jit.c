@@ -262,6 +262,37 @@ static void emit_scalar_twiddle_mul(FILE *f, uint8_t a0, uint8_t a1, int inplace
 }
 
 /**
+ * @brief Generate split-plane BFLY2 (separate real/imag arrays)
+ * 
+ * This enables much better auto-vectorization on x86 with AVX-512.
+ * Real and imaginary arrays are separate 64-byte aligned streams.
+ */
+static void emit_split_bfly2(FILE *f, uint8_t a0, uint8_t a1, int inplace) {
+    const char *re = inplace ? "data_re" : "regs_re";
+    const char *im = inplace ? "data_im" : "regs_im";
+    fprintf(f, "    {\n");
+    fprintf(f, "        float ar = %s[%u], ai = %s[%u];\n", re, a0, im, a0);
+    fprintf(f, "        float br = %s[%u], bi = %s[%u];\n", re, a1, im, a1);
+    fprintf(f, "        %s[%u] = ar + br; %s[%u] = ai + bi;\n", re, a0, im, a0);
+    fprintf(f, "        %s[%u] = ar - br; %s[%u] = ai - bi;\n", re, a1, im, a1);
+    fprintf(f, "    }\n");
+}
+
+/**
+ * @brief Generate split-plane twiddle multiply
+ */
+static void emit_split_twiddle_mul(FILE *f, uint8_t a0, uint8_t a1, int inplace) {
+    const char *re = inplace ? "data_re" : "regs_re";
+    const char *im = inplace ? "data_im" : "regs_im";
+    fprintf(f, "    {\n");
+    fprintf(f, "        float r = %s[%u], i = %s[%u];\n", re, a0, im, a0);
+    fprintf(f, "        float wr = tw_re[%u], wi = tw_im[%u];\n", a1, a1);
+    fprintf(f, "        %s[%u] = r*wr - i*wi;\n", re, a0);
+    fprintf(f, "        %s[%u] = r*wi + i*wr;\n", im, a0);
+    fprintf(f, "    }\n");
+}
+
+/**
  * @brief Generate NEON SIMD code for twiddle multiply
  * 
  * Uses NEON complex multiplication:

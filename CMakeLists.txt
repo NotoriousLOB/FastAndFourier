@@ -16,6 +16,8 @@ option(ENABLE_COVERAGE "Enable code coverage" OFF)
 option(ENABLE_CUDA "Enable CUDA support" OFF)
 option(ENABLE_FP8 "Enable FP8 precision" ON)
 option(ENABLE_FP16 "Enable FP16 precision" ON)
+option(FASTANDFOURIER_SINGLE_HEADER "Build single-header fallback mode" OFF)
+option(FASTANDFOURIER_PRECOMPILE "Pre-generate codelets for common N" OFF)
 
 # Include CMake modules for feature detection
 include(CheckCSourceRuns)
@@ -38,8 +40,8 @@ endif()
 # Compiler flags
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Wextra -Wpedantic")
 set(CMAKE_C_FLAGS_DEBUG "-g -O0 -fsanitize=address,undefined")
-set(CMAKE_C_FLAGS_RELEASE "-O3 -DNDEBUG -ffast-math -funroll-loops")
-set(CMAKE_C_FLAGS_RELWITHDEBINFO "-O2 -g -DNDEBUG")
+set(CMAKE_C_FLAGS_RELEASE "-O3 -DNDEBUG -ffast-math -funroll-loops -march=native")
+set(CMAKE_C_FLAGS_RELWITHDEBINFO "-O2 -g -DNDEBUG -march=native")
 
 # Coverage flags
 if(ENABLE_COVERAGE)

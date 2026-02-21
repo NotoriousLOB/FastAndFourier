@@ -23,6 +23,7 @@ extern "C" {
 
 #include <stdint.h>
 #include <stddef.h>
+#include <stdlib.h>
 #include <stdbool.h>
 
 /* C/C++ compatibility for restrict keyword */
@@ -43,6 +44,11 @@ extern "C" {
 #define FASTANDFOURIER_VERSION_MINOR 0
 #define FASTANDFOURIER_VERSION_PATCH 0
 #define FASTANDFOURIER_VERSION_STRING "1.0.0"
+
+/* Public utility macros */
+#define DSPIR_GET_OP(packed)      ((uint8_t)((packed) & 0xFF))
+#define DSPIR_GET_FLAGS(packed)   ((uint8_t)(((packed) >> 8) & 0xFF))
+#define DSPIR_GET_META(packed)    ((uint16_t)(((packed) >> 16) & 0xFFFF))
 
 /* Architecture detection */
 #if defined(__x86_64__) || defined(_M_X64)
@@ -246,6 +252,36 @@ const char* dspir_version(void);
  */
 const char* dspir_arch_name(void);
 
+/**
+ * @brief Allocate aligned memory for SIMD operations
+ * @param size Size in bytes to allocate
+ * @return Aligned pointer (64-byte aligned) or NULL on failure
+ * @note Use dspir_aligned_free() to free memory allocated by this function
+ */
+static inline void* dspir_aligned_alloc(size_t size) {
+#if defined(_WIN32)
+    return _aligned_malloc(size, 64);
+#elif defined(__APPLE__) || defined(__FreeBSD__)
+    void* ptr = NULL;
+    if (posix_memalign(&ptr, 64, size) != 0) return NULL;
+    return ptr;
+#else
+    return aligned_alloc(64, size);
+#endif
+}
+
+/**
+ * @brief Free memory allocated by dspir_aligned_alloc
+ * @param ptr Pointer to free
+ */
+static inline void dspir_aligned_free(void* ptr) {
+#if defined(_WIN32)
+    _aligned_free(ptr);
+#else
+    free(ptr);
+#endif
+}
+
 /* --- TRANSFORM CREATION --- */
 
 /**
@@ -387,6 +423,13 @@ int dspir_execute_f32(const dspir_transform *t,
 int dspir_execute_f64(const dspir_transform *t,
                        double *DSPIR_RESTRICT out,
                        const double *DSPIR_RESTRICT in);
+
+/* Split-plane execution (separate real/imag arrays for better SIMD) */
+int dspir_execute_split_f32(const dspir_transform *t,
+                             float *DSPIR_RESTRICT out_re,
+                             float *DSPIR_RESTRICT out_im,
+                             const float *DSPIR_RESTRICT in_re,
+                             const float *DSPIR_RESTRICT in_im);
 #ifdef DSPIR_HAS_FP16
     /* _Float16 is a C extension; skip for C++ */
     #ifndef __cplusplus
@@ -406,8 +449,9 @@ int dspir_execute_fp8(const dspir_transform *t,
 /* --- JIT COMPILATION --- */
 
 /* JIT compilation flags */
-#define DSPIR_FLAG_JIT_INPLACE 0x0100  /**< JIT: Work in-place without register file */
-#define DSPIR_FLAG_JIT_SIMD    0x0200  /**< JIT: Use SIMD intrinsics */
+#define DSPIR_FLAG_JIT_INPLACE     0x0100  /**< JIT: Work in-place without register file */
+#define DSPIR_FLAG_JIT_SIMD        0x0200  /**< JIT: Use SIMD intrinsics */
+#define DSPIR_FLAG_JIT_SPLIT_PLANE 0x0400  /**< JIT: Use split real/imag planes for better vectorization */
 
 /**
  * @brief Create a JIT compilation context
