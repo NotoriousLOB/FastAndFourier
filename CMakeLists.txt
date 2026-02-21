@@ -158,6 +158,7 @@ set(DSPIR_CORE_SOURCES
     src/dspir_transforms.c
     src/dsir_twiddles.c
     src/chirp.c
+    src/chirp_builtins.c
 )
 
 set(DSPIR_X86_SOURCES
@@ -201,7 +202,7 @@ add_library(fastandfourier STATIC ${DSPIR_CORE_SOURCES})
 set_target_properties(fastandfourier PROPERTIES
     VERSION ${PROJECT_VERSION}
     SOVERSION ${PROJECT_VERSION_MAJOR}
-    PUBLIC_HEADER "include/dspir.h;include/fastandfourier.h;include/chirp.h"
+    PUBLIC_HEADER "include/dspir.h;include/fastandfourier.h;include/chirp.h;include/chirp_builtins.h"
     C_STANDARD 11
     C_STANDARD_REQUIRED ON
     POSITION_INDEPENDENT_CODE ON

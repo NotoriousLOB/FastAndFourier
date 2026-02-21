@@ -22,7 +22,7 @@
 #include <assert.h>
 
 /* Builtin registry */
-#define CHIRP_MAX_BUILTINS 128
+#define CHIRP_MAX_BUILTINS 256
 #define CHIRP_MAX_INST 1024
 #define CHIRP_MAX_SYMBOL 128
 
@@ -31,8 +31,8 @@ typedef struct {
     void (*fn)(void);
 } chirp_builtin;
 
-static chirp_builtin chirp_table[CHIRP_MAX_BUILTINS];
-static int chirp_count = 0;
+chirp_builtin chirp_table[CHIRP_MAX_BUILTINS];
+int chirp_count = 0;
 static int chirp_initialized = 0;
 
 /* Token types for the lexer */
@@ -396,7 +396,7 @@ static chirp_node* chirp_parse_expr(chirp_lexer *lex) {
         }
         
         case CHIRP_TOK_SYMBOL: {
-            /* Bare symbol */
+            /* Bare symbol - check for registered builtins first */
             if (strcmp(tok.text, "twiddle") == 0) {
                 node = chirp_node_new(CHIRP_NODE_TWIDDLE);
             } else if (strcmp(tok.text, "reduce-sum") == 0) {
@@ -408,6 +408,10 @@ static chirp_node* chirp_parse_expr(chirp_lexer *lex) {
             } else if (strcmp(tok.text, "reduce-min") == 0) {
                 node = chirp_node_new(CHIRP_NODE_REDUCE);
                 node->sym = strdup("min");
+            } else if (chirp_lookup_builtin(tok.text) >= 0) {
+                /* Registered builtin function - first class! */
+                node = chirp_node_new(CHIRP_NODE_CUSTOM);
+                node->sym = strdup(tok.text);
             } else {
                 node = chirp_node_new(CHIRP_NODE_LITERAL);
                 node->sym = strdup(tok.text);
@@ -563,11 +567,19 @@ static void chirp_compile_node_emit(chirp_node *node, dspir_transform *t, int *i
         }
         
         case CHIRP_NODE_CUSTOM: {
-            if (node->n_children > 0 && node->children[0]->sym) {
+            /* Support both: (custom name) and bare function name */
+            const char *fn_name = NULL;
+            if (node->sym) {
+                fn_name = node->sym;  /* First-class: just 'name' */
+            } else if (node->n_children > 0 && node->children[0]->sym) {
+                fn_name = node->children[0]->sym;  /* Old syntax: (custom name) */
+            }
+            
+            if (fn_name) {
                 inst.packed = DSPIR_CALL_BUILTIN;
-                inst.a0 = chirp_lookup_builtin(node->children[0]->sym);
+                inst.a0 = chirp_lookup_builtin(fn_name);
                 if (inst.a0 < 0) {
-                    fprintf(stderr, "Chirp: unknown builtin '%s'\n", node->children[0]->sym);
+                    fprintf(stderr, "Chirp: unknown builtin '%s'\n", fn_name);
                     inst.a0 = 0;
                 }
             }
