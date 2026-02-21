@@ -722,11 +722,43 @@ done:
     return 0;
 }
 
-/* Wrapper for core API compatibility */
+/* Wrapper for core API compatibility - uses split-plane by default */
 int dspir_execute_f32(const dspir_transform *t,
                       float *restrict out,
                       const float *restrict in) {
-    return dspir_vm_execute_f32(t, out, in);
+    /* Use split-plane execution for better performance */
+    const size_t n = t->n;
+    float *in_re = (float*)alloc_regs(n * sizeof(float));
+    float *in_im = (float*)alloc_regs(n * sizeof(float));
+    float *out_re = (float*)alloc_regs(n * sizeof(float));
+    float *out_im = (float*)alloc_regs(n * sizeof(float));
+    
+    if (!in_re || !in_im || !out_re || !out_im) {
+        free_regs(in_re); free_regs(in_im);
+        free_regs(out_re); free_regs(out_im);
+        return dspir_vm_execute_f32(t, out, in);  /* Fallback to interleaved */
+    }
+    
+    /* Deinterleave input */
+    for (size_t i = 0; i < n; i++) {
+        in_re[i] = in[i * 2];
+        in_im[i] = in[i * 2 + 1];
+    }
+    
+    /* Execute split-plane */
+    int result = dspir_execute_split_f32(t, out_re, out_im, in_re, in_im);
+    
+    /* Reinterleave output */
+    if (result == 0) {
+        for (size_t i = 0; i < n; i++) {
+            out[i * 2] = out_re[i];
+            out[i * 2 + 1] = out_im[i];
+        }
+    }
+    
+    free_regs(in_re); free_regs(in_im);
+    free_regs(out_re); free_regs(out_im);
+    return result;
 }
 
 /**
@@ -899,9 +931,211 @@ done_f64:
     return 0;
 }
 
-/* Wrapper for core API compatibility */
+/* Wrapper for core API compatibility - uses split-plane by default */
 int dspir_execute_f64(const dspir_transform *t,
                       double *restrict out,
                       const double *restrict in) {
-    return dspir_vm_execute_f64(t, out, in);
+    /* Use split-plane execution for better performance */
+    const size_t n = t->n;
+    double *in_re = (double*)alloc_regs(n * sizeof(double));
+    double *in_im = (double*)alloc_regs(n * sizeof(double));
+    double *out_re = (double*)alloc_regs(n * sizeof(double));
+    double *out_im = (double*)alloc_regs(n * sizeof(double));
+    
+    if (!in_re || !in_im || !out_re || !out_im) {
+        free_regs(in_re); free_regs(in_im);
+        free_regs(out_re); free_regs(out_im);
+        return dspir_vm_execute_f64(t, out, in);  /* Fallback to interleaved */
+    }
+    
+    /* Deinterleave input */
+    for (size_t i = 0; i < n; i++) {
+        in_re[i] = in[i * 2];
+        in_im[i] = in[i * 2 + 1];
+    }
+    
+    /* Execute split-plane */
+    int result = dspir_execute_split_f64(t, out_re, out_im, in_re, in_im);
+    
+    /* Reinterleave output */
+    if (result == 0) {
+        for (size_t i = 0; i < n; i++) {
+            out[i * 2] = out_re[i];
+            out[i * 2 + 1] = out_im[i];
+        }
+    }
+    
+    free_regs(in_re); free_regs(in_im);
+    free_regs(out_re); free_regs(out_im);
+    return result;
+}
+
+/**
+ * @brief Split-plane FP32 execution (separate real/imag arrays)
+ * 
+ * This is more efficient for SIMD on x86 with AVX-512.
+ * Input/output are separate real and imaginary arrays instead of interleaved.
+ */
+int dspir_execute_split_f32(const dspir_transform *t,
+                             float *restrict out_re,
+                             float *restrict out_im,
+                             const float *restrict in_re,
+                             const float *restrict in_im) {
+    if (!t || !out_re || !out_im || !in_re || !in_im) return -1;
+    if (!t->code || t->n_inst == 0) return -1;
+    
+    /* Allocate separate register planes */
+    float *regs_re = (float*)alloc_regs(t->n * sizeof(float));
+    float *regs_im = (float*)alloc_regs(t->n * sizeof(float));
+    if (!regs_re || !regs_im) {
+        free_regs(regs_re);
+        free_regs(regs_im);
+        return -1;
+    }
+    memset(regs_re, 0, t->n * sizeof(float));
+    memset(regs_im, 0, t->n * sizeof(float));
+    
+    const float *tw = (const float *)t->twiddles[0];
+    
+    for (size_t ip = 0; ip < t->n_inst; ip++) {
+        const dspir_inst *inst = &t->code[ip];
+        uint8_t op = DSPIR_GET_OP(inst->packed);
+        
+        switch (op) {
+            case DSPIR_LOAD: {
+                size_t in_idx = inst->a1;
+                size_t reg_idx = inst->a0;
+                if (reg_idx < t->n) {
+                    regs_re[reg_idx] = in_re[in_idx];
+                    regs_im[reg_idx] = in_im[in_idx];
+                }
+                break;
+            }
+            case DSPIR_STORE: {
+                size_t out_idx = inst->a0;
+                size_t reg_idx = inst->a1;
+                if (out_idx < t->n && reg_idx < t->n) {
+                    out_re[out_idx] = regs_re[reg_idx];
+                    out_im[out_idx] = regs_im[reg_idx];
+                }
+                break;
+            }
+            case DSPIR_BFLY2: {
+                uint32_t a0 = inst->a0;
+                uint32_t a1 = inst->a1;
+                if (a0 < t->n && a1 < t->n) {
+                    float ar = regs_re[a0], ai = regs_im[a0];
+                    float br = regs_re[a1], bi = regs_im[a1];
+                    regs_re[a0] = ar + br; regs_im[a0] = ai + bi;
+                    regs_re[a1] = ar - br; regs_im[a1] = ai - bi;
+                }
+                break;
+            }
+            case DSPIR_TWIDDLE_MUL: {
+                uint32_t a0 = inst->a0;
+                uint32_t a1 = inst->a1;
+                if (a0 < t->n && a1 < t->n) {
+                    float r = regs_re[a0], i = regs_im[a0];
+                    float wr = tw[a1 * 2], wi = tw[a1 * 2 + 1];
+                    regs_re[a0] = r * wr - i * wi;
+                    regs_im[a0] = r * wi + i * wr;
+                }
+                break;
+            }
+            case DSPIR_END:
+                goto done_split;
+            default:
+                break;
+        }
+    }
+    
+done_split:
+    free_regs(regs_re);
+    free_regs(regs_im);
+    return 0;
+}
+
+
+/**
+ * @brief Split-plane FP64 execution (separate real/imag arrays)
+ * 
+ * Double precision variant for higher accuracy requirements.
+ */
+int dspir_execute_split_f64(const dspir_transform *t,
+                             double *restrict out_re,
+                             double *restrict out_im,
+                             const double *restrict in_re,
+                             const double *restrict in_im) {
+    if (!t || !out_re || !out_im || !in_re || !in_im) return -1;
+    if (!t->code || t->n_inst == 0) return -1;
+    
+    /* Allocate separate register planes */
+    double *regs_re = (double*)alloc_regs(t->n * sizeof(double));
+    double *regs_im = (double*)alloc_regs(t->n * sizeof(double));
+    if (!regs_re || !regs_im) {
+        free_regs(regs_re);
+        free_regs(regs_im);
+        return -1;
+    }
+    memset(regs_re, 0, t->n * sizeof(double));
+    memset(regs_im, 0, t->n * sizeof(double));
+    
+    const double *tw = (const double *)t->twiddles[0];
+    
+    for (size_t ip = 0; ip < t->n_inst; ip++) {
+        const dspir_inst *inst = &t->code[ip];
+        uint8_t op = DSPIR_GET_OP(inst->packed);
+        
+        switch (op) {
+            case DSPIR_LOAD: {
+                size_t in_idx = inst->a1;
+                size_t reg_idx = inst->a0;
+                if (reg_idx < t->n) {
+                    regs_re[reg_idx] = in_re[in_idx];
+                    regs_im[reg_idx] = in_im[in_idx];
+                }
+                break;
+            }
+            case DSPIR_STORE: {
+                size_t out_idx = inst->a0;
+                size_t reg_idx = inst->a1;
+                if (out_idx < t->n && reg_idx < t->n) {
+                    out_re[out_idx] = regs_re[reg_idx];
+                    out_im[out_idx] = regs_im[reg_idx];
+                }
+                break;
+            }
+            case DSPIR_BFLY2: {
+                uint32_t a0 = inst->a0;
+                uint32_t a1 = inst->a1;
+                if (a0 < t->n && a1 < t->n) {
+                    double ar = regs_re[a0], ai = regs_im[a0];
+                    double br = regs_re[a1], bi = regs_im[a1];
+                    regs_re[a0] = ar + br; regs_im[a0] = ai + bi;
+                    regs_re[a1] = ar - br; regs_im[a1] = ai - bi;
+                }
+                break;
+            }
+            case DSPIR_TWIDDLE_MUL: {
+                uint32_t a0 = inst->a0;
+                uint32_t a1 = inst->a1;
+                if (a0 < t->n && a1 < t->n) {
+                    double r = regs_re[a0], i = regs_im[a0];
+                    double wr = tw[a1 * 2], wi = tw[a1 * 2 + 1];
+                    regs_re[a0] = r * wr - i * wi;
+                    regs_im[a0] = r * wi + i * wr;
+                }
+                break;
+            }
+            case DSPIR_END:
+                goto done_split_f64;
+            default:
+                break;
+        }
+    }
+    
+done_split_f64:
+    free_regs(regs_re);
+    free_regs(regs_im);
+    return 0;
 }

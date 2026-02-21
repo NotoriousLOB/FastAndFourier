@@ -141,6 +141,12 @@ endif()
 add_compile_definitions(DSPIR_ENABLE_FP32)
 add_compile_definitions(DSPIR_ENABLE_FP64)
 
+# Single-header fallback mode (disables JIT, uses VM only)
+if(FASTANDFOURIER_SINGLE_HEADER)
+    add_compile_definitions(DSPIR_SINGLE_HEADER)
+    message(STATUS "Single-header mode: JIT disabled, VM only")
+endif()
+
 # Include directories
 include_directories(${CMAKE_SOURCE_DIR}/include)
 include_directories(${CMAKE_SOURCE_DIR}/src)
@@ -151,6 +157,7 @@ set(DSPIR_CORE_SOURCES
     src/dspir_vm.c
     src/dspir_transforms.c
     src/dsir_twiddles.c
+    src/chirp.c
 )
 
 set(DSPIR_X86_SOURCES
@@ -194,7 +201,7 @@ add_library(fastandfourier STATIC ${DSPIR_CORE_SOURCES})
 set_target_properties(fastandfourier PROPERTIES
     VERSION ${PROJECT_VERSION}
     SOVERSION ${PROJECT_VERSION_MAJOR}
-    PUBLIC_HEADER "include/dspir.h;include/fastandfourier.h"
+    PUBLIC_HEADER "include/dspir.h;include/fastandfourier.h;include/chirp.h"
     C_STANDARD 11
     C_STANDARD_REQUIRED ON
     POSITION_INDEPENDENT_CODE ON

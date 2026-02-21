@@ -5,6 +5,7 @@ set(EXAMPLES
     dct_example
     wavelet_example
     jit_example
+    chirp_example
 )
 
 foreach(example ${EXAMPLES})

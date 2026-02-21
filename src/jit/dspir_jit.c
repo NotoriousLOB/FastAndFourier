@@ -28,6 +28,79 @@
     #define DSPIR_SO_EXT ".so"
 #endif
 
+/* Cache directory */
+#define DSPIR_CACHE_DIR ".cache/fastandfourier"
+
+/**
+ * @brief Simple hash function for IR bytecode (FNV-1a variant)
+ * 
+ * This generates a unique identifier for a transform based on its
+ * IR bytecode, size, type, and flags. Used for cache filenames.
+ */
+static uint64_t hash_transform(const dspir_transform *t, uint32_t flags) {
+    const uint64_t FNV_OFFSET = 14695981039346656037ULL;
+    const uint64_t FNV_PRIME = 1099511628211ULL;
+    
+    uint64_t hash = FNV_OFFSET;
+    
+    /* Hash transform parameters */
+    hash ^= t->n;
+    hash *= FNV_PRIME;
+    hash ^= t->type;
+    hash *= FNV_PRIME;
+    hash ^= t->precision;
+    hash *= FNV_PRIME;
+    hash ^= flags;
+    hash *= FNV_PRIME;
+    
+    /* Hash the IR bytecode */
+    for (size_t i = 0; i < t->n_inst; i++) {
+        hash ^= t->code[i].packed;
+        hash *= FNV_PRIME;
+        hash ^= t->code[i].a0;
+        hash *= FNV_PRIME;
+        hash ^= t->code[i].a1;
+        hash *= FNV_PRIME;
+        hash ^= t->code[i].a2;
+        hash *= FNV_PRIME;
+    }
+    
+    return hash;
+}
+
+/**
+ * @brief Get the cache directory path
+ * @param buf Buffer to store path
+ * @param bufsize Size of buffer
+ * @return 0 on success, -1 on failure
+ */
+static int get_cache_dir(char *buf, size_t bufsize) {
+    const char *home = getenv("HOME");
+    if (!home) home = getenv("USERPROFILE");  /* Windows */
+    if (!home) return -1;
+    
+    snprintf(buf, bufsize, "%s/%s", home, DSPIR_CACHE_DIR);
+    return 0;
+}
+
+/**
+ * @brief Ensure cache directory exists
+ */
+static void ensure_cache_dir(void) {
+    char path[256];
+    if (get_cache_dir(path, sizeof(path)) != 0) return;
+    
+    /* Create directory if it doesn't exist (mkdir -p equivalent) */
+    struct stat st;
+    if (stat(path, &st) != 0) {
+        /* Try to create parent directory first */
+        char parent[256];
+        snprintf(parent, sizeof(parent), "%s/.cache", getenv("HOME"));
+        mkdir(parent, 0755);
+        mkdir(path, 0755);
+    }
+}
+
 /**
  * @brief JIT compilation context
  */
@@ -38,11 +111,89 @@ struct dspir_jit_ctx {
     char c_path[256];          /**< Path to generated C source */
     int use_native_jit;        /**< Use native code generator instead of compiler */
     uint32_t flags;            /**< JIT compilation flags */
+    int from_cache;            /**< Loaded from persistent cache */
     
     /* Native JIT state (for future implementation) */
     void *native_code;         /**< Directly generated machine code */
     size_t native_size;        /**< Size of native code */
 };
+
+/**
+ * @brief Try to load a cached JIT kernel
+ * @param ctx JIT context
+ * @param t Transform to load kernel for
+ * @param flags JIT flags
+ * @return 1 if loaded from cache, 0 if not found
+ */
+static int try_load_cached_kernel(dspir_jit_ctx *ctx, const dspir_transform *t, uint32_t flags) {
+    char cache_dir[256];
+    if (get_cache_dir(cache_dir, sizeof(cache_dir)) != 0) return 0;
+    
+    uint64_t hash = hash_transform(t, flags);
+    snprintf(ctx->so_path, sizeof(ctx->so_path), 
+             "%s/jit_%016lx%s", cache_dir, hash, DSPIR_SO_EXT);
+    
+    /* Check if cached file exists */
+    struct stat st;
+    if (stat(ctx->so_path, &st) != 0) return 0;
+    
+    /* Try to load the cached library */
+    ctx->handle = dlopen(ctx->so_path, RTLD_NOW | RTLD_LOCAL);
+    if (!ctx->handle) return 0;
+    
+    ctx->fn = (dspir_kernel_fn)dlsym(ctx->handle, "dspir_jit_kernel");
+    if (!ctx->fn) {
+        dlclose(ctx->handle);
+        ctx->handle = NULL;
+        return 0;
+    }
+    
+    ctx->from_cache = 1;
+    ctx->c_path[0] = '\0';  /* No C source for cached kernels */
+    printf("[JIT] Loaded cached kernel: %s\n", ctx->so_path);
+    return 1;
+}
+
+/**
+ * @brief Save compiled kernel to cache
+ * @param ctx JIT context
+ * @param t Transform that was compiled
+ * @param flags JIT flags
+ */
+static void save_kernel_to_cache(dspir_jit_ctx *ctx, const dspir_transform *t, uint32_t flags) {
+    if (ctx->from_cache) return;  /* Already cached */
+    if (!ctx->so_path[0]) return;  /* No SO to cache */
+    
+    ensure_cache_dir();
+    
+    char cache_dir[256];
+    if (get_cache_dir(cache_dir, sizeof(cache_dir)) != 0) return;
+    
+    uint64_t hash = hash_transform(t, flags);
+    char cached_so[256];
+    snprintf(cached_so, sizeof(cached_so), 
+             "%s/jit_%016lx%s", cache_dir, hash, DSPIR_SO_EXT);
+    
+    /* Copy the compiled .so to cache */
+    FILE *src = fopen(ctx->so_path, "rb");
+    if (!src) return;
+    
+    FILE *dst = fopen(cached_so, "wb");
+    if (!dst) {
+        fclose(src);
+        return;
+    }
+    
+    char buf[4096];
+    size_t n;
+    while ((n = fread(buf, 1, sizeof(buf), src)) > 0) {
+        fwrite(buf, 1, n, dst);
+    }
+    
+    fclose(src);
+    fclose(dst);
+    printf("[JIT] Saved kernel to cache: %s\n", cached_so);
+}
 
 /**
  * @brief Create a JIT compilation context
@@ -267,28 +418,126 @@ static void emit_scalar_twiddle_mul(FILE *f, uint8_t a0, uint8_t a1, int inplace
  * This enables much better auto-vectorization on x86 with AVX-512.
  * Real and imaginary arrays are separate 64-byte aligned streams.
  */
-static void emit_split_bfly2(FILE *f, uint8_t a0, uint8_t a1, int inplace) {
-    const char *re = inplace ? "data_re" : "regs_re";
-    const char *im = inplace ? "data_im" : "regs_im";
+/* SPLIT-PLANE EMITTER v2 – Simplified, always split-plane internally */
+
+static void emit_split_bfly2(FILE *f, uint8_t a0, uint8_t a1) {
     fprintf(f, "    {\n");
-    fprintf(f, "        float ar = %s[%u], ai = %s[%u];\n", re, a0, im, a0);
-    fprintf(f, "        float br = %s[%u], bi = %s[%u];\n", re, a1, im, a1);
-    fprintf(f, "        %s[%u] = ar + br; %s[%u] = ai + bi;\n", re, a0, im, a0);
-    fprintf(f, "        %s[%u] = ar - br; %s[%u] = ai - bi;\n", re, a1, im, a1);
+    fprintf(f, "        float ar = regs_re[%u], ai = regs_im[%u];\n", a0, a0);
+    fprintf(f, "        float br = regs_re[%u], bi = regs_im[%u];\n", a1, a1);
+    fprintf(f, "        regs_re[%u] = ar + br; regs_im[%u] = ai + bi;\n", a0, a0);
+    fprintf(f, "        regs_re[%u] = ar - br; regs_im[%u] = ai - bi;\n", a1, a1);
+    fprintf(f, "    }\n");
+}
+
+static void emit_split_twiddle_mul(FILE *f, uint8_t a0, uint8_t a1) {
+    fprintf(f, "    {\n");
+    fprintf(f, "        float r = regs_re[%u], i = regs_im[%u];\n", a0, a0);
+    fprintf(f, "        float wr = tw_re[%u], wi = tw_im[%u];\n", a1, a1);
+    fprintf(f, "        regs_re[%u] = r*wr - i*wi;\n", a0);
+    fprintf(f, "        regs_im[%u] = r*wi + i*wr;\n", a0);
     fprintf(f, "    }\n");
 }
 
 /**
- * @brief Generate split-plane twiddle multiply
+ * @brief Generate NEON split-plane twiddle multiply using FMA (FP32)
+ * 
+ * Uses NEON fused multiply-accumulate for optimal performance:
+ * - vfms_f32 for multiply-subtract (real part)
+ * - vfma_f32 for multiply-accumulate (imag part)
+ * 
+ * Reads twiddle factors from interleaved array.
  */
-static void emit_split_twiddle_mul(FILE *f, uint8_t a0, uint8_t a1, int inplace) {
-    const char *re = inplace ? "data_re" : "regs_re";
-    const char *im = inplace ? "data_im" : "regs_im";
-    fprintf(f, "    {\n");
-    fprintf(f, "        float r = %s[%u], i = %s[%u];\n", re, a0, im, a0);
-    fprintf(f, "        float wr = tw_re[%u], wi = tw_im[%u];\n", a1, a1);
-    fprintf(f, "        %s[%u] = r*wr - i*wi;\n", re, a0);
-    fprintf(f, "        %s[%u] = r*wi + i*wr;\n", im, a0);
+static void emit_neon_split_twiddle_mul(FILE *f, uint8_t base_idx) {
+    fprintf(f, "    { /* NEON split-plane twiddle FP32 at %u */\n", base_idx);
+    fprintf(f, "        float32x2_t r = vld1_f32(&regs_re[%u]);\n", base_idx);
+    fprintf(f, "        float32x2_t i = vld1_f32(&regs_im[%u]);\n", base_idx);
+    /* Load interleaved twiddles and unzip */
+    fprintf(f, "        float32x2x2_t tw = vld2_f32(&twiddles[%u*2]);\n", base_idx);
+    fprintf(f, "        float32x2_t wr = tw.val[0];\n");
+    fprintf(f, "        float32x2_t wi = tw.val[1];\n");
+    /* Real part: r*wr - i*wi using FMA */
+    fprintf(f, "        float32x2_t t1 = vmul_f32(r, wr);\n");
+    fprintf(f, "        float32x2_t res_re = vfms_f32(t1, i, wi);\n");
+    /* Imag part: r*wi + i*wr using FMA */
+    fprintf(f, "        float32x2_t t2 = vmul_f32(r, wi);\n");
+    fprintf(f, "        float32x2_t res_im = vfma_f32(t2, i, wr);\n");
+    fprintf(f, "        vst1_f32(&regs_re[%u], res_re);\n", base_idx);
+    fprintf(f, "        vst1_f32(&regs_im[%u], res_im);\n", base_idx);
+    fprintf(f, "    }\n");
+}
+
+/**
+ * @brief Generate NEON split-plane twiddle multiply using FMA (FP64)
+ * 
+ * Uses 128-bit registers with 2 doubles each for higher precision.
+ * Matches the reference implementation pattern:
+ *   bre = vmlsq_f64(vmulq_f64(xr, cr), xi, ci);  // xr*cr - xi*ci
+ *   bim = vfmaq_f64(vmulq_f64(xr, ci), xi, cr);  // xr*ci + xi*cr
+ * 
+ * Reads twiddle factors from interleaved array.
+ */
+static void emit_neon_split_twiddle_mul_f64(FILE *f, uint8_t base_idx) {
+    fprintf(f, "    { /* NEON split-plane twiddle FP64 at %u */\n", base_idx);
+    fprintf(f, "        float64x2_t r = vld1q_f64(&regs_re[%u]);\n", base_idx);
+    fprintf(f, "        float64x2_t i = vld1q_f64(&regs_im[%u]);\n", base_idx);
+    /* Load interleaved twiddles and unzip */
+    fprintf(f, "        float64x2x2_t tw = vld2q_f64(&twiddles[%u*2]);\n", base_idx);
+    fprintf(f, "        float64x2_t wr = tw.val[0];\n");
+    fprintf(f, "        float64x2_t wi = tw.val[1];\n");
+    /* Real part: r*wr - i*wi using FMA */
+    fprintf(f, "        float64x2_t t1 = vmulq_f64(r, wr);\n");
+    fprintf(f, "        float64x2_t res_re = vfmsq_f64(t1, i, wi);\n");
+    /* Imag part: r*wi + i*wr using FMA */
+    fprintf(f, "        float64x2_t t2 = vmulq_f64(r, wi);\n");
+    fprintf(f, "        float64x2_t res_im = vfmaq_f64(t2, i, wr);\n");
+    fprintf(f, "        vst1q_f64(&regs_re[%u], res_re);\n", base_idx);
+    fprintf(f, "        vst1q_f64(&regs_im[%u], res_im);\n", base_idx);
+    fprintf(f, "    }\n");
+}
+
+/**
+ * @brief Generate AVX-512 SIMD code for BFLY2 (16 complex butterflies at once)
+ * 
+ * Processes 16 complex elements (32 floats) in a single AVX-512 register pair.
+ * This gives maximum throughput on x86_64 with AVX-512 support.
+ */
+static void emit_avx512_bfly2(FILE *f, uint8_t base_idx, int inplace) {
+    const char *ptr = inplace ? "data" : "regs";
+    
+    fprintf(f, "    { /* AVX-512 BFLY2 batch at %u */\n", base_idx);
+    fprintf(f, "        __m512 ar = _mm512_load_ps(&%s[%u]);\n", ptr, base_idx * 2);
+    fprintf(f, "        __m512 ai = _mm512_load_ps(&%s[%u]);\n", ptr, base_idx * 2 + 16);
+    fprintf(f, "        __m512 br = _mm512_load_ps(&%s[%u]);\n", ptr, base_idx * 2 + 32);
+    fprintf(f, "        __m512 bi = _mm512_load_ps(&%s[%u]);\n", ptr, base_idx * 2 + 48);
+    fprintf(f, "        _mm512_store_ps(&%s[%u], _mm512_add_ps(ar, br));\n", ptr, base_idx * 2);
+    fprintf(f, "        _mm512_store_ps(&%s[%u], _mm512_add_ps(ai, bi));\n", ptr, base_idx * 2 + 16);
+    fprintf(f, "        _mm512_store_ps(&%s[%u], _mm512_sub_ps(ar, br));\n", ptr, base_idx * 2 + 32);
+    fprintf(f, "        _mm512_store_ps(&%s[%u], _mm512_sub_ps(ai, bi));\n", ptr, base_idx * 2 + 48);
+    fprintf(f, "    }\n");
+}
+
+/**
+ * @brief Generate AVX-512 SIMD code for twiddle multiply
+ * 
+ * Uses AVX-512 FMA for complex multiplication:
+ * (a + ib) * (c + id) = (ac - bd) + i(ad + bc)
+ * Processes 16 complex values at once.
+ */
+static void emit_avx512_twiddle_mul(FILE *f, uint8_t base_idx, int inplace) {
+    const char *ptr = inplace ? "data" : "regs";
+    
+    fprintf(f, "    { /* AVX-512 TWIDDLE_MUL batch at %u */\n", base_idx);
+    fprintf(f, "        __m512 r = _mm512_load_ps(&%s[%u]);\n", ptr, base_idx * 2);
+    fprintf(f, "        __m512 i = _mm512_load_ps(&%s[%u]);\n", ptr, base_idx * 2 + 16);
+    fprintf(f, "        __m512 wr = _mm512_load_ps(&tw[%u*2]);\n", base_idx);
+    fprintf(f, "        __m512 wi = _mm512_load_ps(&tw[%u*2+16]);\n", base_idx);
+    /* Complex multiply: (r + ii) * (wr + i*wi) = (r*wr - i*wi) + i(r*wi + i*wr) */
+    fprintf(f, "        __m512 t1 = _mm512_mul_ps(r, wr);\n");
+    fprintf(f, "        __m512 t2 = _mm512_fmsub_ps(i, wi, t1);\n");
+    fprintf(f, "        __m512 t3 = _mm512_mul_ps(r, wi);\n");
+    fprintf(f, "        __m512 t4 = _mm512_fmadd_ps(i, wr, t3);\n");
+    fprintf(f, "        _mm512_store_ps(&%s[%u], t2);\n", ptr, base_idx * 2);
+    fprintf(f, "        _mm512_store_ps(&%s[%u], t4);\n", ptr, base_idx * 2 + 16);
     fprintf(f, "    }\n");
 }
 
@@ -336,12 +585,14 @@ static void dspir_jit_generate_c_ex(dspir_transform *t,
     
     int use_simd = (flags & DSPIR_FLAG_JIT_SIMD) && (arch == DSPIR_ARCH_TYPE_AARCH64);
     int inplace = flags & DSPIR_FLAG_JIT_INPLACE;
+    int split_plane = flags & DSPIR_FLAG_JIT_SPLIT_PLANE;
     
     /* Header */
     fprintf(f, "/* Auto-generated JIT kernel for FastAndFourier */\n");
-    fprintf(f, "/* Flags: %s%s */\n", 
+    fprintf(f, "/* Flags: %s%s%s */\n", 
             use_simd ? "SIMD " : "",
-            inplace ? "INPLACE" : "");
+            inplace ? "INPLACE " : "",
+            split_plane ? "SPLIT_PLANE" : "");
     fprintf(f, "#include <stddef.h>\n");
     fprintf(f, "#include <stdint.h>\n");
     fprintf(f, "#include <stdlib.h>\n");
@@ -362,47 +613,43 @@ static void dspir_jit_generate_c_ex(dspir_transform *t,
         fprintf(f, "\n");
     }
     
-    /* Kernel function signature with aggressive optimization hints */
+    /* Compute maximum register index needed */
+    size_t max_reg_idx = 0;
+    for (size_t i = 0; i < t->n_inst; i++) {
+        const dspir_inst *inst = &t->code[i];
+        uint8_t op = DSPIR_GET_OP(inst->packed);
+        if (op != DSPIR_NOP) {
+            if (inst->a0 > max_reg_idx) max_reg_idx = inst->a0;
+            if (inst->a1 > max_reg_idx) max_reg_idx = inst->a1;
+        }
+    }
+    size_t needed_regs = max_reg_idx + 1;
+    
+    /* Kernel function signature - always interleaved I/O for API compatibility */
     fprintf(f, "__attribute__((visibility(\"default\"), flatten, hot, aligned(64)))\n");
     fprintf(f, "void dspir_jit_kernel(void *restrict out,\n");
     fprintf(f, "                      const void *restrict in,\n");
     fprintf(f, "                      size_t n,\n");
-    fprintf(f, "                      const void *twiddles) {\n");
+    fprintf(f, "                      const void *restrict twiddles) {\n");
+    fprintf(f, "    (void)n;\n");
+    fprintf(f, "    float *restrict const out_f = (float*)out;\n");
+    fprintf(f, "    const float *restrict const in_f = (const float*)in;\n");
+    fprintf(f, "    const float *restrict const tw = (const float*)twiddles;\n\n");
     
-    /* Cast pointers */
-    if (inplace) {
-        /* In-place mode: work directly on output buffer */
-        fprintf(f, "    float *restrict const data = (float*)out;\n");
-        fprintf(f, "    const float *restrict const tw = (const float*)twiddles;\n");
-        fprintf(f, "    (void)in; (void)n;\n\n");
+    /* Stack threshold: 64KB for stack allocation */
+    const size_t STACK_THRESHOLD = 64 * 1024;
+    int use_stack = (needed_regs * sizeof(float) * 2 <= STACK_THRESHOLD);
+    
+    /* Split-plane register file */
+    fprintf(f, "    /* Split-plane register file for %zu complex points */\n", t->n);
+    if (use_stack) {
+        fprintf(f, "    float regs_re[%zu] __attribute__((aligned(64))) = {0};\n", needed_regs);
+        fprintf(f, "    float regs_im[%zu] __attribute__((aligned(64))) = {0};\n\n", needed_regs);
     } else {
-        fprintf(f, "    float *restrict const out_f = (float*)out;\n");
-        fprintf(f, "    const float *restrict const in_f = (const float*)in;\n");
-        fprintf(f, "    const float *restrict const tw = (const float*)twiddles;\n");
-        fprintf(f, "    (void)n;\n\n");
-    }
-    
-    /* Register file - only if not in-place mode */
-    size_t needed_regs = t->n * 2;
-    int use_stack = 0;
-    
-    if (!inplace) {
-        /* Stack threshold: 64KB for stack allocation */
-        const size_t STACK_THRESHOLD = 64 * 1024;
-        use_stack = (needed_regs * sizeof(float) <= STACK_THRESHOLD);
-        
-        fprintf(f, "    /* Register file for %zu complex points (%s) */\n", 
-                t->n, use_stack ? "stack" : "heap");
-        if (use_stack) {
-            fprintf(f, "    float regs[%zu] __attribute__((aligned(64))) = {0};\n\n", 
-                    needed_regs);
-        } else {
-            fprintf(f, "    float *regs = (float*)aligned_alloc(64, %zu * sizeof(float));\n",
-                    needed_regs);
-            fprintf(f, "    if (!regs) return;\n");
-            fprintf(f, "    for (size_t i = 0; i < %zu; i++) regs[i] = 0.0f;\n\n",
-                    needed_regs);
-        }
+        fprintf(f, "    float *regs_re = (float*)aligned_alloc(64, %zu * sizeof(float));\n", needed_regs);
+        fprintf(f, "    float *regs_im = (float*)aligned_alloc(64, %zu * sizeof(float));\n", needed_regs);
+        fprintf(f, "    if (!regs_re || !regs_im) return;\n");
+        fprintf(f, "    for (size_t i = 0; i < %zu; i++) { regs_re[i] = 0.0f; regs_im[i] = 0.0f; }\n\n", needed_regs);
     }
     
     /* Generate code for each instruction */
@@ -418,83 +665,53 @@ static void dspir_jit_generate_c_ex(dspir_transform *t,
                 break;
                 
             case DSPIR_LOAD:
-                if (inplace) {
-                    /* In-place: no load needed, data already in place */
-                    fprintf(f, "    /* In-place: data[%u] already loaded */\n", inst->a1 * 2);
-                } else {
-                    /* Interleaved complex: regs[2*a0] = real, regs[2*a0+1] = imag */
-                    fprintf(f, "    regs[%u] = in_f[%u];\n", inst->a0 * 2, inst->a1 * 2);
-                    fprintf(f, "    regs[%u] = in_f[%u];\n", inst->a0 * 2 + 1, inst->a1 * 2 + 1);
-                }
+                /* Deinterleave on load: regs[inst->a0] = in[inst->a1] */
+                fprintf(f, "    regs_re[%u] = in_f[%u];\n", inst->a0, inst->a1 * 2);
+                fprintf(f, "    regs_im[%u] = in_f[%u];\n", inst->a0, inst->a1 * 2 + 1);
                 break;
                 
             case DSPIR_STORE:
-                if (inplace) {
-                    /* In-place: no store needed, data already in place */
-                    fprintf(f, "    /* In-place: data[%u] already stored */\n", inst->a0 * 2);
-                } else {
-                    /* Interleaved complex */
-                    fprintf(f, "    out_f[%u] = regs[%u];\n", inst->a0 * 2, inst->a1 * 2);
-                    fprintf(f, "    out_f[%u] = regs[%u];\n", inst->a0 * 2 + 1, inst->a1 * 2 + 1);
-                }
+                /* Reinterleave on store: out[inst->a0] = regs[inst->a1] */
+                fprintf(f, "    out_f[%u] = regs_re[%u];\n", inst->a0 * 2, inst->a1);
+                fprintf(f, "    out_f[%u] = regs_im[%u];\n", inst->a0 * 2 + 1, inst->a1);
                 break;
                 
             case DSPIR_LOAD_CONST: {
                 union { uint32_t u; float f; } c = { .u = inst->a1 };
-                if (inplace) {
-                    fprintf(f, "    data[%u] = %.9ef;\n", inst->a0, c.f);
-                } else {
-                    fprintf(f, "    regs[%u] = %.9ef;\n", inst->a0, c.f);
-                }
+                fprintf(f, "    regs_re[%u] = %.9ef;\n", inst->a0, c.f);
                 break;
             }
                 
             case DSPIR_BFLY2:
-                /* Complex radix-2 butterfly with interleaved registers */
-                if (use_simd && arch == DSPIR_ARCH_TYPE_AARCH64) {
-                    emit_neon_bfly2(f, inst->a0, inst->a1, inplace);
-                } else {
-                    emit_scalar_bfly2(f, inst->a0, inst->a1, inplace);
-                }
+                /* Always use split-plane butterfly */
+                emit_split_bfly2(f, inst->a0, inst->a1);
                 break;
                 
             case DSPIR_BFLY4:
-                if (inplace) {
-                    fprintf(f, "    {\n");
-                    fprintf(f, "        float r0 = data[%u], r1 = data[%u];\n", 
-                            inst->a0, inst->a0 + 1);
-                    fprintf(f, "        float r2 = data[%u], r3 = data[%u];\n",
-                            inst->a0 + 2, inst->a0 + 3);
-                    fprintf(f, "        float t0 = r0 + r2, t1 = r0 - r2;\n");
-                    fprintf(f, "        float t2 = r1 + r3, t3 = r1 - r3;\n");
-                    fprintf(f, "        data[%u] = t0 + t2;\n", inst->a0);
-                    fprintf(f, "        data[%u] = t0 - t2;\n", inst->a0 + 1);
-                    fprintf(f, "        data[%u] = t1 + t3;\n", inst->a0 + 2);
-                    fprintf(f, "        data[%u] = t1 - t3;\n", inst->a0 + 3);
-                    fprintf(f, "    }\n");
-                } else {
-                    fprintf(f, "    {\n");
-                    fprintf(f, "        float r0 = regs[%u], r1 = regs[%u];\n", 
-                            inst->a0, inst->a0 + 1);
-                    fprintf(f, "        float r2 = regs[%u], r3 = regs[%u];\n",
-                            inst->a0 + 2, inst->a0 + 3);
-                    fprintf(f, "        float t0 = r0 + r2, t1 = r0 - r2;\n");
-                    fprintf(f, "        float t2 = r1 + r3, t3 = r1 - r3;\n");
-                    fprintf(f, "        regs[%u] = t0 + t2;\n", inst->a0);
-                    fprintf(f, "        regs[%u] = t0 - t2;\n", inst->a0 + 1);
-                    fprintf(f, "        regs[%u] = t1 + t3;\n", inst->a0 + 2);
-                    fprintf(f, "        regs[%u] = t1 - t3;\n", inst->a0 + 3);
-                    fprintf(f, "    }\n");
-                }
+                fprintf(f, "    {\n");
+                fprintf(f, "        float r0r = regs_re[%u], r0i = regs_im[%u];\n", inst->a0, inst->a0);
+                fprintf(f, "        float r1r = regs_re[%u], r1i = regs_im[%u];\n", inst->a0 + 1, inst->a0 + 1);
+                fprintf(f, "        float r2r = regs_re[%u], r2i = regs_im[%u];\n", inst->a0 + 2, inst->a0 + 2);
+                fprintf(f, "        float r3r = regs_re[%u], r3i = regs_im[%u];\n", inst->a0 + 3, inst->a0 + 3);
+                fprintf(f, "        float t0r = r0r + r2r, t0i = r0i + r2i;\n");
+                fprintf(f, "        float t1r = r0r - r2r, t1i = r0i - r2i;\n");
+                fprintf(f, "        float t2r = r1r + r3r, t2i = r1i + r3i;\n");
+                fprintf(f, "        float t3r = r1r - r3r, t3i = r1i - r3i;\n");
+                fprintf(f, "        regs_re[%u] = t0r + t2r; regs_im[%u] = t0i + t2i;\n", inst->a0, inst->a0);
+                fprintf(f, "        regs_re[%u] = t0r - t2r; regs_im[%u] = t0i - t2i;\n", inst->a0 + 1, inst->a0 + 1);
+                fprintf(f, "        regs_re[%u] = t1r + t3r; regs_im[%u] = t1i + t3i;\n", inst->a0 + 2, inst->a0 + 2);
+                fprintf(f, "        regs_re[%u] = t1r - t3r; regs_im[%u] = t1i - t3i;\n", inst->a0 + 3, inst->a0 + 3);
+                fprintf(f, "    }\n");
                 break;
                 
             case DSPIR_TWIDDLE_MUL:
-                /* Complex multiply: (a+ib) * (c+id) with interleaved registers */
-                if (use_simd && arch == DSPIR_ARCH_TYPE_AARCH64) {
-                    emit_neon_twiddle_mul(f, inst->a0, inst->a1, inplace);
-                } else {
-                    emit_scalar_twiddle_mul(f, inst->a0, inst->a1, inplace);
-                }
+                /* Always use split-plane twiddle multiply */
+                fprintf(f, "    {\n");
+                fprintf(f, "        float r = regs_re[%u], i = regs_im[%u];\n", inst->a0, inst->a0);
+                fprintf(f, "        float wr = tw[%u*2], wi = tw[%u*2+1];\n", inst->a1, inst->a1);
+                fprintf(f, "        regs_re[%u] = r*wr - i*wi;\n", inst->a0);
+                fprintf(f, "        regs_im[%u] = r*wi + i*wr;\n", inst->a0);
+                fprintf(f, "    }\n");
                 break;
                 
             case DSPIR_FMA:
@@ -617,8 +834,9 @@ static void dspir_jit_generate_c_ex(dspir_transform *t,
     
     /* Cleanup code for heap-allocated register files */
     fprintf(f, "cleanup:\n");
-    if (!inplace && !use_stack) {
-        fprintf(f, "    free(regs);\n");
+    if (!use_stack) {
+        fprintf(f, "    free(regs_re);\n");
+        fprintf(f, "    free(regs_im);\n");
     }
     fprintf(f, "    return;\n");
     fprintf(f, "}\n");
@@ -692,6 +910,14 @@ static int dspir_jit_compile_c(dspir_jit_ctx *ctx, const char *c_path,
 int dspir_jit_compile_ex(dspir_jit_ctx *ctx, dspir_transform *t, uint32_t flags) {
     if (!ctx || !t) return -1;
     
+    ctx->from_cache = 0;
+    
+    /* Try to load from persistent cache first */
+    if (try_load_cached_kernel(ctx, t, flags)) {
+        ctx->flags = flags;
+        return 0;
+    }
+    
     /* Store flags for this compilation */
     ctx->flags = flags;
     
@@ -737,18 +963,20 @@ int dspir_jit_compile_ex(dspir_jit_ctx *ctx, dspir_transform *t, uint32_t flags)
         return -1;
     }
     
+    /* Save to persistent cache for future use */
+    save_kernel_to_cache(ctx, t, flags);
+    
     return 0;
 }
 
 /**
- * @brief Default JIT flags - enable SIMD on supported platforms
+ * @brief Default JIT flags - enable split-plane and SIMD on supported platforms
  * 
- * Note: We don't enable INPLACE by default because the user may pass
- * different input and output buffers. INPLACE should be explicitly
- * requested when the caller knows input == output.
+ * Split-plane is now the default for maximum performance.
+ * INPLACE should be explicitly requested when the caller knows input == output.
  */
 static uint32_t get_default_jit_flags(void) {
-    uint32_t flags = 0;
+    uint32_t flags = DSPIR_FLAG_JIT_SPLIT_PLANE;  /* Split-plane by default */
 #if defined(__aarch64__) || defined(_M_ARM64)
     flags |= DSPIR_FLAG_JIT_SIMD;  /* Enable NEON on ARM64 */
 #elif defined(__x86_64__) || defined(_M_X64)
@@ -792,13 +1020,19 @@ int dspir_execute_jit_ex(const dspir_transform *t, void *out, const void *in, ui
         return -1;
     }
     
-    /* Get and execute the kernel */
+    /* Get library handle */
+    void *handle = ctx->handle;
+    if (!handle) {
+        dspir_jit_destroy(ctx);
+        return -1;
+    }
+    
+    /* Get and execute the kernel - kernel handles deinterleave/reinterleave internally */
     dspir_kernel_fn fn = dspir_jit_get_kernel(ctx);
     if (!fn) {
         dspir_jit_destroy(ctx);
         return -1;
     }
-    
     fn(out, in, t->n, t->twiddles[0]);
     
     dspir_jit_destroy(ctx);

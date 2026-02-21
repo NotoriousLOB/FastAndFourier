@@ -159,6 +159,7 @@ typedef enum {
     DSPIR_REDUCE_SUM,        /**< Horizontal sum reduction */
     DSPIR_REDUCE_MAX,        /**< Horizontal max reduction */
     DSPIR_REDUCE_MIN,        /**< Horizontal min reduction */
+    DSPIR_CALL_BUILTIN,      /**< Call registered built-in function (Chirp DSL) */
     DSPIR_END = 255          /**< Program end - high value for extensibility */
 } dspir_opcode;
 
@@ -430,6 +431,11 @@ int dspir_execute_split_f32(const dspir_transform *t,
                              float *DSPIR_RESTRICT out_im,
                              const float *DSPIR_RESTRICT in_re,
                              const float *DSPIR_RESTRICT in_im);
+int dspir_execute_split_f64(const dspir_transform *t,
+                             double *DSPIR_RESTRICT out_re,
+                             double *DSPIR_RESTRICT out_im,
+                             const double *DSPIR_RESTRICT in_re,
+                             const double *DSPIR_RESTRICT in_im);
 #ifdef DSPIR_HAS_FP16
     /* _Float16 is a C extension; skip for C++ */
     #ifndef __cplusplus

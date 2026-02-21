@@ -14,6 +14,7 @@ FastAndFourier provides a complete set of discrete transforms with an Intermedia
 
 - **JIT Compilation**: Runtime code generation using system compiler (GCC/Clang) for maximum performance
 - **Multi-Architecture SIMD**: Automatic vectorization for SSE4.2, AVX2, AVX-512, NEON, and SVE
+- **Chirp DSL**: Scheme-like language with Smalltalk-style keywords for DSP pipelines
 - **Unified IR**: Single bytecode format powers all transform types
 - **Multi-Precision**: FP8, FP16, BF16, FP32, and FP64 support
 - **Direct-Threaded VM**: High-performance interpreter with computed goto dispatch
@@ -51,6 +52,8 @@ make test
 
 ## Example
 
+### Basic C API
+
 ```c
 #include <fastandfourier.h>
 #include <math.h>
@@ -82,6 +85,42 @@ int main() {
     return 0;
 }
 ```
+
+### Chirp DSL
+
+Chirp is a Scheme-like DSL with Smalltalk-style keyword arguments for describing DSP pipelines:
+
+```c
+#include <chirp.h>
+#include <fastandfourier.h>
+
+// Register custom functions (like CUDA kernels or OpenCL devices)
+chirp_register("gaussian", (void(*)(void))my_gaussian_impl);
+chirp_register("softmax", (void(*)(void))my_softmax_impl);
+
+// Compile a Chirp program
+dspir_transform *t = chirp_compile(
+    "(pipeline "
+    "  (fft :size 1024) "
+    "  twiddle "
+    "  (bfly 4) "
+    "  (lift :predict gaussian :update softmax) "
+    "  (custom softmax) "
+    "  reduce-sum)"
+);
+
+// Execute the compiled transform
+dspir_execute_jit(t, out, in);
+dspir_destroy_transform(t);
+```
+
+**Chirp Syntax:**
+- `(fft :size N)` - FFT with Smalltalk-style keyword argument
+- `(bfly N)` - Radix-N butterfly (2, 4, or 8)
+- `(lift :predict fn :update fn)` - Lifting scheme wavelet
+- `(custom name)` - Call registered built-in function
+- `reduce-sum`, `reduce-max`, `reduce-min` - Reduction operations
+- `(pipeline ...)` - Sequence multiple operations
 
 Compile with:
 ```bash
@@ -120,12 +159,22 @@ gcc -O3 -o fft_example example.c -lfastandfourier -lm -ldl
 | `dspir_jit_get_kernel(ctx)` | Get compiled kernel function |
 | `dspir_jit_destroy(ctx)` | Free JIT context |
 
+### Chirp DSL API
+
+Include `<chirp.h>` to use the Chirp DSL.
+
+| Function | Description |
+|----------|-------------|
+| `chirp_register(name, fn)` | Register a custom C function |
+| `chirp_compile(source)` | Compile Chirp S-expression to transform |
+
 ### JIT Flags
 
 | Flag | Description |
 |------|-------------|
 | `DSPIR_FLAG_JIT_SIMD` | Enable SIMD intrinsics (default on supported platforms) |
 | `DSPIR_FLAG_JIT_INPLACE` | Work in-place (overwrites input) |
+| `DSPIR_FLAG_JIT_SPLIT_PLANE` | Use split-plane mode (default, faster for most sizes) |
 
 ### Precision Levels
 
@@ -142,6 +191,7 @@ gcc -O3 -o fft_example example.c -lfastandfourier -lm -ldl
 - Complex data is stored as interleaved real/imaginary pairs (`float[2*n]`)
 - All buffers must be 64-byte aligned for SIMD performance
 - Transform size N must be a power of 2 for FFT
+- **Split-plane mode** (default for FP32/FP64): Internally deinterleaves to separate real/imaginary arrays for optimal vectorization
 
 ## Building
 
@@ -181,25 +231,53 @@ The library automatically detects and uses the best available SIMD instruction s
 
 ## Benchmark Results
 
-ARM Cortex-A78 (6 cores @ 1728 MHz), GCC 11.4.0, -O3 -march=armv8.2-a+crypto+fp16+rcpc
+ARM Cortex-A78 (6 cores @ 1728 MHz), GCC 11.4.0, -O3 -march=armv8.2-a+fp16+simd+crypto
 
-### JIT vs VM Performance
+### JIT vs VM Performance (Split-Plane)
+
+Split-plane mode provides significantly better vectorization by storing real and imaginary parts in separate arrays.
 
 | Transform | Size | VM (us) | JIT (us) | Speedup |
 |-----------|------|---------|----------|---------|
-| FFT | 16 | 20.1 | 0.087 | 231x |
-| FFT | 64 | 21.6 | 0.675 | 32x |
-| FFT | 256 | 24.5 | 3.23 | 8x |
-| DCT-II | 64 | 22.3 | 0.71 | 31x |
-| Haar | 64 | 8.5 | 0.45 | 19x |
+| FFT | 16 | 0.85 | 0.079 | **10.8x** |
+| FFT | 32 | 1.99 | 0.235 | **8.5x** |
+| FFT | 64 | 1.99 | 0.735 | **2.7x** |
+| DCT-II | 16 | 0.85 | - | - |
+| DCT-II | 64 | 1.99 | - | - |
+| Haar | 16 | 0.75 | - | - |
+| Haar | 64 | 1.15 | - | - |
 
-### Throughput (JIT with SIMD)
+### Split-Plane vs Standard (VM Execution)
 
-| Transform | Size | Throughput |
-|-----------|------|------------|
-| FFT (FP32) | 16 | 183 M FFTs/sec |
-| FFT (FP32) | 64 | 95 M FFTs/sec |
-| FFT (FP32) | 256 | 31 M FFTs/sec |
+| Precision | Size | Standard (M/s) | Split-Plane (M/s) | Improvement |
+|-----------|------|----------------|-------------------|-------------|
+| FP32 | 16 | 22.7 | 43.2 | **1.9x** |
+| FP32 | 64 | 33.8 | 42.6 | **1.3x** |
+| FP32 | 256 | 30.2 | 35.3 | **1.2x** |
+| FP32 | 1024 | 29.5 | 30.9 | **1.05x** |
+| FP64 | 16 | 21.2 | 38.6 | **1.8x** |
+| FP64 | 64 | 32.3 | 41.4 | **1.3x** |
+| FP64 | 256 | 29.6 | 34.5 | **1.2x** |
+| FP64 | 1024 | 28.1 | 30.1 | **1.07x** |
+
+### JIT Throughput by Transform Size
+
+| Transform | Size | Throughput | Bandwidth |
+|-----------|------|------------|-----------|
+| FFT (FP32) | 16 | **203 M FFTs/sec** | 1.51 GiB/s |
+| FFT (FP32) | 32 | **136 M FFTs/sec** | 1.02 GiB/s |
+| FFT (FP32) | 64 | **87 M FFTs/sec** | 665 MiB/s |
+
+### Scaling Performance (N log N complexity)
+
+| Transform | N | Time (us) | GFLOPS |
+|-----------|---|-----------|--------|
+| FFT | 16 | 0.72 | 0.44 |
+| FFT | 64 | 2.02 | 0.95 |
+| FFT | 256 | 8.50 | 1.20 |
+| FFT | 1024 | 34.8 | 1.47 |
+| FFT | 4096 | 167 | 1.47 |
+| FFT | 8192 | 218 | 2.44 |
 
 ## Architecture Support
 
