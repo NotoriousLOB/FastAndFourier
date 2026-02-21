@@ -1,4 +1,10 @@
-# FastAndFourier
+<p align="center">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="/.github/images/logo.png">
+  <source media="(prefers-color-scheme: light)" srcset="/.github/images/logo.png">
+  <img src="/.github/images/logo.png" width="100%" alt="Fast and Fourier" >
+</picture>	
+</p>
 
 A high-performance Digital Signal Processing library with JIT compilation and multi-architecture SIMD support.
 
