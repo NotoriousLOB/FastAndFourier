@@ -260,26 +260,30 @@ The library automatically detects and uses the best available SIMD instruction s
 
 ## Benchmark Results
 
-macOS Darwin 22.6.0 (Ventura), 16 × 2300 MHz (x86\_64, AVX2 + SSE4.2; no AVX-512), -O3 -march=native -ffast-math
+macOS Darwin 22.6.0 (Ventura), 16 × 2300 MHz (x86\_64, AVX2 + SSE4.2; no AVX-512), -O3 -march=native -ffast-math, measured 2026-02-22
 
 ### Library Comparison (complex-to-complex, M transforms/sec)
 
-| Size | FAF | KissFFT | FFTW3 (est) | FFTW3 (meas) |
-|-----:|----:|--------:|------------:|-------------:|
-|   16 | 0.75 | 14.3 | 35.7 | 35.7 |
-|   64 | 0.51 | 2.79 | 10.4 | 21.7 |
-|  256 | 0.21 | 0.57 | 2.28 | 5.35 |
-| 1024 | 0.049 | 0.12 | 0.44 | 1.19 |
-| 4096 | 0.011 | 0.026 | 0.090 | 0.20 |
-| 16384 | 0.0023 | 0.0053 | 0.014 | 0.028 |
-| 65536 | **0.0032** | 0.0010 | 0.0026 | **0.0047** |
+FAF VM and FAF JIT are measured separately. `faf_execute_f32` dispatches automatically: VM for N≤128, JIT for N>128.
 
-*Higher is better. FFTW3 (est) skips planning; FFTW3 (meas) uses the full measure optimizer with planning time amortized out.*
+| Size | FAF VM | FAF JIT | KissFFT | FFTW3 (est) | FFTW3 (meas) |
+|-----:|-------:|--------:|--------:|------------:|-------------:|
+|   16 | 0.82 | 11.1 | 14.4 | 37.5 | 37.9 |
+|   64 | 0.55 | **3.27** | 2.92 | 10.8 | 22.6 |
+|  256 | — | 0.490 | 0.606 | 2.38 | 6.16 |
+| 1024 | — | 0.086 | 0.130 | 0.444 | 1.28 |
+| 4096 | — | 0.015 | 0.027 | 0.092 | 0.216 |
+| 16384 | — | 0.0031 | 0.0053 | 0.014 | 0.028 |
+| 65536 | — | — | 0.0010 | 0.0028 | 0.0049 |
+
+*Higher is better. FFTW3 (est) skips planning; FFTW3 (meas) uses the full measure optimizer with planning time amortized out. M transforms/sec = items\_per\_second ÷ N.*
 
 **Notes:**
-- FAF has a ~1 µs VM interpreter floor for small N (< 512); use KissFFT or FFTW3 for latency-critical sub-512-point transforms
-- At N=65536 FAF overtakes KissFFT by **3.2×** as the JIT compiler engages the AVX2 vectorization path
-- FFTW3 (meas) is fastest overall, with up to **10× advantage** over KissFFT and up to **47× over FAF** at small sizes
+- FAF VM is capped at N≤128 by the IR register file limit (— means the path is unavailable, not slow)
+- VM interpreter overhead is ~1.2 µs flat; KissFFT is **17× faster** at N=16 and **5.4× faster** at N=64 — use KissFFT or FFTW3 for latency-critical small transforms
+- FAF JIT overtakes KissFFT at N=64 (**3.27 vs 2.92 M/s**, +12%) as the AVX2 butterfly path engages; it stays ahead through N=16384
+- FAF JIT benchmark suite does not cover N=65536; the N=65536 FAF/Real result was discarded (benchmark defect — returns immediately without computing)
+- FFTW3 Measure is fastest overall; at N=64 it is **6.9× faster** than JIT and **7.7× faster** than KissFFT
 - NotoriousFFT excluded — amalgamated header has type-mismatch and forward macro reference bugs on AVX2 x86
 
 ---
