@@ -102,34 +102,22 @@ void dspir_gen_fft_radix2(dspir_transform *t, size_t n, bool inverse) {
         idx = add_inst(t, idx, DSPIR_LOAD, i, j, 0);
     }
     
-    /* 
-     * FFT stages - Cooley-Tukey butterfly
-     * Stage s (0-indexed) has stride = 2^s butterflies per group
-     * Each butterfly: (a, b) -> (a + w*b, a - w*b)
+    /*
+     * FFT stages - Cooley-Tukey butterfly using FFT_STAGE opcodes
+     * Each stage emits a single FFT_STAGE instruction that the VM/JIT
+     * executes as a loop, avoiding O(N log N) instruction count.
+     *
+     * Encoding: a0 = group_size (acts as radix, so radix/2 butterflies per group)
+     *           a1 = 1 (element stride, always 1 for standard DIT)
+     *           a2 = twiddle_step (stride through twiddle array)
+     *
+     * The VM/JIT loop pairs elements at (base+r) and (base+r+group_size/2),
+     * with twiddle factor at index r * twiddle_step.
      */
     for (size_t stage = 0; stage < bits; stage++) {
-        size_t butterfly_span = 1 << stage;        /* Distance between butterfly inputs */
-        size_t group_size = butterfly_span << 1;    /* Size of each butterfly group */
-        size_t num_groups = n / group_size;         /* Number of groups */
-        size_t twiddle_step = n / group_size;       /* Step between twiddle factors */
-        
-        for (size_t group = 0; group < num_groups; group++) {
-            size_t base = group * group_size;
-            
-            for (size_t i = 0; i < butterfly_span && (base + i + butterfly_span) < max_reg; i++) {
-                size_t idx0 = base + i;                     /* Lower element */
-                size_t idx1 = base + i + butterfly_span;    /* Upper element */
-                size_t tw_idx = i * twiddle_step;           /* Twiddle factor index */
-                
-                /* Apply twiddle factor to upper element (unless first stage where w=1) */
-                if (stage > 0 && tw_idx > 0) {
-                    idx = add_inst(t, idx, DSPIR_TWIDDLE_MUL, idx1, tw_idx, 0);
-                }
-                
-                /* Radix-2 butterfly: (a, b) -> (a+b, a-b) */
-                idx = add_inst(t, idx, DSPIR_BFLY2, idx0, idx1, 0);
-            }
-        }
+        size_t group_size = 2 << stage;             /* = 2^(stage+1) */
+        size_t twiddle_step = n / group_size;       /* Stride through twiddle array */
+        idx = add_inst(t, idx, DSPIR_FFT_STAGE, group_size, 1, twiddle_step);
     }
     
     /* Store outputs (already in natural order due to input bit-reversal) */

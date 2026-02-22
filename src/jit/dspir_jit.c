@@ -400,8 +400,15 @@ static void dspir_jit_generate_c_ex(dspir_transform *t,
     for (size_t i = 0; i < t->n_inst; i++) {
         const dspir_inst *inst = &t->code[i];
         uint8_t op = DSPIR_GET_OP(inst->packed);
-        if (op != DSPIR_NOP) {
-            if (inst->a0 > max_reg_idx) max_reg_idx = inst->a0;
+        if (op == DSPIR_NOP || op == DSPIR_END) continue;
+        /* FFT_STAGE/DCT_STAGE/DST_STAGE: a0=group_size, a1=stride, a2=tw_step
+         * None are register indices; the loop accesses regs 0..t->n-1 */
+        if (op == DSPIR_FFT_STAGE || op == DSPIR_DCT_STAGE || op == DSPIR_DST_STAGE) {
+            if (t->n > 0 && t->n - 1 > max_reg_idx) max_reg_idx = t->n - 1;
+            continue;
+        }
+        if (inst->a0 > max_reg_idx) max_reg_idx = inst->a0;
+        if (op != DSPIR_LOAD_CONST) {
             if (inst->a1 > max_reg_idx) max_reg_idx = inst->a1;
         }
     }
@@ -434,24 +441,99 @@ static void dspir_jit_generate_c_ex(dspir_transform *t,
         fprintf(f, "    for (size_t i = 0; i < %zu; i++) { regs_re[i] = 0.0f; regs_im[i] = 0.0f; }\n\n", needed_regs);
     }
     
+    /* Detect runs of LOAD (bit-reversal) and STORE (sequential) for looped emission.
+     * Instead of emitting N individual load/store statements, emit compact loops. */
+    size_t load_run_end = 0;   /* End of initial LOAD run (0 = no run detected) */
+    size_t store_run_start = 0; /* Start of trailing STORE run */
+    size_t store_run_end = 0;  /* End of trailing STORE run */
+    int load_is_bitrev = 1;    /* Whether LOADs form a bit-reversal pattern */
+    size_t load_bits = 0;      /* Number of bits for bit-reversal */
+
+    /* Detect leading LOAD run */
+    {
+        size_t run = 0;
+        while (run < t->n_inst && DSPIR_GET_OP(t->code[run].packed) == DSPIR_LOAD) {
+            if (t->code[run].a0 != run) load_is_bitrev = 0;
+            run++;
+        }
+        if (run >= 2) {
+            load_run_end = run;
+            /* Compute bits for bit-reversal */
+            size_t tmp = run;
+            while (tmp > 1) { tmp >>= 1; load_bits++; }
+            /* Verify it's actually a power of 2 */
+            if ((1UL << load_bits) != run) load_is_bitrev = 0;
+        }
+    }
+
+    /* Detect trailing STORE run */
+    if (t->n_inst > 0) {
+        size_t end = t->n_inst;
+        /* Find END instruction */
+        if (DSPIR_GET_OP(t->code[end - 1].packed) == DSPIR_END) end--;
+        size_t run_start = end;
+        while (run_start > 0 && DSPIR_GET_OP(t->code[run_start - 1].packed) == DSPIR_STORE)
+            run_start--;
+        if (end - run_start >= 2) {
+            /* Verify sequential pattern: a0=i, a1=i for i=0..N-1 */
+            int sequential = 1;
+            for (size_t j = run_start; j < end; j++) {
+                size_t idx = j - run_start;
+                if (t->code[j].a0 != idx || t->code[j].a1 != idx) {
+                    sequential = 0;
+                    break;
+                }
+            }
+            if (sequential) {
+                store_run_start = run_start;
+                store_run_end = end;
+            }
+        }
+    }
+
     /* Generate code for each instruction */
     for (size_t i = 0; i < t->n_inst; i++) {
         const dspir_inst *inst = &t->code[i];
         uint8_t op = DSPIR_GET_OP(inst->packed);
-        
+
+        /* Emit looped LOAD for bit-reversal pattern */
+        if (i == 0 && load_run_end > 0 && load_is_bitrev) {
+            fprintf(f, "    /* Bit-reversal load: %zu points, %zu bits */\n", load_run_end, load_bits);
+            fprintf(f, "    for (size_t _i = 0; _i < %zu; _i++) {\n", load_run_end);
+            fprintf(f, "        size_t _j = 0, _x = _i;\n");
+            fprintf(f, "        for (int _b = 0; _b < %zu; _b++) { _j = (_j << 1) | (_x & 1); _x >>= 1; }\n", load_bits);
+            fprintf(f, "        regs_re[_i] = in_f[_j * 2];\n");
+            fprintf(f, "        regs_im[_i] = in_f[_j * 2 + 1];\n");
+            fprintf(f, "    }\n");
+            i = load_run_end - 1;  /* Skip individual LOADs */
+            continue;
+        }
+
+        /* Emit looped STORE for sequential pattern */
+        if (i == store_run_start && store_run_end > store_run_start) {
+            size_t count = store_run_end - store_run_start;
+            fprintf(f, "    /* Sequential store: %zu points */\n", count);
+            fprintf(f, "    for (size_t _i = 0; _i < %zu; _i++) {\n", count);
+            fprintf(f, "        out_f[_i * 2] = regs_re[_i];\n");
+            fprintf(f, "        out_f[_i * 2 + 1] = regs_im[_i];\n");
+            fprintf(f, "    }\n");
+            i = store_run_end - 1;  /* Skip individual STOREs */
+            continue;
+        }
+
         fprintf(f, "    /* Inst %zu: opcode %d */\n", i, op);
-        
+
         switch (op) {
             case DSPIR_NOP:
                 fprintf(f, "    /* NOP */\n");
                 break;
-                
+
             case DSPIR_LOAD:
                 /* Deinterleave on load: regs[inst->a0] = in[inst->a1] */
                 fprintf(f, "    regs_re[%u] = in_f[%u];\n", inst->a0, inst->a1 * 2);
                 fprintf(f, "    regs_im[%u] = in_f[%u];\n", inst->a0, inst->a1 * 2 + 1);
                 break;
-                
+
             case DSPIR_STORE:
                 /* Reinterleave on store: out[inst->a0] = regs[inst->a1] */
                 fprintf(f, "    out_f[%u] = regs_re[%u];\n", inst->a0 * 2, inst->a1);
@@ -507,43 +589,33 @@ static void dspir_jit_generate_c_ex(dspir_transform *t,
                 break;
                 
             case DSPIR_FFT_STAGE:
-                if (inplace) {
-                    fprintf(f, "    {\n");
-                    fprintf(f, "        size_t radix = %u;\n", inst->a0);
-                    fprintf(f, "        size_t stride = %u;\n", inst->a1);
-                    fprintf(f, "        size_t tw_base = %u;\n", inst->a2);
-                    fprintf(f, "        size_t ngroups = %zu / (radix * stride);\n", t->n);
-                    fprintf(f, "        for (size_t g = 0; g < ngroups; g++) {\n");
-                    fprintf(f, "            for (size_t r = 0; r < radix/2; r++) {\n");
-                    fprintf(f, "                float a = data[g*stride + r];\n");
-                    fprintf(f, "                float b = data[g*stride + r + stride/2];\n");
-                    fprintf(f, "                float wr = tw[tw_base + r*2];\n");
-                    fprintf(f, "                float wi = tw[tw_base + r*2+1];\n");
-                    fprintf(f, "                float br = b * wr, bi = b * wi;\n");
-                    fprintf(f, "                data[g*stride + r] = a + br;\n");
-                    fprintf(f, "                data[g*stride + r + stride/2] = a - br;\n");
-                    fprintf(f, "            }\n");
-                    fprintf(f, "        }\n");
-                    fprintf(f, "    }\n");
-                } else {
-                    fprintf(f, "    {\n");
-                    fprintf(f, "        size_t radix = %u;\n", inst->a0);
-                    fprintf(f, "        size_t stride = %u;\n", inst->a1);
-                    fprintf(f, "        size_t tw_base = %u;\n", inst->a2);
-                    fprintf(f, "        size_t ngroups = %zu / (radix * stride);\n", t->n);
-                    fprintf(f, "        for (size_t g = 0; g < ngroups; g++) {\n");
-                    fprintf(f, "            for (size_t r = 0; r < radix/2; r++) {\n");
-                    fprintf(f, "                float a = regs[g*stride + r];\n");
-                    fprintf(f, "                float b = regs[g*stride + r + stride/2];\n");
-                    fprintf(f, "                float wr = tw[tw_base + r*2];\n");
-                    fprintf(f, "                float wi = tw[tw_base + r*2+1];\n");
-                    fprintf(f, "                float br = b * wr, bi = b * wi;\n");
-                    fprintf(f, "                regs[g*stride + r] = a + br;\n");
-                    fprintf(f, "                regs[g*stride + r + stride/2] = a - br;\n");
-                    fprintf(f, "            }\n");
-                    fprintf(f, "        }\n");
-                    fprintf(f, "    }\n");
-                }
+                /* Split-plane complex FFT stage with looped emission
+                 * a0 = group_size (radix), a1 = stride, a2 = twiddle_step
+                 * Pairs elements at (base+r) and (base+r+half), with
+                 * twiddle at index r*tw_step in the interleaved twiddle array.
+                 */
+                fprintf(f, "    {\n");
+                fprintf(f, "        const size_t radix = %u;\n", inst->a0);
+                fprintf(f, "        const size_t stride = %u;\n", inst->a1);
+                fprintf(f, "        const size_t tw_step = %u;\n", inst->a2);
+                fprintf(f, "        const size_t half = radix / 2;\n");
+                fprintf(f, "        const size_t ngroups = %zu / (radix * stride);\n", t->n);
+                fprintf(f, "        for (size_t g = 0; g < ngroups; g++) {\n");
+                fprintf(f, "            size_t base = g * radix * stride;\n");
+                fprintf(f, "            for (size_t r = 0; r < half; r++) {\n");
+                fprintf(f, "                size_t i1 = base + r * stride;\n");
+                fprintf(f, "                size_t i2 = i1 + half * stride;\n");
+                fprintf(f, "                float ar = regs_re[i1], ai = regs_im[i1];\n");
+                fprintf(f, "                float br = regs_re[i2], bi = regs_im[i2];\n");
+                fprintf(f, "                float wr = tw[(r * tw_step) * 2];\n");
+                fprintf(f, "                float wi = tw[(r * tw_step) * 2 + 1];\n");
+                fprintf(f, "                float tr = br*wr - bi*wi;\n");
+                fprintf(f, "                float ti = br*wi + bi*wr;\n");
+                fprintf(f, "                regs_re[i1] = ar + tr; regs_im[i1] = ai + ti;\n");
+                fprintf(f, "                regs_re[i2] = ar - tr; regs_im[i2] = ai - ti;\n");
+                fprintf(f, "            }\n");
+                fprintf(f, "        }\n");
+                fprintf(f, "    }\n");
                 break;
                 
             case DSPIR_LIFT_PRED:

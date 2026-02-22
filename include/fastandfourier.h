@@ -446,6 +446,7 @@ int dspir_execute_split_f64(const dspir_transform *t,
     #endif
 #endif
 #ifdef DSPIR_HAS_FP8
+/* dspir_fp8_t is a plain struct, safe in both C and C++ (unlike _Float16) */
 typedef struct { uint8_t data; } dspir_fp8_t;
 int dspir_execute_fp8(const dspir_transform *t,
                        dspir_fp8_t *DSPIR_RESTRICT out,

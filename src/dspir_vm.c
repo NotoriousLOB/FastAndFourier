@@ -453,18 +453,20 @@ label_FFT_STAGE:
         {
             /* Execute complete FFT stage with complex butterflies
              * Register file is interleaved: regs[2*i]=real, regs[2*i+1]=imag
+             * a0 = group_size (radix), a1 = stride, a2 = twiddle_step
              */
             size_t radix = inst->a0;
             size_t stride = inst->a1;
-            size_t tw_base = inst->a2;
+            size_t tw_step = inst->a2;
+            size_t half = radix / 2;
             size_t ngroups = t->n / (radix * stride);
 
             for (size_t g = 0; g < ngroups; g++) {
                 size_t base = g * radix * stride;
 
-                for (size_t r = 0; r < radix / 2; r++) {
+                for (size_t r = 0; r < half; r++) {
                     size_t idx1 = base + r * stride;
-                    size_t idx2 = base + (r + radix / 2) * stride;
+                    size_t idx2 = idx1 + half * stride;
 
                     /* Read complex values from interleaved layout */
                     float ar = regs[idx1 * 2];
@@ -472,10 +474,10 @@ label_FFT_STAGE:
                     float br = regs[idx2 * 2];
                     float bi = regs[idx2 * 2 + 1];
 
-                    if (tw && tw_base + r < t->twiddle_sizes[0]) {
-                        float wr = tw[(tw_base + r) * 2];
-                        float wi = tw[(tw_base + r) * 2 + 1];
-                        /* Complex multiply: (br + i*bi) * (wr + i*wi) */
+                    size_t tw_idx = r * tw_step;
+                    if (tw && tw_idx < t->twiddle_sizes[0]) {
+                        float wr = tw[tw_idx * 2];
+                        float wi = tw[tw_idx * 2 + 1];
                         float tw_re = br * wr - bi * wi;
                         float tw_im = br * wi + bi * wr;
                         regs[idx1 * 2]     = ar + tw_re;
@@ -972,13 +974,41 @@ int dspir_vm_execute_f64(const dspir_transform *t,
                 if (inst->a0 < DSPIR_MAX_REGISTERS && inst->a1 < DSPIR_MAX_REGISTERS && inst->a2 < DSPIR_MAX_REGISTERS)
                     regs[inst->a0] = regs[inst->a1] - regs[inst->a2];
                 break;
+            case DSPIR_FFT_STAGE: {
+                size_t radix = inst->a0;
+                size_t stride = inst->a1;
+                size_t tw_step = inst->a2;
+                size_t half = radix / 2;
+                size_t ngroups = t->n / (radix * stride);
+                for (size_t g = 0; g < ngroups; g++) {
+                    size_t gbase = g * radix * stride;
+                    for (size_t r = 0; r < half; r++) {
+                        size_t idx1 = gbase + r * stride;
+                        size_t idx2 = idx1 + half * stride;
+                        double ar = regs[idx1 * 2], ai = regs[idx1 * 2 + 1];
+                        double br = regs[idx2 * 2], bi = regs[idx2 * 2 + 1];
+                        size_t tw_idx = r * tw_step;
+                        if (tw && tw_idx < t->twiddle_sizes[0]) {
+                            double wr = tw[tw_idx * 2], wi = tw[tw_idx * 2 + 1];
+                            double tw_re = br * wr - bi * wi;
+                            double tw_im = br * wi + bi * wr;
+                            regs[idx1 * 2]     = ar + tw_re; regs[idx1 * 2 + 1] = ai + tw_im;
+                            regs[idx2 * 2]     = ar - tw_re; regs[idx2 * 2 + 1] = ai - tw_im;
+                        } else {
+                            regs[idx1 * 2]     = ar + br; regs[idx1 * 2 + 1] = ai + bi;
+                            regs[idx2 * 2]     = ar - br; regs[idx2 * 2 + 1] = ai - bi;
+                        }
+                    }
+                }
+                break;
+            }
             case DSPIR_END:
                 goto done_f64;
             default:
                 break;
         }
     }
-    
+
 done_f64:
     free_regs(regs);
     return 0;
@@ -1192,19 +1222,21 @@ int dspir_execute_split_f32(const dspir_transform *t,
             case DSPIR_FFT_STAGE: {
                 size_t radix = inst->a0;
                 size_t stride = inst->a1;
-                size_t tw_base = inst->a2;
+                size_t tw_step = inst->a2;
+                size_t half = radix / 2;
                 size_t ngroups = t->n / (radix * stride);
                 for (size_t g = 0; g < ngroups; g++) {
                     size_t gbase = g * radix * stride;
-                    for (size_t r = 0; r < radix / 2; r++) {
+                    for (size_t r = 0; r < half; r++) {
                         size_t idx1 = gbase + r * stride;
-                        size_t idx2 = gbase + (r + radix / 2) * stride;
+                        size_t idx2 = idx1 + half * stride;
                         if (idx1 < t->n && idx2 < t->n) {
                             float ar = regs_re[idx1], ai = regs_im[idx1];
                             float br = regs_re[idx2], bi = regs_im[idx2];
-                            if (tw && tw_base + r < t->twiddle_sizes[0]) {
-                                float wr = tw[(tw_base + r) * 2];
-                                float wi = tw[(tw_base + r) * 2 + 1];
+                            size_t tw_idx = r * tw_step;
+                            if (tw && tw_idx < t->twiddle_sizes[0]) {
+                                float wr = tw[tw_idx * 2];
+                                float wi = tw[tw_idx * 2 + 1];
                                 float tw_re = br * wr - bi * wi;
                                 float tw_im = br * wi + bi * wr;
                                 regs_re[idx1] = ar + tw_re; regs_im[idx1] = ai + tw_im;
@@ -1452,19 +1484,21 @@ int dspir_execute_split_f64(const dspir_transform *t,
             case DSPIR_FFT_STAGE: {
                 size_t radix = inst->a0;
                 size_t stride = inst->a1;
-                size_t tw_base = inst->a2;
+                size_t tw_step = inst->a2;
+                size_t half = radix / 2;
                 size_t ngroups = t->n / (radix * stride);
                 for (size_t g = 0; g < ngroups; g++) {
                     size_t gbase = g * radix * stride;
-                    for (size_t r = 0; r < radix / 2; r++) {
+                    for (size_t r = 0; r < half; r++) {
                         size_t idx1 = gbase + r * stride;
-                        size_t idx2 = gbase + (r + radix / 2) * stride;
+                        size_t idx2 = idx1 + half * stride;
                         if (idx1 < t->n && idx2 < t->n) {
                             double ar = regs_re[idx1], ai = regs_im[idx1];
                             double br = regs_re[idx2], bi = regs_im[idx2];
-                            if (tw && tw_base + r < t->twiddle_sizes[0]) {
-                                double wr = tw[(tw_base + r) * 2];
-                                double wi = tw[(tw_base + r) * 2 + 1];
+                            size_t tw_idx = r * tw_step;
+                            if (tw && tw_idx < t->twiddle_sizes[0]) {
+                                double wr = tw[tw_idx * 2];
+                                double wi = tw[tw_idx * 2 + 1];
                                 double tw_re = br * wr - bi * wi;
                                 double tw_im = br * wi + bi * wr;
                                 regs_re[idx1] = ar + tw_re; regs_im[idx1] = ai + tw_im;
