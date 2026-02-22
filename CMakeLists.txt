@@ -156,7 +156,7 @@ set(DSPIR_CORE_SOURCES
     src/dspir_core.c
     src/dspir_vm.c
     src/dspir_transforms.c
-    src/dsir_twiddles.c
+    src/dspir_twiddles.c
     src/chirp.c
     src/chirp_builtins.c
 )

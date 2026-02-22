@@ -11,6 +11,9 @@ extern "C" {
 /* Register a custom C function (gaussian, softmax, etc.) */
 int chirp_register(const char *name, void (*fn)(void));
 
+/* Free all registered builtin names and reset the registry */
+void chirp_cleanup(void);
+
 /* Compile a Chirp S-expression to a transform */
 dspir_transform* chirp_compile(const char *source);
 

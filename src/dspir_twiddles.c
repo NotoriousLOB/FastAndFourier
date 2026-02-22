@@ -1,5 +1,5 @@
 /**
- * @file dsir_twiddles.c
+ * @file dspir_twiddles.c
  * @brief Twiddle factor generation for all transform types
  */
 
@@ -125,11 +125,11 @@ void dspir_gen_mdct_twiddles_f32(float *tw, size_t n) {
         tw[4*k + 3] = sinf(angle2);
     }
     
-    /* Post-rotation twiddles */
+    /* Post-rotation twiddles (stored after pre-rotation at offset n = 4*n4) */
     for (size_t k = 0; k < n2; k++) {
         float angle = -(float)M_PI * ((float)k + 0.5f) / (float)n2;
-        tw[2*n + 2*k]     = cosf(angle);
-        tw[2*n + 2*k + 1] = sinf(angle);
+        tw[n + 2*k]     = cosf(angle);
+        tw[n + 2*k + 1] = sinf(angle);
     }
 }
 

@@ -413,11 +413,36 @@ dspir_transform* dspir_create_daubechies4(size_t n, size_t levels, dspir_precisi
 
 dspir_transform* dspir_create_stft(size_t n_fft, size_t hop_length, size_t win_length,
                                     dspir_precision precision, uint32_t flags) {
-    /* STFT is a higher-level construct that uses FFT internally */
-    /* For now, create an FFT transform that can be used per-frame */
-    (void)hop_length;
-    (void)win_length;
-    return dspir_create_fft(n_fft, false, precision, flags);
+    if (win_length == 0) win_length = n_fft;
+    if (hop_length == 0) hop_length = win_length / 4;
+    if (win_length > n_fft) {
+        set_error("STFT window length %zu exceeds FFT size %zu", win_length, n_fft);
+        return NULL;
+    }
+
+    /* Create the underlying FFT transform */
+    dspir_transform *t = dspir_create_fft(n_fft, false, precision, flags);
+    if (!t) return NULL;
+
+    t->type = DSPIR_TRANSFORM_STFT;
+    t->hop_length = hop_length;
+    t->win_length = win_length;
+
+    /* Store Hann window in twiddles[1] */
+    float *win = (float*)malloc(n_fft * sizeof(float));
+    if (!win) {
+        dspir_destroy_transform(t);
+        return NULL;
+    }
+    dspir_gen_hann_window_f32(win, win_length);
+    /* Zero-pad if win_length < n_fft */
+    for (size_t i = win_length; i < n_fft; i++) {
+        win[i] = 0.0f;
+    }
+    t->twiddles[1] = win;
+    t->twiddle_sizes[1] = n_fft;
+
+    return t;
 }
 
 void dspir_destroy_transform(dspir_transform *t) {
@@ -457,12 +482,34 @@ void dspir_destroy_transform(dspir_transform *t) {
 
 /* Execution dispatch */
 int dspir_execute(const dspir_transform *t, void *restrict out, const void *restrict in) {
-    /* Auto-select best execution method */
-    /* For now, use VM as fallback */
+    if (!t || !out || !in) return -1;
+
+    /* Auto-select: try JIT for FP32 transforms with size >= 64 */
+    if (t->precision == DSPIR_PREC_FP32 && t->n >= 64) {
+        int ret = dspir_execute_jit(t, (void*)out, (const void*)in);
+        if (ret == 0) return 0;
+        /* JIT failed (no compiler, etc.) — fall back to VM */
+    }
+
     return dspir_execute_vm(t, out, in);
 }
 
 int dspir_execute_vm(const dspir_transform *t, void *restrict out, const void *restrict in) {
+    /* STFT: apply window to input before FFT */
+    if (t->type == DSPIR_TRANSFORM_STFT && t->twiddles[1] && t->precision == DSPIR_PREC_FP32) {
+        const float *win = (const float *)t->twiddles[1];
+        const float *in_f = (const float *)in;
+        float *windowed = (float *)aligned_alloc(64, t->n * 2 * sizeof(float));
+        if (!windowed) return -1;
+        for (size_t i = 0; i < t->n; i++) {
+            windowed[i * 2]     = in_f[i * 2]     * win[i];
+            windowed[i * 2 + 1] = in_f[i * 2 + 1] * win[i];
+        }
+        int ret = dspir_execute_f32(t, out, windowed);
+        free(windowed);
+        return ret;
+    }
+
     switch (t->precision) {
         case DSPIR_PREC_FP32:
             return dspir_execute_f32(t, out, in);

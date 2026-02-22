@@ -106,6 +106,17 @@ static void chirp_init_builtins(void) {
     chirp_initialized = 1;
 }
 
+/* Public API: Free all registered builtin names and reset */
+void chirp_cleanup(void) {
+    for (int i = 0; i < chirp_count; i++) {
+        free(chirp_table[i].name);
+        chirp_table[i].name = NULL;
+        chirp_table[i].fn = NULL;
+    }
+    chirp_count = 0;
+    chirp_initialized = 0;
+}
+
 /* Public API: Register a custom function */
 int chirp_register(const char *name, void (*fn)(void)) {
     chirp_init_builtins();

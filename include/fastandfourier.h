@@ -201,6 +201,8 @@ typedef struct {
     dspir_transform_type type;   /**< Transform type */
     uint32_t flags;              /**< Transform flags */
     dspir_jit_cache *jit_cache;  /**< Cached JIT compilation (NULL if not compiled) */
+    size_t hop_length;           /**< STFT: hop between frames (0 if unused) */
+    size_t win_length;           /**< STFT: window length (0 if unused) */
 } dspir_transform;
 
 /**
