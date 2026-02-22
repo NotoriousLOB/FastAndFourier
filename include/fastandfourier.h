@@ -50,6 +50,13 @@ extern "C" {
 #define DSPIR_GET_FLAGS(packed)   ((uint8_t)(((packed) >> 8) & 0xFF))
 #define DSPIR_GET_META(packed)    ((uint16_t)(((packed) >> 16) & 0xFFFF))
 
+/* Minimum transform size (in points) at which JIT compilation is attempted
+ * automatically.  Transforms smaller than this go straight to the VM
+ * interpreter; larger ones try JIT first and fall back to VM on failure. */
+#ifndef DSPIR_JIT_AUTO_THRESHOLD
+#define DSPIR_JIT_AUTO_THRESHOLD 128
+#endif
+
 /* Architecture detection */
 #if defined(__x86_64__) || defined(_M_X64)
     #define DSPIR_ARCH_X86_64
@@ -407,6 +414,25 @@ int dspir_execute_vm(const dspir_transform *t,
 int dspir_execute_jit(const dspir_transform *t,
                        void *DSPIR_RESTRICT out,
                        const void *DSPIR_RESTRICT in);
+
+/**
+ * @brief Execute a transform via JIT, caching the compiled kernel on the
+ *        transform struct so that subsequent calls pay no compile overhead.
+ *
+ * On the first call the kernel is compiled (or loaded from the on-disk cache)
+ * and pinned to t->jit_cache.  Every later call takes the fast path and
+ * invokes the cached function pointer directly.  Falls back to the VM if JIT
+ * is unavailable.  Thread-safe: uses a compare-and-swap so concurrent first
+ * calls waste one compilation at most, with no handle leak.
+ *
+ * @param t   Transform to execute (logically mutable via jit_cache)
+ * @param out Output buffer
+ * @param in  Input buffer
+ * @return 0 on success, non-zero on error
+ */
+int dspir_execute_jit_cached(const dspir_transform *t,
+                              void *DSPIR_RESTRICT out,
+                              const void *DSPIR_RESTRICT in);
 
 /**
  * @brief Execute transform with automatic backend selection

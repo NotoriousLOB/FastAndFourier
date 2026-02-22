@@ -484,11 +484,11 @@ void dspir_destroy_transform(dspir_transform *t) {
 int dspir_execute(const dspir_transform *t, void *restrict out, const void *restrict in) {
     if (!t || !out || !in) return -1;
 
-    /* Auto-select: try JIT for FP32 transforms with size >= 64 */
-    if (t->precision == DSPIR_PREC_FP32 && t->n >= 64) {
-        int ret = dspir_execute_jit(t, (void*)out, (const void*)in);
+    /* Auto-select: try cached JIT for FP32 transforms at or above the threshold */
+    if (t->precision == DSPIR_PREC_FP32 && t->n >= DSPIR_JIT_AUTO_THRESHOLD) {
+        int ret = dspir_execute_jit_cached(t, (void*)out, (const void*)in);
         if (ret == 0) return 0;
-        /* JIT failed (no compiler, etc.) — fall back to VM */
+        /* JIT unavailable or failed — fall back to VM */
     }
 
     return dspir_execute_vm(t, out, in);

@@ -855,6 +855,64 @@ dspir_kernel_fn dspir_jit_get_kernel(dspir_jit_ctx *ctx) {
 }
 
 /**
+ * @brief Execute a transform via JIT with an in-memory kernel cache.
+ *
+ * First call: compiles (or loads from disk cache) and stores the handle +
+ * function pointer in t->jit_cache.  Subsequent calls skip compilation and
+ * invoke the cached function pointer directly.
+ *
+ * A compare-and-swap guards the cache write so concurrent first calls are
+ * safe: at most one extra compilation is wasted and no handles are leaked.
+ */
+int dspir_execute_jit_cached(const dspir_transform *t, void *out, const void *in) {
+    if (!t || !out || !in) return -1;
+
+    /* Fast path: kernel already compiled and pinned */
+    if (t->jit_cache && t->jit_cache->kernel_fn) {
+        ((dspir_kernel_fn)t->jit_cache->kernel_fn)(out, in, t->n, t->twiddles[0]);
+        return 0;
+    }
+
+    /* Slow path: compile (uses disk cache if available) */
+    dspir_jit_ctx *ctx = dspir_jit_create();
+    if (!ctx) return -1;
+
+    uint32_t flags = get_default_jit_flags();
+    if (dspir_jit_compile_ex(ctx, (dspir_transform *)t, flags) != 0) {
+        dspir_jit_destroy(ctx);
+        return -1;
+    }
+
+    dspir_kernel_fn fn = ctx->fn;
+    if (!fn) {
+        dspir_jit_destroy(ctx);
+        return -1;
+    }
+
+    /* Build cache entry and pin it to the transform */
+    dspir_jit_cache *cache = (dspir_jit_cache *)calloc(1, sizeof(dspir_jit_cache));
+    if (cache) {
+        cache->handle    = ctx->handle;
+        cache->kernel_fn = (void *)fn;
+        /* Steal the handle so dspir_jit_destroy doesn't dlclose it */
+        ctx->handle = NULL;
+
+        /* CAS: if another thread compiled concurrently, discard ours cleanly */
+        dspir_jit_cache *expected = NULL;
+        if (!__sync_bool_compare_and_swap(
+                &((dspir_transform *)t)->jit_cache, expected, cache)) {
+            /* Lost the race — return the handle to ctx so destroy frees it */
+            ctx->handle = cache->handle;
+            free(cache);
+        }
+    }
+
+    fn(out, in, t->n, t->twiddles[0]);
+    dspir_jit_destroy(ctx);  /* Cleans up temp files; handle already stolen (or returned) */
+    return 0;
+}
+
+/**
  * @brief Execute transform using JIT compilation with flags
  */
 int dspir_execute_jit_ex(const dspir_transform *t, void *out, const void *in, uint32_t flags) {

@@ -12,6 +12,9 @@
 #define M_PI 3.14159265358979323846
 #endif
 
+/* aligned_alloc requires size to be a multiple of alignment */
+#define ALIGNED_ALLOC64(n) aligned_alloc(64, (((size_t)(n)) + 63u) & ~(size_t)63u)
+
 /* Helper: Compare floats with tolerance */
 static bool near_equal(float a, float b, float tol = 1e-4f) {
     return std::abs(a - b) < tol;
@@ -24,8 +27,8 @@ TEST(VMTest, FFTExecute) {
     ASSERT_NE(t, nullptr);
     
     /* Create complex input: impulse at position 0 (real=1, imag=0) */
-    float *in = (float*)aligned_alloc(64, 2 * n * sizeof(float));
-    float *out = (float*)aligned_alloc(64, 2 * n * sizeof(float));
+    float *in = (float*)ALIGNED_ALLOC64(2 * n * sizeof(float));
+    float *out = (float*)ALIGNED_ALLOC64(2 * n * sizeof(float));
     
     for (size_t i = 0; i < n; i++) {
         in[2*i] = (i == 0) ? 1.0f : 0.0f;  /* Real part */
@@ -53,8 +56,8 @@ TEST(VMTest, FFTConstant) {
     dspir_transform* t = dspir_create_fft(n, false, DSPIR_PREC_FP32, 0);
     ASSERT_NE(t, nullptr);
     
-    float *in = (float*)aligned_alloc(64, 2 * n * sizeof(float));
-    float *out = (float*)aligned_alloc(64, 2 * n * sizeof(float));
+    float *in = (float*)ALIGNED_ALLOC64(2 * n * sizeof(float));
+    float *out = (float*)ALIGNED_ALLOC64(2 * n * sizeof(float));
     
     /* Constant complex signal (1 + 0i) */
     for (size_t i = 0; i < n; i++) {
@@ -83,8 +86,8 @@ TEST(VMTest, FFTSineWave) {
     dspir_transform* t = dspir_create_fft(n, false, DSPIR_PREC_FP32, 0);
     ASSERT_NE(t, nullptr);
     
-    float *in = (float*)aligned_alloc(64, 2 * n * sizeof(float));
-    float *out = (float*)aligned_alloc(64, 2 * n * sizeof(float));
+    float *in = (float*)ALIGNED_ALLOC64(2 * n * sizeof(float));
+    float *out = (float*)ALIGNED_ALLOC64(2 * n * sizeof(float));
     
     /* Single frequency sine wave: sin(2*pi*k*i/n) = imag part of exp(j*2*pi*k*i/n) */
     /* FFT of sine has peaks at k and n-k with opposite signs in imaginary parts */
@@ -121,8 +124,8 @@ TEST(VMTest, DCTExecute) {
     ASSERT_NE(t, nullptr);
     
     /* DCT operates on real data, but our VM expects complex */
-    float *in = (float*)aligned_alloc(64, 2 * n * sizeof(float));
-    float *out = (float*)aligned_alloc(64, 2 * n * sizeof(float));
+    float *in = (float*)ALIGNED_ALLOC64(2 * n * sizeof(float));
+    float *out = (float*)ALIGNED_ALLOC64(2 * n * sizeof(float));
     
     /* Impulse input */
     for (size_t i = 0; i < n; i++) {
@@ -148,8 +151,8 @@ TEST(VMTest, HaarWavelet) {
     ASSERT_NE(t, nullptr);
     
     /* Haar operates on real data */
-    float *in = (float*)aligned_alloc(64, 2 * n * sizeof(float));
-    float *out = (float*)aligned_alloc(64, 2 * n * sizeof(float));
+    float *in = (float*)ALIGNED_ALLOC64(2 * n * sizeof(float));
+    float *out = (float*)ALIGNED_ALLOC64(2 * n * sizeof(float));
     
     /* Constant input of 1.0 - Haar average should be 1.0 */
     for (size_t i = 0; i < n; i++) {
@@ -183,8 +186,8 @@ TEST(VMTest, DoublePrecision) {
     dspir_transform* t = dspir_create_fft(n, false, DSPIR_PREC_FP64, 0);
     ASSERT_NE(t, nullptr);
     
-    double *in = (double*)aligned_alloc(64, 2 * n * sizeof(double));
-    double *out = (double*)aligned_alloc(64, 2 * n * sizeof(double));
+    double *in = (double*)ALIGNED_ALLOC64(2 * n * sizeof(double));
+    double *out = (double*)ALIGNED_ALLOC64(2 * n * sizeof(double));
     
     for (size_t i = 0; i < n; i++) {
         in[2*i] = (i == 0) ? 1.0 : 0.0;  /* Real */
@@ -213,8 +216,10 @@ TEST(VMTest, VariousSizes) {
         dspir_transform* t = dspir_create_fft(n, false, DSPIR_PREC_FP32, 0);
         ASSERT_NE(t, nullptr) << "Failed to create FFT of size " << n;
         
-        float *in = (float*)aligned_alloc(64, 2 * n * sizeof(float));
-        float *out = (float*)aligned_alloc(64, 2 * n * sizeof(float));
+        /* aligned_alloc requires size to be a multiple of alignment */
+        size_t bufsize = ((2 * n * sizeof(float)) + 63u) & ~(size_t)63u;
+        float *in = (float*)aligned_alloc(64, bufsize);
+        float *out = (float*)aligned_alloc(64, bufsize);
         
         /* Ramp function for complex input */
         for (size_t i = 0; i < n; i++) {
@@ -238,8 +243,8 @@ TEST(VMTest, MDCTExecute) {
     ASSERT_NE(t, nullptr);
     
     /* MDCT input is real, but our VM expects complex format */
-    float *in = (float*)aligned_alloc(64, 2 * n * sizeof(float));
-    float *out = (float*)aligned_alloc(64, 2 * n * sizeof(float));
+    float *in = (float*)ALIGNED_ALLOC64(2 * n * sizeof(float));
+    float *out = (float*)ALIGNED_ALLOC64(2 * n * sizeof(float));
     
     for (size_t i = 0; i < n; i++) {
         in[2*i] = sinf(2.0f * (float)M_PI * (float)i / (float)n);

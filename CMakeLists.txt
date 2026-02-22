@@ -52,6 +52,7 @@ endif()
 # Architecture-specific flags
 if(ARCH_X86_64)
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -march=native")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -march=native")
     add_compile_definitions(DSPIR_ARCH_X86_64)
     
     # Check for AVX512
@@ -178,8 +179,6 @@ set(DSPIR_CUDA_SOURCES
 
 set(DSPIR_JIT_SOURCES
     src/jit/dspir_jit.c
-    src/jit/dspir_jit_x86.c
-    src/jit/dspir_jit_arm.c
 )
 
 # Architecture-specific source selection

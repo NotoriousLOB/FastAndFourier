@@ -40,12 +40,19 @@ static size_t compute_max_registers(const dspir_transform *t) {
         /* Skip NOP and END */
         if (op == DSPIR_NOP || op == DSPIR_END) continue;
         
-        /* Check a0, a1, a2 based on opcode type */
+        /* Check a0, a1, a2 based on opcode type.
+         * For FFT_STAGE/DCT_STAGE/DST_STAGE: a0=radix, a1=stride, a2=tw_step —
+         * none are register indices.  These opcodes touch every element 0..n-1,
+         * so account for them by tracking t->n-1 instead of a0. */
+        if (op == DSPIR_FFT_STAGE || op == DSPIR_DCT_STAGE || op == DSPIR_DST_STAGE) {
+            if (t->n > 0 && (t->n - 1) > max_reg) max_reg = t->n - 1;
+            continue;
+        }
+
         if (inst->a0 > max_reg) max_reg = inst->a0;
-        
+
         /* For opcodes that use a1 as register index */
-        if (op != DSPIR_LOAD_CONST && op != DSPIR_FFT_STAGE && 
-            op != DSPIR_DCT_STAGE && op != DSPIR_DST_STAGE) {
+        if (op != DSPIR_LOAD_CONST) {
             if (inst->a1 > max_reg) max_reg = inst->a1;
         }
         
@@ -78,6 +85,8 @@ static size_t compute_max_registers(const dspir_transform *t) {
  * For large transforms, uses heap allocation.
  */
 static inline void* alloc_regs(size_t size) {
+    /* aligned_alloc requires size to be a multiple of the alignment */
+    size = (size + 63u) & ~(size_t)63u;
     return aligned_alloc(64, size);
 }
 
@@ -780,6 +789,13 @@ done:
 int dspir_execute_f32(const dspir_transform *t,
                       float *restrict out,
                       const float *restrict in) {
+    /* Auto-JIT: for large transforms try the cached compiled kernel first */
+    if (t->n >= DSPIR_JIT_AUTO_THRESHOLD) {
+        if (dspir_execute_jit_cached(t, (void*)out, (const void*)in) == 0)
+            return 0;
+        /* JIT unavailable or failed — fall through to split-plane VM */
+    }
+
     /* Use split-plane execution for better performance */
     const size_t n = t->n;
     float *in_re = (float*)alloc_regs(n * sizeof(float));

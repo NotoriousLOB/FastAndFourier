@@ -7,7 +7,7 @@
 
 #include "dspir.h"
 
-#ifdef DSPIR_ARCH_X86_64
+#if defined(DSPIR_ARCH_X86_64) && defined(DSPIR_HAVE_AVX512)
 
 #include <immintrin.h>
 #include <string.h>
@@ -343,4 +343,4 @@ void dspir_x86_avx512_mdct_f32(const dspir_transform *t,
     free(work);
 }
 
-#endif /* DSPIR_ARCH_X86_64 */
+#endif /* DSPIR_ARCH_X86_64 && DSPIR_HAVE_AVX512 */

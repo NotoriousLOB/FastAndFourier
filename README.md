@@ -231,95 +231,27 @@ The library automatically detects and uses the best available SIMD instruction s
 
 ## Benchmark Results
 
-ARM Cortex-A78 (6 cores @ 1728 MHz), GCC 11.4.0, -O3 -march=armv8.2-a+fp16+simd+crypto
+macOS Darwin 22.6.0 (Ventura), 16 × 2300 MHz (x86\_64, AVX2 + SSE4.2; no AVX-512), -O3 -march=native -ffast-math
 
-### JIT vs VM Performance (Split-Plane)
+### Library Comparison (complex-to-complex, M transforms/sec)
 
-Split-plane mode provides significantly better vectorization by storing real and imaginary parts in separate arrays.
+| Size | FAF | KissFFT | FFTW3 (est) | FFTW3 (meas) |
+|-----:|----:|--------:|------------:|-------------:|
+|   16 | 0.75 | 14.3 | 35.7 | 35.7 |
+|   64 | 0.51 | 2.79 | 10.4 | 21.7 |
+|  256 | 0.21 | 0.57 | 2.28 | 5.35 |
+| 1024 | 0.049 | 0.12 | 0.44 | 1.19 |
+| 4096 | 0.011 | 0.026 | 0.090 | 0.20 |
+| 16384 | 0.0023 | 0.0053 | 0.014 | 0.028 |
+| 65536 | **0.0032** | 0.0010 | 0.0026 | **0.0047** |
 
-| Transform | Size | VM (us) | JIT (us) | Speedup |
-|-----------|------|---------|----------|---------|
-| FFT | 16 | 0.78 | 0.12 | **6.5x** |
-| FFT | 32 | - | 0.28 | - |
-| FFT | 64 | 1.99 | 0.66 | **3.0x** |
-| FFT | 128 | 3.51 | 1.39 | **2.5x** |
-| FFT | 256 | - | 3.42 | - |
-| FFT | 512 | - | 7.84 | - |
-| FFT | 1024 | - | 17.9 | - |
-| FFT | 2048 | - | 40.3 | - |
-| FFT | 4096 | - | 89.3 | - |
-| FFT | 8192 | - | 196 | - |
-| FFT | 16384 | - | 457 | - |
-| DCT-II | 16 | 0.91 | - | - |
-| DCT-II | 64 | 1.98 | - | - |
-| DCT-II | 128 | 3.48 | - | - |
-| Haar | 16 | 0.81 | - | - |
-| Haar | 64 | 1.43 | - | - |
-| Haar | 128 | 2.16 | - | - |
-| MDCT | 16 | 0.90 | - | - |
-| MDCT | 64 | 1.98 | - | - |
-| MDCT | 128 | 3.51 | - | - |
-
-### VM Execution Throughput (Interleaved)
-
-| Transform | Size | Throughput (M/s) | Performance |
-|-----------|------|------------------|-------------|
-| FFT (FP32) | 16 | 20.5 | ~41 GFLOPS |
-| FFT (FP32) | 64 | 32.2 | ~97 GFLOPS |
-| FFT (FP32) | 128 | 36.5 | ~110 GFLOPS |
-| DCT-II | 16 | 17.5 | ~35 GFLOPS |
-| DCT-II | 64 | 32.3 | ~97 GFLOPS |
-| DCT-II | 128 | 36.8 | ~110 GFLOPS |
-| Haar | 16 | 19.7 | ~39 GFLOPS |
-| Haar | 64 | 44.8 | ~134 GFLOPS |
-| Haar | 128 | 59.2 | ~177 GFLOPS |
-| MDCT | 16 | 17.8 | ~36 GFLOPS |
-| MDCT | 64 | 32.3 | ~97 GFLOPS |
-| MDCT | 128 | 36.5 | ~110 GFLOPS |
-
-### JIT Throughput by Transform Size
-
-| Transform | Size | Throughput | Bandwidth |
-|-----------|------|------------|-----------|
-| FFT (FP32) | 16 | **134 M FFTs/sec** | 1.02 GiB/s |
-| FFT (FP32) | 32 | **116 M FFTs/sec** | 889 MiB/s |
-| FFT (FP32) | 64 | **97 M FFTs/sec** | 743 MiB/s |
-| FFT (FP32) | 128 | **92 M FFTs/sec** | 704 MiB/s |
-| FFT (FP32) | 256 | **75 M FFTs/sec** | 571 MiB/s |
-| FFT (FP32) | 1024 | **57 M FFTs/sec** | 435 MiB/s |
-
-### Scaling Performance (N log N complexity)
-
-| Transform | N | Time (us) | GFLOPS |
-|-----------|---|-----------|--------|
-| FFT | 16 | 0.91 | 0.35 |
-| FFT | 64 | 2.03 | 0.95 |
-| FFT | 256 | 7.54 | 1.36 |
-| FFT | 1024 | 28.8 | 1.78 |
-| FFT | 4096 | 126 | 1.95 |
-| FFT | 8192 | 278 | 1.91 |
-
-*Complexity verified: O(N log N) with 3% RMS deviation*
-
-### Library Comparison (Release Build)
-
-Throughput comparison with popular FFT libraries on ARM Cortex-A78 (all using complex-to-complex):
-
-| Size | FAF (VM) | FAF (JIT) | KissFFT | NotoriousFFT | FFTW3 |
-|------|----------|-----------|---------|--------------|-------|
-| 16 | 20.3 M/s | **134 M/s** | 122.6 M/s | 196.9 M/s | **275 M/s** |
-| 64 | 32.2 M/s | **97 M/s** | 83.1 M/s | 129.8 M/s | **237 M/s** |
-| 256 | 36.0 M/s | **75 M/s** | 62.5 M/s | 94.6 M/s | **206 M/s** |
-| 1024 | 35.7 M/s | **57 M/s** | 51.6 M/s | 74.1 M/s | **175 M/s** |
-| 4096 | 32.6 M/s | **46 M/s** | 43.3 M/s | 60.0 M/s | **155 M/s** |
-| 16384 | 25.5 M/s | **36 M/s** | 35.0 M/s | 46.7 M/s | **96 M/s** |
+*Higher is better. FFTW3 (est) skips planning; FFTW3 (meas) uses the full measure optimizer with planning time amortized out.*
 
 **Notes:**
-- All benchmarks measure **in-cache performance** (repeated transforms on same buffers)
-- FFTW3 leads with highly optimized assembly; NotoriousFFT shows strong performance
-- **JIT now scales to 16384 points** with competitive throughput
-- For large sizes, all libraries converge toward memory bandwidth limits
-- Real-world throughput streaming from memory will be bandwidth-limited (~10-20 GB/s)
+- FAF has a ~1 µs VM interpreter floor for small N (< 512); use KissFFT or FFTW3 for latency-critical sub-512-point transforms
+- At N=65536 FAF overtakes KissFFT by **3.2×** as the JIT compiler engages the AVX2 vectorization path
+- FFTW3 (meas) is fastest overall, with up to **10× advantage** over KissFFT and up to **47× over FAF** at small sizes
+- NotoriousFFT excluded — amalgamated header has type-mismatch and forward macro reference bugs on AVX2 x86
 
 ## Architecture Support
 

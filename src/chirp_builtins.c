@@ -1,12 +1,17 @@
 /**
  * @file chirp_builtins.c
  * @brief Implementation of standard Chirp builtin functions
- * 
+ *
  * A comprehensive library of mathematical functions, distributions,
  * and DSP primitives for the Chirp DSL.
- * 
+ *
  * @version 1.0.0
  */
+
+/* Enable POSIX/XOPEN extensions for Bessel functions (j0f, j1f, y0f, y1f) */
+#ifndef _XOPEN_SOURCE
+#define _XOPEN_SOURCE 600
+#endif
 
 #include "chirp_builtins.h"
 #include "chirp.h"
@@ -220,11 +225,11 @@ double chirp_erfc_f64(double x) { return erfc(x); }
 double chirp_tgamma_f64(double x) { return tgamma(x); }
 double chirp_lgamma_f64(double x) { return lgamma(x); }
 
-/* Bessel functions */
-float chirp_j0_f32(float x) { return j0f(x); }
-float chirp_j1_f32(float x) { return j1f(x); }
-float chirp_y0_f32(float x) { return y0f(x); }
-float chirp_y1_f32(float x) { return y1f(x); }
+/* Bessel functions (j0f/j1f/y0f/y1f absent on macOS; cast through double) */
+float chirp_j0_f32(float x) { return (float)j0((double)x); }
+float chirp_j1_f32(float x) { return (float)j1((double)x); }
+float chirp_y0_f32(float x) { return (float)y0((double)x); }
+float chirp_y1_f32(float x) { return (float)y1((double)x); }
 
 double chirp_j0_f64(double x) { return j0(x); }
 double chirp_j1_f64(double x) { return j1(x); }
