@@ -168,6 +168,7 @@ All builtins come in f32 and f64 variants. The f32 variant has `_f32` suffix, f6
 | `asin` | Arcsine |
 | `acos` | Arccosine |
 | `atan` | Arctangent |
+| `atan2` | Two-argument arctangent (y, x) |
 | `sinh` | Hyperbolic sine |
 | `cosh` | Hyperbolic cosine |
 | `tanh` | Hyperbolic tangent |
@@ -224,6 +225,7 @@ float y = chirp_cauchy_pdf_f32(x, x0, gamma);
 | `gamma_pdf` | `k, theta` | Gamma distribution |
 | `weibull_pdf` | `k, lambda` | Weibull distribution |
 | `uniform_pdf` | `a, b` | Uniform distribution |
+| `student_t_pdf` | `nu` | Student's t-distribution |
 
 ### Activation Functions
 
@@ -277,6 +279,8 @@ chirp_hann_window_f32(window, 1024);
 | `hamming_window` | Hamming window (non-zero at edges) |
 | `blackman_window` | Blackman window (better sidelobe rejection) |
 | `flattop_window` | Flat-top window (low amplitude error) |
+| `gaussian_window` | Gaussian window (sigma parameter) |
+| `kaiser_window` | Kaiser window (beta parameter) |
 
 ### Wavelet Functions
 
@@ -294,6 +298,8 @@ chirp_haar_f32(signal, approx, detail, 1024);
 | `daubechies4` | Daubechies-4 wavelet |
 | `morlet` | Morlet wavelet (complex) |
 | `mexican_hat` | Mexican hat (Ricker) wavelet |
+| `meyer_scaling` | Meyer scaling function |
+| `shannon_wavelet` | Shannon wavelet (sinc-based) |
 
 #### Wavelet Composition via Lifting
 
@@ -430,6 +436,9 @@ int chirp_register_standard_builtins(void);
 
 // List all registered builtins
 void chirp_list_builtins(void);
+
+// Cleanup: free all registered builtin names
+void chirp_cleanup(void);
 ```
 
 ### Compilation
