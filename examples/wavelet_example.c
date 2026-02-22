@@ -16,15 +16,15 @@ int main(void) {
     printf("FastAndFourier - Wavelet Transform Example\n");
     printf("===========================================\n\n");
     
-    dspir_init();
+    faf_init();
     
     /* Create a 128-point Haar wavelet with 3 decomposition levels */
     const size_t n = 128;
     const size_t levels = 3;
     
-    dspir_transform* haar = dspir_create_haar(n, levels, DSPIR_PREC_FP32, 0);
+    faf_transform* haar = faf_create_haar(n, levels, FAF_PREC_FP32, 0);
     if (!haar) {
-        fprintf(stderr, "Failed to create Haar transform: %s\n", dspir_get_error());
+        fprintf(stderr, "Failed to create Haar transform: %s\n", faf_get_error());
         return 1;
     }
     
@@ -42,7 +42,7 @@ int main(void) {
     printf("Input: Step function (0 for first half, 1 for second half)\n\n");
     
     /* Execute Haar transform */
-    dspir_execute_f32(haar, out, in);
+    faf_execute_f32(haar, out, in);
     
     /* Display wavelet coefficients */
     printf("Wavelet coefficients after %zu-level decomposition:\n", levels);
@@ -71,8 +71,8 @@ int main(void) {
     
     free(in);
     free(out);
-    dspir_destroy_transform(haar);
-    dspir_cleanup();
+    faf_destroy_transform(haar);
+    faf_cleanup();
     
     return 0;
 }

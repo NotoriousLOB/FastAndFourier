@@ -27,7 +27,7 @@ static double get_time_us(void) {
 }
 
 /* Benchmark a kernel function */
-static double benchmark_kernel(dspir_kernel_fn kernel, void *out, const void *in, 
+static double benchmark_kernel(faf_kernel_fn kernel, void *out, const void *in, 
                                 size_t n, void *twiddles, int iterations) {
     /* Warm up cache */
     for (int i = 0; i < 100; i++) {
@@ -42,15 +42,15 @@ static double benchmark_kernel(dspir_kernel_fn kernel, void *out, const void *in
 }
 
 /* Benchmark VM execution */
-static double benchmark_vm(dspir_transform *t, float *out, const float *in, int iterations) {
+static double benchmark_vm(faf_transform *t, float *out, const float *in, int iterations) {
     /* Warm up */
     for (int i = 0; i < 100; i++) {
-        dspir_execute_f32(t, out, in);
+        faf_execute_f32(t, out, in);
     }
     
     double start = get_time_us();
     for (int i = 0; i < iterations; i++) {
-        dspir_execute_f32(t, out, in);
+        faf_execute_f32(t, out, in);
     }
     return get_time_us() - start;
 }
@@ -60,7 +60,7 @@ int main(void) {
     printf("║   FastAndFourier - High Performance JIT Compilation Demo     ║\n");
     printf("╚══════════════════════════════════════════════════════════════╝\n\n");
     
-    dspir_init();
+    faf_init();
     
     const size_t n = 256;
     const int iterations = 10000;
@@ -71,9 +71,9 @@ int main(void) {
     printf("  Data format: Complex-interleaved (2*%zu floats)\n\n", n);
     
     /* Create transform */
-    dspir_transform* fft = dspir_create_fft(n, false, DSPIR_PREC_FP32, 0);
+    faf_transform* fft = faf_create_fft(n, false, FAF_PREC_FP32, 0);
     if (!fft) {
-        fprintf(stderr, "Failed to create FFT: %s\n", dspir_get_error());
+        fprintf(stderr, "Failed to create FFT: %s\n", faf_get_error());
         return 1;
     }
     
@@ -103,20 +103,20 @@ int main(void) {
     /* Try JIT compilation with all optimizations */
     printf("2. JIT Compilation (in-place + SIMD)\n");
     
-    dspir_jit_ctx* jit = dspir_jit_create();
+    faf_jit_ctx* jit = faf_jit_create();
     if (!jit) {
         fprintf(stderr, "   Failed to create JIT context\n");
         free(in); free(out);
-        dspir_destroy_transform(fft);
+        faf_destroy_transform(fft);
         return 1;
     }
     
     /* Compile with all optimizations enabled by default */
-    if (dspir_jit_compile(jit, fft) != 0) {
+    if (faf_jit_compile(jit, fft) != 0) {
         printf("   JIT compilation not available (compiler not found)\n");
         printf("   Falling back to VM execution\n");
     } else {
-        dspir_kernel_fn kernel = dspir_jit_get_kernel(jit);
+        faf_kernel_fn kernel = faf_jit_get_kernel(jit);
         if (kernel) {
             double jit_time = benchmark_kernel(kernel, out, in, n, fft->twiddles[0], iterations);
             double jit_per_fft = jit_time / iterations;
@@ -136,11 +136,11 @@ int main(void) {
             memcpy(inplace_buffer, in, 2 * n * sizeof(float));
             
             /* Use in-place flag explicitly */
-            dspir_jit_ctx* jit_inplace = dspir_jit_create();
-            if (jit_inplace && dspir_jit_compile_ex(jit_inplace, fft, 
-                DSPIR_FLAG_JIT_INPLACE | DSPIR_FLAG_JIT_SIMD) == 0) {
+            faf_jit_ctx* jit_inplace = faf_jit_create();
+            if (jit_inplace && faf_jit_compile_ex(jit_inplace, fft, 
+                FAF_FLAG_JIT_INPLACE | FAF_FLAG_JIT_SIMD) == 0) {
                 
-                dspir_kernel_fn kernel_ip = dspir_jit_get_kernel(jit_inplace);
+                faf_kernel_fn kernel_ip = faf_jit_get_kernel(jit_inplace);
                 
                 /* Warm up */
                 for (int i = 0; i < 100; i++) {
@@ -176,7 +176,7 @@ int main(void) {
                 printf("     Throughput:  %.2f M FFTs/sec\n", pure_throughput / 1e6);
                 printf("     Speedup:     %.1fx faster than VM\n\n", vm_time / pure_time);
                 
-                dspir_jit_destroy(jit_inplace);
+                faf_jit_destroy(jit_inplace);
             }
             free(inplace_buffer);
             
@@ -188,7 +188,7 @@ int main(void) {
             size_t sizes[] = {16, 32, 64, 128, 256};
             for (size_t i = 0; i < sizeof(sizes)/sizeof(sizes[0]); i++) {
                 size_t test_n = sizes[i];
-                dspir_transform* test_fft = dspir_create_fft(test_n, false, DSPIR_PREC_FP32, 0);
+                faf_transform* test_fft = faf_create_fft(test_n, false, FAF_PREC_FP32, 0);
                 if (!test_fft) continue;
                 
                 float* test_in = (float*)aligned_alloc(64, 2 * test_n * sizeof(float));
@@ -199,9 +199,9 @@ int main(void) {
                     test_in[2*j + 1] = 0.0f;
                 }
                 
-                dspir_jit_ctx* test_jit = dspir_jit_create();
-                if (test_jit && dspir_jit_compile(test_jit, test_fft) == 0) {
-                    dspir_kernel_fn test_kernel = dspir_jit_get_kernel(test_jit);
+                faf_jit_ctx* test_jit = faf_jit_create();
+                if (test_jit && faf_jit_compile(test_jit, test_fft) == 0) {
+                    faf_kernel_fn test_kernel = faf_jit_get_kernel(test_jit);
                     int test_iters = (test_n <= 64) ? 50000 : 10000;
                     
                     double t = benchmark_kernel(test_kernel, test_out, test_in, test_n, 
@@ -213,8 +213,8 @@ int main(void) {
                 }
                 
                 free(test_in); free(test_out);
-                dspir_jit_destroy(test_jit);
-                dspir_destroy_transform(test_fft);
+                faf_jit_destroy(test_jit);
+                faf_destroy_transform(test_fft);
             }
         }
     }
@@ -231,9 +231,9 @@ int main(void) {
     /* Cleanup */
     free(in);
     free(out);
-    dspir_jit_destroy(jit);
-    dspir_destroy_transform(fft);
-    dspir_cleanup();
+    faf_jit_destroy(jit);
+    faf_destroy_transform(fft);
+    faf_cleanup();
     
     return 0;
 }

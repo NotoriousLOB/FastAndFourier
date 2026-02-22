@@ -14,7 +14,7 @@
 /* Test FP32 precision */
 TEST(PrecisionTest, FP32Accuracy) {
     const size_t n = 256;
-    dspir_transform* t = dspir_create_fft(n, false, DSPIR_PREC_FP32, 0);
+    faf_transform* t = faf_create_fft(n, false, FAF_PREC_FP32, 0);
     ASSERT_NE(t, nullptr);
     
     float *in = (float*)aligned_alloc(64, 2 * n * sizeof(float));
@@ -27,7 +27,7 @@ TEST(PrecisionTest, FP32Accuracy) {
         in[2*i+1] = 0.0f;
     }
     
-    dspir_execute_f32(t, out, in);
+    faf_execute_f32(t, out, in);
     
     /* Check that energy is concentrated at the expected frequency */
     float peak_energy = 0.0f;
@@ -43,13 +43,13 @@ TEST(PrecisionTest, FP32Accuracy) {
     EXPECT_EQ(peak_idx, k);
     
     free(in); free(out);
-    dspir_destroy_transform(t);
+    faf_destroy_transform(t);
 }
 
 /* Test FP64 precision (higher accuracy) */
 TEST(PrecisionTest, FP64Accuracy) {
     const size_t n = 256;
-    dspir_transform* t = dspir_create_fft(n, false, DSPIR_PREC_FP64, 0);
+    faf_transform* t = faf_create_fft(n, false, FAF_PREC_FP64, 0);
     ASSERT_NE(t, nullptr);
     
     double *in = (double*)aligned_alloc(64, 2 * n * sizeof(double));
@@ -62,7 +62,7 @@ TEST(PrecisionTest, FP64Accuracy) {
         in[2*i+1] = 0.0;
     }
     
-    dspir_execute_f64(t, out, in);
+    faf_execute_f64(t, out, in);
     
     /* Check that energy is concentrated at the expected frequency */
     double peak_energy = 0.0;
@@ -78,15 +78,15 @@ TEST(PrecisionTest, FP64Accuracy) {
     EXPECT_EQ(peak_idx, k);
     
     free(in); free(out);
-    dspir_destroy_transform(t);
+    faf_destroy_transform(t);
 }
 
 /* Compare FP32 vs FP64 accuracy */
 TEST(PrecisionTest, FP32vsFP64) {
     const size_t n = 256;
     
-    dspir_transform* t32 = dspir_create_fft(n, false, DSPIR_PREC_FP32, 0);
-    dspir_transform* t64 = dspir_create_fft(n, false, DSPIR_PREC_FP64, 0);
+    faf_transform* t32 = faf_create_fft(n, false, FAF_PREC_FP32, 0);
+    faf_transform* t64 = faf_create_fft(n, false, FAF_PREC_FP64, 0);
     ASSERT_NE(t32, nullptr);
     ASSERT_NE(t64, nullptr);
     
@@ -107,8 +107,8 @@ TEST(PrecisionTest, FP32vsFP64) {
         in64[2*i+1] = 0.0;
     }
     
-    dspir_execute_f32(t32, out32, in32);
-    dspir_execute_f64(t64, out64, in64);
+    faf_execute_f32(t32, out32, in32);
+    faf_execute_f64(t64, out64, in64);
     
     /* Compare results - they should be close but not identical */
     double max_diff = 0.0;
@@ -124,14 +124,14 @@ TEST(PrecisionTest, FP32vsFP64) {
     
     free(in32); free(out32);
     free(in64); free(out64);
-    dspir_destroy_transform(t32);
-    dspir_destroy_transform(t64);
+    faf_destroy_transform(t32);
+    faf_destroy_transform(t64);
 }
 
 /* Test numerical stability with large transforms */
 TEST(PrecisionTest, LargeTransformStability) {
     const size_t n = 4096;
-    dspir_transform* t = dspir_create_fft(n, false, DSPIR_PREC_FP32, 0);
+    faf_transform* t = faf_create_fft(n, false, FAF_PREC_FP32, 0);
     ASSERT_NE(t, nullptr);
     
     float *in = (float*)aligned_alloc(64, 2 * n * sizeof(float));
@@ -145,7 +145,7 @@ TEST(PrecisionTest, LargeTransformStability) {
         in[2*i+1] = 0.0f;
     }
     
-    dspir_execute_f32(t, out, in);
+    faf_execute_f32(t, out, in);
     
     /* Check that output doesn't contain NaN or Inf */
     for (size_t i = 0; i < n; i++) {
@@ -156,7 +156,7 @@ TEST(PrecisionTest, LargeTransformStability) {
     }
     
     free(in); free(out);
-    dspir_destroy_transform(t);
+    faf_destroy_transform(t);
 }
 
 /* Test DCT with different precisions */
@@ -164,7 +164,7 @@ TEST(PrecisionTest, DCTPrecision) {
     const size_t n = 128;
     
     /* FP32 DCT */
-    dspir_transform* t32 = dspir_create_dct(n, 2, DSPIR_PREC_FP32, 0);
+    faf_transform* t32 = faf_create_dct(n, 2, FAF_PREC_FP32, 0);
     ASSERT_NE(t32, nullptr);
     
     float *in32 = (float*)aligned_alloc(64, 2 * n * sizeof(float));
@@ -175,7 +175,7 @@ TEST(PrecisionTest, DCTPrecision) {
         in32[2*i+1] = 0.0f;
     }
     
-    dspir_execute_f32(t32, out32, in32);
+    faf_execute_f32(t32, out32, in32);
     
     /* Check for NaN/Inf */
     for (size_t i = 0; i < n; i++) {
@@ -186,5 +186,5 @@ TEST(PrecisionTest, DCTPrecision) {
     }
     
     free(in32); free(out32);
-    dspir_destroy_transform(t32);
+    faf_destroy_transform(t32);
 }

@@ -1,9 +1,9 @@
 /**
- * @file dspir_twiddles.c
+ * @file faf_twiddles.c
  * @brief Twiddle factor generation for all transform types
  */
 
-#include "dspir.h"
+#include "faf.h"
 #include <math.h>
 
 #ifndef M_PI
@@ -17,7 +17,7 @@
  * For forward FFT: W_N^k = exp(-2*pi*i*k/N)
  * For inverse FFT: W_N^k = exp(+2*pi*i*k/N)
  */
-void dspir_gen_twiddles_f32(float *tw, size_t n, bool inverse) {
+void faf_gen_twiddles_f32(float *tw, size_t n, bool inverse) {
     const float sign = inverse ? 1.0f : -1.0f;
     const float twopi_over_n = 2.0f * (float)M_PI / (float)n;
     
@@ -29,7 +29,7 @@ void dspir_gen_twiddles_f32(float *tw, size_t n, bool inverse) {
     }
 }
 
-void dspir_gen_twiddles_f64(double *tw, size_t n, bool inverse) {
+void faf_gen_twiddles_f64(double *tw, size_t n, bool inverse) {
     const double sign = inverse ? 1.0 : -1.0;
     const double twopi_over_n = 2.0 * M_PI / (double)n;
     
@@ -46,7 +46,7 @@ void dspir_gen_twiddles_f64(double *tw, size_t n, bool inverse) {
  * DCT-II can be computed via FFT with pre/post processing.
  * These twiddles are for the pre-processing step.
  */
-void dspir_gen_dct_twiddles_f32(float *tw, size_t n, int type) {
+void faf_gen_dct_twiddles_f32(float *tw, size_t n, int type) {
     switch (type) {
         case 2: {
             /* DCT-II: pre-twiddles for FFT-based computation */
@@ -82,7 +82,7 @@ void dspir_gen_dct_twiddles_f32(float *tw, size_t n, int type) {
 /**
  * @brief Generate twiddle factors for DST
  */
-void dspir_gen_dst_twiddles_f32(float *tw, size_t n, int type) {
+void faf_gen_dst_twiddles_f32(float *tw, size_t n, int type) {
     switch (type) {
         case 2: {
             /* DST-II twiddles */
@@ -109,7 +109,7 @@ void dspir_gen_dst_twiddles_f32(float *tw, size_t n, int type) {
  * 
  * MDCT uses a combination of windowing and FFT-based computation
  */
-void dspir_gen_mdct_twiddles_f32(float *tw, size_t n) {
+void faf_gen_mdct_twiddles_f32(float *tw, size_t n) {
     /* MDCT rotation twiddles */
     size_t n2 = n / 2;
     size_t n4 = n / 4;
@@ -136,13 +136,13 @@ void dspir_gen_mdct_twiddles_f32(float *tw, size_t n) {
 /**
  * @brief Generate window functions
  */
-void dspir_gen_hann_window_f32(float *win, size_t n) {
+void faf_gen_hann_window_f32(float *win, size_t n) {
     for (size_t i = 0; i < n; i++) {
         win[i] = 0.5f * (1.0f - cosf(2.0f * (float)M_PI * (float)i / (float)(n - 1)));
     }
 }
 
-void dspir_gen_hamming_window_f32(float *win, size_t n) {
+void faf_gen_hamming_window_f32(float *win, size_t n) {
     const float a0 = 0.54f;
     const float a1 = 0.46f;
     for (size_t i = 0; i < n; i++) {
@@ -150,7 +150,7 @@ void dspir_gen_hamming_window_f32(float *win, size_t n) {
     }
 }
 
-void dspir_gen_blackman_window_f32(float *win, size_t n) {
+void faf_gen_blackman_window_f32(float *win, size_t n) {
     const float a0 = 0.42f;
     const float a1 = 0.5f;
     const float a2 = 0.08f;
@@ -163,7 +163,7 @@ void dspir_gen_blackman_window_f32(float *win, size_t n) {
 /**
  * @brief Generate Kaiser window
  */
-void dspir_gen_kaiser_window_f32(float *win, size_t n, float beta) {
+void faf_gen_kaiser_window_f32(float *win, size_t n, float beta) {
     /* Modified Bessel function of the first kind, order 0 */
     float i0_beta = 0.0f;
     float x = 1.0f;
@@ -195,7 +195,7 @@ void dspir_gen_kaiser_window_f32(float *win, size_t n, float beta) {
 /**
  * @brief Generate wavelet filter coefficients
  */
-void dspir_gen_haar_coeffs_f32(float *lo, float *hi) {
+void faf_gen_haar_coeffs_f32(float *lo, float *hi) {
     /* Haar wavelet: simplest wavelet */
     lo[0] = 0.7071067811865476f;  /* 1/sqrt(2) */
     lo[1] = 0.7071067811865476f;
@@ -203,7 +203,7 @@ void dspir_gen_haar_coeffs_f32(float *lo, float *hi) {
     hi[1] = -0.7071067811865476f;
 }
 
-void dspir_gen_daubechies4_coeffs_f32(float *lo, float *hi) {
+void faf_gen_daubechies4_coeffs_f32(float *lo, float *hi) {
     /* Daubechies-4 wavelet coefficients (D4) */
     /* These are the famous db4 coefficients */
     const float h0 = 0.4829629131445341f;
@@ -222,7 +222,7 @@ void dspir_gen_daubechies4_coeffs_f32(float *lo, float *hi) {
     hi[3] = -h0;
 }
 
-void dspir_gen_cdf97_coeffs_f32(float *lo, float *hi, float *lo_r, float *hi_r) {
+void faf_gen_cdf97_coeffs_f32(float *lo, float *hi, float *lo_r, float *hi_r) {
     /* CDF 9/7 wavelet coefficients (used in JPEG 2000) */
     /* Analysis low-pass */
     lo[0] = 0.02674875741080976f;
@@ -262,11 +262,11 @@ void dspir_gen_cdf97_coeffs_f32(float *lo, float *hi, float *lo_r, float *hi_r) 
 /**
  * @brief Generate STFT window and twiddles
  */
-void dspir_gen_stft_twiddles_f32(float *tw, size_t n_fft, size_t hop_length, size_t win_length) {
+void faf_gen_stft_twiddles_f32(float *tw, size_t n_fft, size_t hop_length, size_t win_length) {
     (void)hop_length;
     
     /* FFT twiddles */
-    dspir_gen_twiddles_f32(tw, n_fft, false);
+    faf_gen_twiddles_f32(tw, n_fft, false);
     
     /* Window function (Hann by default) */
     float *win = &tw[n_fft];
@@ -280,10 +280,10 @@ void dspir_gen_stft_twiddles_f32(float *tw, size_t n_fft, size_t hop_length, siz
         }
     } else {
         /* Truncated window */
-        dspir_gen_hann_window_f32(win, n_fft);
+        faf_gen_hann_window_f32(win, n_fft);
     }
 }
 
-void dspir_init_twiddles(void *tw, size_t n, bool inverse) {
-    dspir_gen_twiddles_f32((float*)tw, n, inverse);
+void faf_init_twiddles(void *tw, size_t n, bool inverse) {
+    faf_gen_twiddles_f32((float*)tw, n, inverse);
 }

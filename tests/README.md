@@ -225,14 +225,14 @@ firefox coverage/index.html
 
 TEST(SuiteName, TestName) {
     // Arrange
-    dspir_transform* t = dspir_create_fft(64, false, DSPIR_PREC_FP32, 0);
+    faf_transform* t = faf_create_fft(64, false, FAF_PREC_FP32, 0);
     ASSERT_NE(t, nullptr);
     
     float* in = (float*)aligned_alloc(64, 64 * sizeof(float));
     float* out = (float*)aligned_alloc(64, 64 * sizeof(float));
     
     // Act
-    int result = dspir_execute_f32(t, out, in);
+    int result = faf_execute_f32(t, out, in);
     
     // Assert
     EXPECT_EQ(result, 0);
@@ -240,7 +240,7 @@ TEST(SuiteName, TestName) {
     
     // Cleanup
     free(in); free(out);
-    dspir_destroy_transform(t);
+    faf_destroy_transform(t);
 }
 ```
 

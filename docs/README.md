@@ -74,11 +74,11 @@ ctest --output-on-failure
 
 int main() {
     /* Initialize library */
-    dspir_init();
+    faf_init();
     
     /* Create a 1024-point FFT */
     size_t n = 1024;
-    dspir_transform* fft = dspir_create_fft(n, false, DSPIR_PREC_FP32, 0);
+    faf_transform* fft = faf_create_fft(n, false, FAF_PREC_FP32, 0);
     
     /* Allocate aligned buffers */
     float* in = aligned_alloc(64, n * sizeof(float));
@@ -90,13 +90,13 @@ int main() {
     }
     
     /* Execute FFT */
-    dspir_execute_f32(fft, out, in);
+    faf_execute_f32(fft, out, in);
     
     /* Clean up */
     free(in);
     free(out);
-    dspir_destroy_transform(fft);
-    dspir_cleanup();
+    faf_destroy_transform(fft);
+    faf_cleanup();
     
     return 0;
 }
@@ -108,17 +108,17 @@ int main() {
 #include <fastandfourier.h>
 
 int main() {
-    dspir_init();
+    faf_init();
     
     /* Create transform */
-    dspir_transform* fft = dspir_create_fft(1024, false, DSPIR_PREC_FP32, 0);
+    faf_transform* fft = faf_create_fft(1024, false, FAF_PREC_FP32, 0);
     
     /* Create JIT context and compile */
-    dspir_jit_ctx* jit = dspir_jit_create();
-    dspir_jit_compile(jit, fft);
+    faf_jit_ctx* jit = faf_jit_create();
+    faf_jit_compile(jit, fft);
     
     /* Get compiled kernel */
-    dspir_kernel_fn kernel = dspir_jit_get_kernel(jit);
+    faf_kernel_fn kernel = faf_jit_get_kernel(jit);
     
     /* Execute compiled kernel */
     float in[1024], out[1024];
@@ -126,9 +126,9 @@ int main() {
     kernel(out, in, 1024, fft->twiddles[0]);
     
     /* Clean up */
-    dspir_jit_destroy(jit);
-    dspir_destroy_transform(fft);
-    dspir_cleanup();
+    faf_jit_destroy(jit);
+    faf_destroy_transform(fft);
+    faf_cleanup();
     
     return 0;
 }
@@ -172,17 +172,17 @@ See the [full API documentation](https://fastandfourier.readthedocs.io) for deta
 
 ### Core Functions
 
-- `dspir_init()` / `dspir_cleanup()` - Library initialization
-- `dspir_create_fft()` / `dspir_create_dct()` / `dspir_create_dst()` - Transform creation
-- `dspir_execute_f32()` / `dspir_execute_f64()` - Execute transforms
-- `dspir_destroy_transform()` - Cleanup
+- `faf_init()` / `faf_cleanup()` - Library initialization
+- `faf_create_fft()` / `faf_create_dct()` / `faf_create_dst()` - Transform creation
+- `faf_execute_f32()` / `faf_execute_f64()` - Execute transforms
+- `faf_destroy_transform()` - Cleanup
 
 ### JIT Functions
 
-- `dspir_jit_create()` - Create JIT context
-- `dspir_jit_compile()` - Compile transform
-- `dspir_jit_get_kernel()` - Get compiled function
-- `dspir_jit_destroy()` - Cleanup
+- `faf_jit_create()` - Create JIT context
+- `faf_jit_compile()` - Compile transform
+- `faf_jit_get_kernel()` - Get compiled function
+- `faf_jit_destroy()` - Cleanup
 
 ## Contributing
 

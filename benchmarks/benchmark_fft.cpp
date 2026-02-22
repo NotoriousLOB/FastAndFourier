@@ -16,7 +16,7 @@
 static void BM_FFT_Vm_Small(benchmark::State& state) {
     const size_t n = state.range(0);
     
-    dspir_transform* t = dspir_create_fft(n, false, DSPIR_PREC_FP32, 0);
+    faf_transform* t = faf_create_fft(n, false, FAF_PREC_FP32, 0);
     if (!t) {
         state.SkipWithError("Failed to create transform");
         return;
@@ -32,7 +32,7 @@ static void BM_FFT_Vm_Small(benchmark::State& state) {
     }
     
     for (auto _ : state) {
-        dspir_execute_f32(t, out, in);
+        faf_execute_f32(t, out, in);
         benchmark::DoNotOptimize(out);
     }
     
@@ -41,7 +41,7 @@ static void BM_FFT_Vm_Small(benchmark::State& state) {
     
     free(in);
     free(out);
-    dspir_destroy_transform(t);
+    faf_destroy_transform(t);
 }
 BENCHMARK(BM_FFT_Vm_Small)
     ->Range(16, 128)  /* Max 128 due to register file limit */
@@ -51,7 +51,7 @@ BENCHMARK(BM_FFT_Vm_Small)
 static void BM_FFT_Double(benchmark::State& state) {
     const size_t n = state.range(0);
     
-    dspir_transform* t = dspir_create_fft(n, false, DSPIR_PREC_FP64, 0);
+    faf_transform* t = faf_create_fft(n, false, FAF_PREC_FP64, 0);
     if (!t) {
         state.SkipWithError("Failed to create transform");
         return;
@@ -66,7 +66,7 @@ static void BM_FFT_Double(benchmark::State& state) {
     }
     
     for (auto _ : state) {
-        dspir_execute_f64(t, out, in);
+        faf_execute_f64(t, out, in);
         benchmark::DoNotOptimize(out);
     }
     
@@ -75,7 +75,7 @@ static void BM_FFT_Double(benchmark::State& state) {
     
     free(in);
     free(out);
-    dspir_destroy_transform(t);
+    faf_destroy_transform(t);
 }
 BENCHMARK(BM_FFT_Double)
     ->Range(16, 128)  /* Max 128 due to register file limit */
@@ -85,7 +85,7 @@ BENCHMARK(BM_FFT_Double)
 static void BM_DCT(benchmark::State& state) {
     const size_t n = state.range(0);
     
-    dspir_transform* t = dspir_create_dct(n, 2, DSPIR_PREC_FP32, 0);
+    faf_transform* t = faf_create_dct(n, 2, FAF_PREC_FP32, 0);
     if (!t) {
         state.SkipWithError("Failed to create transform");
         return;
@@ -101,7 +101,7 @@ static void BM_DCT(benchmark::State& state) {
     }
     
     for (auto _ : state) {
-        dspir_execute_f32(t, out, in);
+        faf_execute_f32(t, out, in);
         benchmark::DoNotOptimize(out);
     }
     
@@ -109,7 +109,7 @@ static void BM_DCT(benchmark::State& state) {
     
     free(in);
     free(out);
-    dspir_destroy_transform(t);
+    faf_destroy_transform(t);
 }
 BENCHMARK(BM_DCT)
     ->Range(16, 128)
@@ -119,7 +119,7 @@ BENCHMARK(BM_DCT)
 static void BM_Haar(benchmark::State& state) {
     const size_t n = state.range(0);
     
-    dspir_transform* t = dspir_create_haar(n, 3, DSPIR_PREC_FP32, 0);
+    faf_transform* t = faf_create_haar(n, 3, FAF_PREC_FP32, 0);
     if (!t) {
         state.SkipWithError("Failed to create transform");
         return;
@@ -135,7 +135,7 @@ static void BM_Haar(benchmark::State& state) {
     }
     
     for (auto _ : state) {
-        dspir_execute_f32(t, out, in);
+        faf_execute_f32(t, out, in);
         benchmark::DoNotOptimize(out);
     }
     
@@ -143,7 +143,7 @@ static void BM_Haar(benchmark::State& state) {
     
     free(in);
     free(out);
-    dspir_destroy_transform(t);
+    faf_destroy_transform(t);
 }
 BENCHMARK(BM_Haar)
     ->Range(16, 128)
@@ -153,7 +153,7 @@ BENCHMARK(BM_Haar)
 static void BM_MDCT(benchmark::State& state) {
     const size_t n = state.range(0);
     
-    dspir_transform* t = dspir_create_mdct(n, DSPIR_PREC_FP32, 0);
+    faf_transform* t = faf_create_mdct(n, FAF_PREC_FP32, 0);
     if (!t) {
         state.SkipWithError("Failed to create transform");
         return;
@@ -169,7 +169,7 @@ static void BM_MDCT(benchmark::State& state) {
     }
     
     for (auto _ : state) {
-        dspir_execute_f32(t, out, in);
+        faf_execute_f32(t, out, in);
         benchmark::DoNotOptimize(out);
     }
     
@@ -177,7 +177,7 @@ static void BM_MDCT(benchmark::State& state) {
     
     free(in);
     free(out);
-    dspir_destroy_transform(t);
+    faf_destroy_transform(t);
 }
 BENCHMARK(BM_MDCT)
     ->Range(16, 128)
@@ -187,32 +187,32 @@ BENCHMARK(BM_MDCT)
 static void BM_FFT_JIT(benchmark::State& state) {
     const size_t n = state.range(0);
     
-    dspir_transform* t = dspir_create_fft(n, false, DSPIR_PREC_FP32, 0);
+    faf_transform* t = faf_create_fft(n, false, FAF_PREC_FP32, 0);
     if (!t) {
         state.SkipWithError("Failed to create transform");
         return;
     }
     
     /* Create JIT context and compile */
-    dspir_jit_ctx* jit = dspir_jit_create();
+    faf_jit_ctx* jit = faf_jit_create();
     if (!jit) {
         state.SkipWithError("Failed to create JIT context");
-        dspir_destroy_transform(t);
+        faf_destroy_transform(t);
         return;
     }
     
-    if (dspir_jit_compile(jit, t) != 0) {
+    if (faf_jit_compile(jit, t) != 0) {
         state.SkipWithError("JIT compilation failed");
-        dspir_jit_destroy(jit);
-        dspir_destroy_transform(t);
+        faf_jit_destroy(jit);
+        faf_destroy_transform(t);
         return;
     }
     
-    dspir_kernel_fn kernel = dspir_jit_get_kernel(jit);
+    faf_kernel_fn kernel = faf_jit_get_kernel(jit);
     if (!kernel) {
         state.SkipWithError("Failed to get JIT kernel");
-        dspir_jit_destroy(jit);
-        dspir_destroy_transform(t);
+        faf_jit_destroy(jit);
+        faf_destroy_transform(t);
         return;
     }
     
@@ -235,8 +235,8 @@ static void BM_FFT_JIT(benchmark::State& state) {
     
     free(in);
     free(out);
-    dspir_jit_destroy(jit);
-    dspir_destroy_transform(t);
+    faf_jit_destroy(jit);
+    faf_destroy_transform(t);
 }
 BENCHMARK(BM_FFT_JIT)
     ->Arg(16)

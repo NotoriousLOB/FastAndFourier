@@ -1,13 +1,13 @@
 /**
- * @file dspir_x86_avx512.c
+ * @file faf_x86_avx512.c
  * @brief AVX-512 vectorized kernels for x86_64
  * 
  * AVX-512 provides 512-bit registers (16 floats), FMA, and mask registers
  */
 
-#include "dspir.h"
+#include "faf.h"
 
-#if defined(DSPIR_ARCH_X86_64) && defined(DSPIR_HAVE_AVX512)
+#if defined(FAF_ARCH_X86_64) && defined(FAF_HAVE_AVX512)
 
 #include <immintrin.h>
 #include <string.h>
@@ -61,7 +61,7 @@ static inline void avx512_bfly2(__m512 *a_re, __m512 *a_im,
  * 
  * Uses 16-wide vectorization for maximum throughput
  */
-void dspir_x86_avx512_execute_f32(const dspir_transform *t,
+void faf_x86_avx512_execute_f32(const faf_transform *t,
                                    float *restrict out,
                                    const float *restrict in) {
     const size_t n = t->n;
@@ -250,7 +250,7 @@ void dspir_x86_avx512_execute_f32(const dspir_transform *t,
 /**
  * @brief AVX-512-optimized polyphase FIR with 16-wide unrolling
  */
-void dspir_x86_avx512_polyfir_f32(const dspir_transform *t,
+void faf_x86_avx512_polyfir_f32(const faf_transform *t,
                                    float *restrict out,
                                    const float *restrict in) {
     const size_t nch = 8;
@@ -285,7 +285,7 @@ void dspir_x86_avx512_polyfir_f32(const dspir_transform *t,
 /**
  * @brief AVX-512-optimized MDCT using 16-wide transforms
  */
-void dspir_x86_avx512_mdct_f32(const dspir_transform *t,
+void faf_x86_avx512_mdct_f32(const faf_transform *t,
                                 float *restrict out,
                                 const float *restrict in) {
     const size_t n = t->n;
@@ -343,4 +343,4 @@ void dspir_x86_avx512_mdct_f32(const dspir_transform *t,
     free(work);
 }
 
-#endif /* DSPIR_ARCH_X86_64 && DSPIR_HAVE_AVX512 */
+#endif /* FAF_ARCH_X86_64 && FAF_HAVE_AVX512 */

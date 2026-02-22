@@ -16,17 +16,17 @@
 static void BM_SplitPlane_FP32(benchmark::State& state) {
     const size_t n = state.range(0);
     
-    dspir_transform* t = dspir_create_fft(n, false, DSPIR_PREC_FP32, 0);
+    faf_transform* t = faf_create_fft(n, false, FAF_PREC_FP32, 0);
     if (!t) {
         state.SkipWithError("Failed to create transform");
         return;
     }
     
     /* Allocate split-plane buffers */
-    float* in_re = (float*)dspir_aligned_alloc(n * sizeof(float));
-    float* in_im = (float*)dspir_aligned_alloc(n * sizeof(float));
-    float* out_re = (float*)dspir_aligned_alloc(n * sizeof(float));
-    float* out_im = (float*)dspir_aligned_alloc(n * sizeof(float));
+    float* in_re = (float*)faf_aligned_alloc(n * sizeof(float));
+    float* in_im = (float*)faf_aligned_alloc(n * sizeof(float));
+    float* out_re = (float*)faf_aligned_alloc(n * sizeof(float));
+    float* out_im = (float*)faf_aligned_alloc(n * sizeof(float));
     
     /* Initialize with sine wave */
     for (size_t i = 0; i < n; i++) {
@@ -36,11 +36,11 @@ static void BM_SplitPlane_FP32(benchmark::State& state) {
     
     /* Warm up */
     for (int i = 0; i < 10; i++) {
-        dspir_execute_split_f32(t, out_re, out_im, in_re, in_im);
+        faf_execute_split_f32(t, out_re, out_im, in_re, in_im);
     }
     
     for (auto _ : state) {
-        dspir_execute_split_f32(t, out_re, out_im, in_re, in_im);
+        faf_execute_split_f32(t, out_re, out_im, in_re, in_im);
         benchmark::DoNotOptimize(out_re);
         benchmark::DoNotOptimize(out_im);
     }
@@ -48,26 +48,26 @@ static void BM_SplitPlane_FP32(benchmark::State& state) {
     state.SetBytesProcessed(state.iterations() * 2 * n * sizeof(float));
     state.SetItemsProcessed(state.iterations() * n);
     
-    dspir_aligned_free(in_re);
-    dspir_aligned_free(in_im);
-    dspir_aligned_free(out_re);
-    dspir_aligned_free(out_im);
-    dspir_destroy_transform(t);
+    faf_aligned_free(in_re);
+    faf_aligned_free(in_im);
+    faf_aligned_free(out_re);
+    faf_aligned_free(out_im);
+    faf_destroy_transform(t);
 }
 
 /* Benchmark standard interleaved FP32 */
 static void BM_Standard_FP32(benchmark::State& state) {
     const size_t n = state.range(0);
     
-    dspir_transform* t = dspir_create_fft(n, false, DSPIR_PREC_FP32, 0);
+    faf_transform* t = faf_create_fft(n, false, FAF_PREC_FP32, 0);
     if (!t) {
         state.SkipWithError("Failed to create transform");
         return;
     }
     
     /* Allocate interleaved buffers */
-    float* in = (float*)dspir_aligned_alloc(2 * n * sizeof(float));
-    float* out = (float*)dspir_aligned_alloc(2 * n * sizeof(float));
+    float* in = (float*)faf_aligned_alloc(2 * n * sizeof(float));
+    float* out = (float*)faf_aligned_alloc(2 * n * sizeof(float));
     
     /* Initialize with sine wave */
     for (size_t i = 0; i < n; i++) {
@@ -77,37 +77,37 @@ static void BM_Standard_FP32(benchmark::State& state) {
     
     /* Warm up */
     for (int i = 0; i < 10; i++) {
-        dspir_execute_f32(t, out, in);
+        faf_execute_f32(t, out, in);
     }
     
     for (auto _ : state) {
-        dspir_execute_f32(t, out, in);
+        faf_execute_f32(t, out, in);
         benchmark::DoNotOptimize(out);
     }
     
     state.SetBytesProcessed(state.iterations() * 2 * n * sizeof(float));
     state.SetItemsProcessed(state.iterations() * n);
     
-    dspir_aligned_free(in);
-    dspir_aligned_free(out);
-    dspir_destroy_transform(t);
+    faf_aligned_free(in);
+    faf_aligned_free(out);
+    faf_destroy_transform(t);
 }
 
 /* Benchmark split-plane FP64 */
 static void BM_SplitPlane_FP64(benchmark::State& state) {
     const size_t n = state.range(0);
     
-    dspir_transform* t = dspir_create_fft(n, false, DSPIR_PREC_FP64, 0);
+    faf_transform* t = faf_create_fft(n, false, FAF_PREC_FP64, 0);
     if (!t) {
         state.SkipWithError("Failed to create transform");
         return;
     }
     
     /* Allocate split-plane buffers */
-    double* in_re = (double*)dspir_aligned_alloc(n * sizeof(double));
-    double* in_im = (double*)dspir_aligned_alloc(n * sizeof(double));
-    double* out_re = (double*)dspir_aligned_alloc(n * sizeof(double));
-    double* out_im = (double*)dspir_aligned_alloc(n * sizeof(double));
+    double* in_re = (double*)faf_aligned_alloc(n * sizeof(double));
+    double* in_im = (double*)faf_aligned_alloc(n * sizeof(double));
+    double* out_re = (double*)faf_aligned_alloc(n * sizeof(double));
+    double* out_im = (double*)faf_aligned_alloc(n * sizeof(double));
     
     /* Initialize with sine wave */
     for (size_t i = 0; i < n; i++) {
@@ -117,11 +117,11 @@ static void BM_SplitPlane_FP64(benchmark::State& state) {
     
     /* Warm up */
     for (int i = 0; i < 10; i++) {
-        dspir_execute_split_f64(t, out_re, out_im, in_re, in_im);
+        faf_execute_split_f64(t, out_re, out_im, in_re, in_im);
     }
     
     for (auto _ : state) {
-        dspir_execute_split_f64(t, out_re, out_im, in_re, in_im);
+        faf_execute_split_f64(t, out_re, out_im, in_re, in_im);
         benchmark::DoNotOptimize(out_re);
         benchmark::DoNotOptimize(out_im);
     }
@@ -129,26 +129,26 @@ static void BM_SplitPlane_FP64(benchmark::State& state) {
     state.SetBytesProcessed(state.iterations() * 2 * n * sizeof(double));
     state.SetItemsProcessed(state.iterations() * n);
     
-    dspir_aligned_free(in_re);
-    dspir_aligned_free(in_im);
-    dspir_aligned_free(out_re);
-    dspir_aligned_free(out_im);
-    dspir_destroy_transform(t);
+    faf_aligned_free(in_re);
+    faf_aligned_free(in_im);
+    faf_aligned_free(out_re);
+    faf_aligned_free(out_im);
+    faf_destroy_transform(t);
 }
 
 /* Benchmark standard interleaved FP64 */
 static void BM_Standard_FP64(benchmark::State& state) {
     const size_t n = state.range(0);
     
-    dspir_transform* t = dspir_create_fft(n, false, DSPIR_PREC_FP64, 0);
+    faf_transform* t = faf_create_fft(n, false, FAF_PREC_FP64, 0);
     if (!t) {
         state.SkipWithError("Failed to create transform");
         return;
     }
     
     /* Allocate interleaved buffers */
-    double* in = (double*)dspir_aligned_alloc(2 * n * sizeof(double));
-    double* out = (double*)dspir_aligned_alloc(2 * n * sizeof(double));
+    double* in = (double*)faf_aligned_alloc(2 * n * sizeof(double));
+    double* out = (double*)faf_aligned_alloc(2 * n * sizeof(double));
     
     /* Initialize with sine wave */
     for (size_t i = 0; i < n; i++) {
@@ -158,20 +158,20 @@ static void BM_Standard_FP64(benchmark::State& state) {
     
     /* Warm up */
     for (int i = 0; i < 10; i++) {
-        dspir_execute_f64(t, out, in);
+        faf_execute_f64(t, out, in);
     }
     
     for (auto _ : state) {
-        dspir_execute_f64(t, out, in);
+        faf_execute_f64(t, out, in);
         benchmark::DoNotOptimize(out);
     }
     
     state.SetBytesProcessed(state.iterations() * 2 * n * sizeof(double));
     state.SetItemsProcessed(state.iterations() * n);
     
-    dspir_aligned_free(in);
-    dspir_aligned_free(out);
-    dspir_destroy_transform(t);
+    faf_aligned_free(in);
+    faf_aligned_free(out);
+    faf_destroy_transform(t);
 }
 
 BENCHMARK(BM_SplitPlane_FP32)->Arg(16)->Arg(64)->Arg(256)->Arg(1024);

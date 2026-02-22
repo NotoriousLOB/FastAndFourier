@@ -17,15 +17,15 @@ int main(void) {
     printf("====================================\n\n");
     
     /* Initialize library */
-    dspir_init();
-    printf("Library version: %s\n", dspir_version());
-    printf("Architecture: %s\n\n", dspir_arch_name());
+    faf_init();
+    printf("Library version: %s\n", faf_version());
+    printf("Architecture: %s\n\n", faf_arch_name());
     
     /* Create a 256-point FFT */
     const size_t n = 256;
-    dspir_transform* fft = dspir_create_fft(n, false, DSPIR_PREC_FP32, 0);
+    faf_transform* fft = faf_create_fft(n, false, FAF_PREC_FP32, 0);
     if (!fft) {
-        fprintf(stderr, "Failed to create FFT: %s\n", dspir_get_error());
+        fprintf(stderr, "Failed to create FFT: %s\n", faf_get_error());
         return 1;
     }
     
@@ -45,7 +45,7 @@ int main(void) {
     printf("Input signal: sin(2*pi*%d*t) + 0.5*sin(2*pi*%d*t)\n", f1, f2);
     
     /* Execute FFT */
-    int result = dspir_execute_f32(fft, out, in);
+    int result = faf_execute_f32(fft, out, in);
     if (result != 0) {
         fprintf(stderr, "FFT execution failed\n");
         return 1;
@@ -69,8 +69,8 @@ int main(void) {
     /* Cleanup */
     free(in);
     free(out);
-    dspir_destroy_transform(fft);
-    dspir_cleanup();
+    faf_destroy_transform(fft);
+    faf_cleanup();
     
     return 0;
 }

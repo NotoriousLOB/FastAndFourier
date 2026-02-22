@@ -6,7 +6,7 @@
 #include <gtest/gtest.h>
 #include "fastandfourier.h"
 
-#ifdef DSPIR_ARCH_X86_64
+#ifdef FAF_ARCH_X86_64
 
 #include <immintrin.h>
 
@@ -18,7 +18,7 @@ TEST(X86Test, SSEAvailable) {
 
 /* Test AVX2 availability */
 TEST(X86Test, AVX2Available) {
-    #ifdef DSPIR_HAVE_AVX2
+    #ifdef FAF_HAVE_AVX2
         /* Try to execute an AVX2 instruction */
         __m256i a = _mm256_set1_epi32(1);
         __m256i b = _mm256_set1_epi32(2);
@@ -37,7 +37,7 @@ TEST(X86Test, AVX2Available) {
 
 /* Test AVX-512 availability */
 TEST(X86Test, AVX512Available) {
-    #ifdef DSPIR_HAVE_AVX512
+    #ifdef FAF_HAVE_AVX512
         /* Try to execute an AVX-512 instruction */
         __m512 a = _mm512_set1_ps(1.0f);
         __m512 b = _mm512_set1_ps(2.0f);
@@ -56,7 +56,7 @@ TEST(X86Test, AVX512Available) {
 
 /* Test FMA availability */
 TEST(X86Test, FMAAvailable) {
-    #ifdef DSPIR_HAVE_AVX2
+    #ifdef FAF_HAVE_AVX2
         __m256 a = _mm256_set1_ps(2.0f);
         __m256 b = _mm256_set1_ps(3.0f);
         __m256 c = _mm256_set1_ps(1.0f);
@@ -73,4 +73,4 @@ TEST(X86Test, FMAAvailable) {
     #endif
 }
 
-#endif /* DSPIR_ARCH_X86_64 */
+#endif /* FAF_ARCH_X86_64 */

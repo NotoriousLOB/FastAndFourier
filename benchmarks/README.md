@@ -233,21 +233,21 @@ To add a custom benchmark:
 static void BM_MyCustomBenchmark(benchmark::State& state) {
     const size_t n = state.range(0);
     
-    dspir_transform* t = dspir_create_fft(n, false, DSPIR_PREC_FP32, 0);
+    faf_transform* t = faf_create_fft(n, false, FAF_PREC_FP32, 0);
     float* in = (float*)aligned_alloc(64, n * sizeof(float));
     float* out = (float*)aligned_alloc(64, n * sizeof(float));
     
     // Initialize input...
     
     for (auto _ : state) {
-        dspir_execute_f32(t, out, in);
+        faf_execute_f32(t, out, in);
         benchmark::DoNotOptimize(out);
     }
     
     state.SetItemsProcessed(state.iterations() * n);
     
     free(in); free(out);
-    dspir_destroy_transform(t);
+    faf_destroy_transform(t);
 }
 
 BENCHMARK(BM_MyCustomBenchmark)

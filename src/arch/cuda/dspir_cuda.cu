@@ -1,13 +1,13 @@
 /**
- * @file dspir_cuda.cu
+ * @file faf_cuda.cu
  * @brief CUDA kernels for GPU acceleration
  * 
  * Provides high-performance GPU implementations of DSP transforms
  */
 
-#include "dspir.h"
+#include "faf.h"
 
-#ifdef DSPIR_HAVE_CUDA
+#ifdef FAF_HAVE_CUDA
 
 #include <cuda_runtime.h>
 #include <cuda_fp16.h>
@@ -304,7 +304,7 @@ __global__ void cuda_haar_forward_f32(const float *in,
 /**
  * @brief CUDA-optimized FFT execution
  */
-void dspir_cuda_execute_f32(const dspir_transform *t,
+void faf_cuda_execute_f32(const faf_transform *t,
                              float *restrict out,
                              const float *restrict in) {
     const size_t n = t->n;
@@ -366,7 +366,7 @@ void dspir_cuda_execute_f32(const dspir_transform *t,
 /**
  * @brief CUDA-optimized DCT-II execution
  */
-void dspir_cuda_dct_ii_f32(const dspir_transform *t,
+void faf_cuda_dct_ii_f32(const faf_transform *t,
                             float *restrict out,
                             const float *restrict in) {
     const size_t n = t->n;
@@ -411,7 +411,7 @@ void dspir_cuda_dct_ii_f32(const dspir_transform *t,
 /**
  * @brief CUDA-optimized MDCT execution
  */
-void dspir_cuda_mdct_f32(const dspir_transform *t,
+void faf_cuda_mdct_f32(const faf_transform *t,
                           float *restrict out,
                           const float *restrict in) {
     const size_t n = t->n;
@@ -458,7 +458,7 @@ void dspir_cuda_mdct_f32(const dspir_transform *t,
 /**
  * @brief CUDA-optimized Haar wavelet
  */
-void dspir_cuda_haar_f32(const dspir_transform *t,
+void faf_cuda_haar_f32(const faf_transform *t,
                           float *restrict out,
                           const float *restrict in) {
     const size_t n = t->n;
@@ -505,7 +505,7 @@ void dspir_cuda_haar_f32(const dspir_transform *t,
 
 /* --- FP16 SUPPORT --- */
 
-#ifdef DSPIR_ENABLE_FP16
+#ifdef FAF_ENABLE_FP16
 
 /**
  * @brief FP16 FFT kernel using Tensor Cores
@@ -553,7 +553,7 @@ __global__ void cuda_fft_f16_f32(const __half2 *in,
 /**
  * @brief FP16 execution wrapper
  */
-int dspir_execute_f16_cuda(const dspir_transform *t,
+int faf_execute_f16_cuda(const faf_transform *t,
                             __half *restrict out,
                             const __half *restrict in) {
     /* Implementation would go here */
@@ -563,6 +563,6 @@ int dspir_execute_f16_cuda(const dspir_transform *t,
     return 0;
 }
 
-#endif /* DSPIR_ENABLE_FP16 */
+#endif /* FAF_ENABLE_FP16 */
 
-#endif /* DSPIR_HAVE_CUDA */
+#endif /* FAF_HAVE_CUDA */

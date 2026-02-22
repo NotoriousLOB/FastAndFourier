@@ -60,10 +60,10 @@ make test
 #include <stdlib.h>
 
 int main() {
-    dspir_init();
+    faf_init();
     
     // Create 1024-point FFT
-    dspir_transform* fft = dspir_create_fft(1024, false, DSPIR_PREC_FP32, 0);
+    faf_transform* fft = faf_create_fft(1024, false, FAF_PREC_FP32, 0);
     
     float* in = aligned_alloc(64, 2 * 1024 * sizeof(float));
     float* out = aligned_alloc(64, 2 * 1024 * sizeof(float));
@@ -75,12 +75,12 @@ int main() {
     }
     
     // Execute using JIT-compiled kernel (default)
-    dspir_execute_jit(fft, out, in);
+    faf_execute_jit(fft, out, in);
     
     // Cleanup
     free(in); free(out);
-    dspir_destroy_transform(fft);
-    dspir_cleanup();
+    faf_destroy_transform(fft);
+    faf_cleanup();
     
     return 0;
 }
@@ -99,7 +99,7 @@ chirp_register("gaussian", (void(*)(void))my_gaussian_impl);
 chirp_register("softmax", (void(*)(void))my_softmax_impl);
 
 // Compile a Chirp program
-dspir_transform *t = chirp_compile(
+faf_transform *t = chirp_compile(
     "(pipeline "
     "  (fft :size 1024) "
     "  twiddle "
@@ -110,8 +110,8 @@ dspir_transform *t = chirp_compile(
 );
 
 // Execute the compiled transform
-dspir_execute_jit(t, out, in);
-dspir_destroy_transform(t);
+faf_execute_jit(t, out, in);
+faf_destroy_transform(t);
 ```
 
 **Chirp Syntax:**
@@ -133,31 +133,31 @@ gcc -O3 -o fft_example example.c -lfastandfourier -lm -ldl
 
 | Function | Description |
 |----------|-------------|
-| `dspir_create_fft(n, inverse, precision, flags)` | Create FFT transform |
-| `dspir_create_dct(n, type, precision, flags)` | Create DCT transform (type 1-4) |
-| `dspir_create_dst(n, type, precision, flags)` | Create DST transform (type 1-4) |
-| `dspir_create_haar(n, levels, precision, flags)` | Create Haar wavelet |
-| `dspir_create_mdct(n, precision, flags)` | Create MDCT transform |
-| `dspir_destroy_transform(t)` | Free transform and associated memory |
+| `faf_create_fft(n, inverse, precision, flags)` | Create FFT transform |
+| `faf_create_dct(n, type, precision, flags)` | Create DCT transform (type 1-4) |
+| `faf_create_dst(n, type, precision, flags)` | Create DST transform (type 1-4) |
+| `faf_create_haar(n, levels, precision, flags)` | Create Haar wavelet |
+| `faf_create_mdct(n, precision, flags)` | Create MDCT transform |
+| `faf_destroy_transform(t)` | Free transform and associated memory |
 
 ### Execution Functions
 
 | Function | Description |
 |----------|-------------|
-| `dspir_execute(t, out, in)` | Auto-select best backend |
-| `dspir_execute_f32(t, out, in)` | FP32 execution |
-| `dspir_execute_f64(t, out, in)` | FP64 execution |
-| `dspir_execute_jit(t, out, in)` | JIT-compiled execution |
-| `dspir_execute_jit_ex(t, out, in, flags)` | JIT with extended options |
+| `faf_execute(t, out, in)` | Auto-select best backend |
+| `faf_execute_f32(t, out, in)` | FP32 execution |
+| `faf_execute_f64(t, out, in)` | FP64 execution |
+| `faf_execute_jit(t, out, in)` | JIT-compiled execution |
+| `faf_execute_jit_ex(t, out, in, flags)` | JIT with extended options |
 
 ### JIT Compilation
 
 | Function | Description |
 |----------|-------------|
-| `dspir_jit_create()` | Create JIT context |
-| `dspir_jit_compile(ctx, t)` | Compile transform to native code |
-| `dspir_jit_get_kernel(ctx)` | Get compiled kernel function |
-| `dspir_jit_destroy(ctx)` | Free JIT context |
+| `faf_jit_create()` | Create JIT context |
+| `faf_jit_compile(ctx, t)` | Compile transform to native code |
+| `faf_jit_get_kernel(ctx)` | Get compiled kernel function |
+| `faf_jit_destroy(ctx)` | Free JIT context |
 
 ### Chirp DSL API
 
@@ -172,19 +172,19 @@ Include `<chirp.h>` to use the Chirp DSL.
 
 | Flag | Description |
 |------|-------------|
-| `DSPIR_FLAG_JIT_SIMD` | Enable SIMD intrinsics (default on supported platforms) |
-| `DSPIR_FLAG_JIT_INPLACE` | Work in-place (overwrites input) |
-| `DSPIR_FLAG_JIT_SPLIT_PLANE` | Use split-plane mode (default, faster for most sizes) |
+| `FAF_FLAG_JIT_SIMD` | Enable SIMD intrinsics (default on supported platforms) |
+| `FAF_FLAG_JIT_INPLACE` | Work in-place (overwrites input) |
+| `FAF_FLAG_JIT_SPLIT_PLANE` | Use split-plane mode (default, faster for most sizes) |
 
 ### Precision Levels
 
 | Enum | Description |
 |------|-------------|
-| `DSPIR_PREC_FP8` | 8-bit floating point (E4M3/E5M2) |
-| `DSPIR_PREC_FP16` | 16-bit IEEE 754 half precision |
-| `DSPIR_PREC_BF16` | 16-bit brain floating point |
-| `DSPIR_PREC_FP32` | 32-bit single precision |
-| `DSPIR_PREC_FP64` | 64-bit double precision |
+| `FAF_PREC_FP8` | 8-bit floating point (E4M3/E5M2) |
+| `FAF_PREC_FP16` | 16-bit IEEE 754 half precision |
+| `FAF_PREC_BF16` | 16-bit brain floating point |
+| `FAF_PREC_FP32` | 32-bit single precision |
+| `FAF_PREC_FP64` | 64-bit double precision |
 
 ### Data Layout
 

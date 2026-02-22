@@ -16,13 +16,13 @@ int main(void) {
     printf("FastAndFourier - DCT Example\n");
     printf("=============================\n\n");
     
-    dspir_init();
+    faf_init();
     
     /* Create a 64-point DCT-II */
     const size_t n = 64;
-    dspir_transform* dct = dspir_create_dct(n, 2, DSPIR_PREC_FP32, 0);
+    faf_transform* dct = faf_create_dct(n, 2, FAF_PREC_FP32, 0);
     if (!dct) {
-        fprintf(stderr, "Failed to create DCT: %s\n", dspir_get_error());
+        fprintf(stderr, "Failed to create DCT: %s\n", faf_get_error());
         return 1;
     }
     
@@ -37,7 +37,7 @@ int main(void) {
     printf("Computing DCT-II of cosine signal...\n\n");
     
     /* Execute DCT */
-    dspir_execute_f32(dct, out, in);
+    faf_execute_f32(dct, out, in);
     
     /* DCT of cosine should have energy concentrated at low frequencies */
     printf("DCT coefficients (showing significant values):\n");
@@ -69,8 +69,8 @@ int main(void) {
     
     free(in);
     free(out);
-    dspir_destroy_transform(dct);
-    dspir_cleanup();
+    faf_destroy_transform(dct);
+    faf_cleanup();
     
     return 0;
 }

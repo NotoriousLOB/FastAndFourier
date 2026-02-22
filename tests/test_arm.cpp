@@ -6,7 +6,7 @@
 #include <gtest/gtest.h>
 #include "fastandfourier.h"
 
-#ifdef DSPIR_ARCH_AARCH64
+#ifdef FAF_ARCH_AARCH64
 
 #include <arm_neon.h>
 
@@ -62,7 +62,7 @@ TEST(ARMTest, NEONMultiply) {
 
 /* Test SVE availability if compiled with SVE support */
 TEST(ARMTest, SVEAvailable) {
-    #ifdef DSPIR_HAVE_SVE
+    #ifdef FAF_HAVE_SVE
         /* Get vector length */
         uint64_t vl = svcntw();
         EXPECT_GE(vl, 4);   /* At least 128 bits */
@@ -84,7 +84,7 @@ TEST(ARMTest, SVEAvailable) {
 
 /* Test SVE FMA */
 TEST(ARMTest, SVEFMA) {
-    #ifdef DSPIR_HAVE_SVE
+    #ifdef FAF_HAVE_SVE
         svfloat32_t a = svdup_f32(2.0f);
         svfloat32_t b = svdup_f32(3.0f);
         svfloat32_t c = svdup_f32(1.0f);
@@ -101,4 +101,4 @@ TEST(ARMTest, SVEFMA) {
     #endif
 }
 
-#endif /* DSPIR_ARCH_AARCH64 */
+#endif /* FAF_ARCH_AARCH64 */
