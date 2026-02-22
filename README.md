@@ -239,55 +239,67 @@ Split-plane mode provides significantly better vectorization by storing real and
 
 | Transform | Size | VM (us) | JIT (us) | Speedup |
 |-----------|------|---------|----------|---------|
-| FFT | 16 | 0.985 | 0.079 | **12.5x** |
-| FFT | 32 | - | 0.235 | - |
-| FFT | 64 | 2.82 | 0.735 | **3.8x** |
-| FFT | 128 | 5.44 | - | - |
-| DCT-II | 16 | 0.970 | - | - |
-| DCT-II | 64 | 2.80 | - | - |
-| DCT-II | 128 | 5.42 | - | - |
-| Haar | 16 | 0.791 | - | - |
-| Haar | 64 | 1.44 | - | - |
-| Haar | 128 | 2.17 | - | - |
-| MDCT | 16 | 0.968 | - | - |
-| MDCT | 64 | 2.80 | - | - |
-| MDCT | 128 | 5.42 | - | - |
+| FFT | 16 | 0.78 | 0.12 | **6.5x** |
+| FFT | 32 | - | 0.28 | - |
+| FFT | 64 | 1.99 | 0.66 | **3.0x** |
+| FFT | 128 | 3.51 | 1.39 | **2.5x** |
+| FFT | 256 | - | 3.42 | - |
+| FFT | 512 | - | 7.84 | - |
+| FFT | 1024 | - | 17.9 | - |
+| FFT | 2048 | - | 40.3 | - |
+| FFT | 4096 | - | 89.3 | - |
+| FFT | 8192 | - | 196 | - |
+| FFT | 16384 | - | 457 | - |
+| DCT-II | 16 | 0.91 | - | - |
+| DCT-II | 64 | 1.98 | - | - |
+| DCT-II | 128 | 3.48 | - | - |
+| Haar | 16 | 0.81 | - | - |
+| Haar | 64 | 1.43 | - | - |
+| Haar | 128 | 2.16 | - | - |
+| MDCT | 16 | 0.90 | - | - |
+| MDCT | 64 | 1.98 | - | - |
+| MDCT | 128 | 3.51 | - | - |
 
 ### VM Execution Throughput (Interleaved)
 
 | Transform | Size | Throughput (M/s) | Performance |
 |-----------|------|------------------|-------------|
-| FFT (FP32) | 16 | 16.24 | ~33 GFLOPS |
-| FFT (FP32) | 64 | 22.71 | ~69 GFLOPS |
-| FFT (FP32) | 128 | 23.54 | ~85 GFLOPS |
-| DCT-II | 16 | 16.52 | ~33 GFLOPS |
-| DCT-II | 64 | 22.85 | ~69 GFLOPS |
-| DST-II | 64 | 22.84 | ~69 GFLOPS |
-| Haar | 16 | 20.25 | ~41 GFLOPS |
-| Haar | 64 | 44.41 | ~135 GFLOPS |
-| Haar | 1024 | 78.12 | ~281 GFLOPS |
-| MDCT | 64 | 22.87 | ~69 GFLOPS |
+| FFT (FP32) | 16 | 20.5 | ~41 GFLOPS |
+| FFT (FP32) | 64 | 32.2 | ~97 GFLOPS |
+| FFT (FP32) | 128 | 36.5 | ~110 GFLOPS |
+| DCT-II | 16 | 17.5 | ~35 GFLOPS |
+| DCT-II | 64 | 32.3 | ~97 GFLOPS |
+| DCT-II | 128 | 36.8 | ~110 GFLOPS |
+| Haar | 16 | 19.7 | ~39 GFLOPS |
+| Haar | 64 | 44.8 | ~134 GFLOPS |
+| Haar | 128 | 59.2 | ~177 GFLOPS |
+| MDCT | 16 | 17.8 | ~36 GFLOPS |
+| MDCT | 64 | 32.3 | ~97 GFLOPS |
+| MDCT | 128 | 36.5 | ~110 GFLOPS |
 
 ### JIT Throughput by Transform Size
 
 | Transform | Size | Throughput | Bandwidth |
 |-----------|------|------------|-----------|
-| FFT (FP32) | 16 | **203 M FFTs/sec** | 1.51 GiB/s |
-| FFT (FP32) | 32 | **136 M FFTs/sec** | 1.02 GiB/s |
-| FFT (FP32) | 64 | **87 M FFTs/sec** | 665 MiB/s |
+| FFT (FP32) | 16 | **134 M FFTs/sec** | 1.02 GiB/s |
+| FFT (FP32) | 32 | **116 M FFTs/sec** | 889 MiB/s |
+| FFT (FP32) | 64 | **97 M FFTs/sec** | 743 MiB/s |
+| FFT (FP32) | 128 | **92 M FFTs/sec** | 704 MiB/s |
+| FFT (FP32) | 256 | **75 M FFTs/sec** | 571 MiB/s |
+| FFT (FP32) | 1024 | **57 M FFTs/sec** | 435 MiB/s |
 
 ### Scaling Performance (N log N complexity)
 
 | Transform | N | Time (us) | GFLOPS |
 |-----------|---|-----------|--------|
-| FFT | 16 | 0.98 | 0.33 |
-| FFT | 64 | 2.80 | 0.69 |
-| FFT | 256 | 12.0 | 0.85 |
-| FFT | 1024 | 52.9 | 0.97 |
-| FFT | 4096 | 247 | 1.00 |
-| FFT | 8192 | 316 | 1.69 |
+| FFT | 16 | 0.91 | 0.35 |
+| FFT | 64 | 2.03 | 0.95 |
+| FFT | 256 | 7.54 | 1.36 |
+| FFT | 1024 | 28.8 | 1.78 |
+| FFT | 4096 | 126 | 1.95 |
+| FFT | 8192 | 278 | 1.91 |
 
-*Complexity verified: O(N log N) with 41% RMS deviation*
+*Complexity verified: O(N log N) with 3% RMS deviation*
 
 ### Library Comparison (Release Build)
 
@@ -295,18 +307,18 @@ Throughput comparison with popular FFT libraries on ARM Cortex-A78 (all using co
 
 | Size | FAF (VM) | FAF (JIT) | KissFFT | NotoriousFFT | FFTW3 |
 |------|----------|-----------|---------|--------------|-------|
-| 16 | 16.1 M/s | **203 M/s** | 122.6 M/s | 197.0 M/s | **275 M/s** |
-| 64 | 23.1 M/s | **87 M/s** | 83.1 M/s | 130.0 M/s | **238 M/s** |
-| 256 | 21.5 M/s | - | 62.6 M/s | 94.7 M/s | **206 M/s** |
-| 1024 | 19.4 M/s | - | 51.7 M/s | 74.2 M/s | **175 M/s** |
-| 4096 | 16.6 M/s | - | 43.3 M/s | 60.0 M/s | **155 M/s** |
+| 16 | 20.3 M/s | **134 M/s** | 122.6 M/s | 196.9 M/s | **275 M/s** |
+| 64 | 32.2 M/s | **97 M/s** | 83.1 M/s | 129.8 M/s | **237 M/s** |
+| 256 | 36.0 M/s | **75 M/s** | 62.5 M/s | 94.6 M/s | **206 M/s** |
+| 1024 | 35.7 M/s | **57 M/s** | 51.6 M/s | 74.1 M/s | **175 M/s** |
+| 4096 | 32.6 M/s | **46 M/s** | 43.3 M/s | 60.0 M/s | **155 M/s** |
+| 16384 | 25.5 M/s | **36 M/s** | 35.0 M/s | 46.7 M/s | **96 M/s** |
 
 **Notes:**
 - All benchmarks measure **in-cache performance** (repeated transforms on same buffers)
-- FFTW3's lead comes from highly optimized assembly kernels with better scaling
-- **JIT scaling**: Our JIT drops from 202 M/s (16-point) to 60 M/s (128-point) - 70% decrease
-- **FFTW3 scaling**: FFTW3 drops from 275 M/s (16-point) to 206 M/s (256-point) - only 25% decrease
-- JIT compilation fails above 128 points due to excessive compile times
+- FFTW3 leads with highly optimized assembly; NotoriousFFT shows strong performance
+- **JIT now scales to 16384 points** with competitive throughput
+- For large sizes, all libraries converge toward memory bandwidth limits
 - Real-world throughput streaming from memory will be bandwidth-limited (~10-20 GB/s)
 
 ## Architecture Support
