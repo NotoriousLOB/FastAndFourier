@@ -3,22 +3,79 @@
   <source media="(prefers-color-scheme: dark)" srcset="/.github/images/logo.png">
   <source media="(prefers-color-scheme: light)" srcset="/.github/images/logo.png">
   <img src="/.github/images/logo.png" width="100%" alt="Fast and Fourier" >
-</picture>	
+</picture>
 </p>
 
-A high-performance Digital Signal Processing library with JIT compilation and multi-architecture SIMD support.
+## FastAndFourier is a JIT-compiled signal processing library with its own scripting language
 
-FastAndFourier provides a complete set of discrete transforms with an Intermediate Representation (IR) that enables portable, high-performance execution across x86_64, AArch64, and CUDA platforms. The library features a compiler-based JIT system that generates optimized native code at runtime.
+Think an FFT engine in a library-sized package, with a Scheme-like language for composing DSP pipelines — and a compiler that emits AVX2 butterfly kernels at runtime.
 
-## Features
+```scheme
+(pipeline
+  (fft :size 1024)
+  twiddle
+  (bfly 4)
+  (lift :predict gaussian :update softmax)
+  reduce-sum)
+```
 
-- **JIT Compilation**: Runtime code generation using system compiler (GCC/Clang) for maximum performance
-- **Multi-Architecture SIMD**: Automatic vectorization for SSE4.2, AVX2, AVX-512, NEON, and SVE
-- **Chirp DSL**: Scheme-like language with Smalltalk-style keywords for DSP pipelines
-- **Unified IR**: Single bytecode format powers all transform types
-- **Multi-Precision**: FP8, FP16, BF16, FP32, and FP64 support
-- **Direct-Threaded VM**: High-performance interpreter with computed goto dispatch
-- **Extensible**: Easy to add new transforms via the IR opcode system
+That's [Chirp](#chirp-dsl). It compiles directly to a `faf_transform *` you execute with `faf_execute_jit`. No boilerplate, no bytecode you have to hand-assemble — just a pipeline description and a pointer.
+
+- **FastAndFourier speaks Chirp.** A Scheme-like DSL with Smalltalk-style keyword arguments sits at the heart of the library. Describe a DSP pipeline in a single expression; get back a fully JIT-compiled transform ready to run at SIMD speed. Register your own C functions — CUDA kernels, custom filters, anything — and call them from the same script.
+
+- **FastAndFourier is fast.** A JIT compiler turns the internal IR into optimized C, hands it to the system compiler, and links the result back in at runtime. At large transform sizes the AVX2 path overtakes KissFFT by **3.2×**. It is fast, but not magic — there is a ~1 µs VM floor for small N, and FFTW3 with full planning wins on a benchmark. We are honest about this.
+
+- **FastAndFourier knows its transforms.** FFT, DCT (types I–IV), DST (types I–IV), STFT, MDCT, Haar, Daubechies-4, CDF 9/7 — all forward, all inverse, all driven by the same 31-opcode IR. Adding a new transform means adding opcodes, not rewriting the engine.
+
+- **FastAndFourier goes everywhere.** SSE4.2, AVX2, AVX-512, NEON, SVE, and CUDA — SIMD dispatch is automatic. Write your pipeline in Chirp once; the right kernel fires on whatever hardware shows up.
+
+- **FastAndFourier is precise.** FP8, FP16, BF16, FP32, and FP64 are first-class citizens. The same pipeline description works across all of them.
+
+- **FastAndFourier is a library.** It compiles as C99, has no mandatory runtime dependencies, exposes a clean C API, and links as a static archive. Embed it in an audio codec, a radar preprocessor, or a weekend project — the footprint stays small.
+
+---
+
+## Chirp DSL
+
+Chirp is the scripting language built into FastAndFourier. Include `<chirp.h>` and you get a compiler that turns S-expressions into native transform objects. The syntax is Scheme-flavored, the keyword arguments are Smalltalk-style, and the output is a pointer you hand directly to `faf_execute_jit`.
+
+```c
+#include <chirp.h>
+#include <fastandfourier.h>
+
+// Plug in your own C functions — CUDA kernels, custom filters, anything
+chirp_register("gaussian", (void(*)(void))my_gaussian_impl);
+chirp_register("softmax",  (void(*)(void))my_softmax_impl);
+
+// Describe the pipeline; get back a compiled transform
+faf_transform *t = chirp_compile(
+    "(pipeline "
+    "  (fft :size 1024) "
+    "  twiddle "
+    "  (bfly 4) "
+    "  (lift :predict gaussian :update softmax) "
+    "  (custom softmax) "
+    "  reduce-sum)"
+);
+
+faf_execute_jit(t, out, in);
+faf_destroy_transform(t);
+```
+
+**Chirp syntax at a glance:**
+
+| Expression | What it does |
+|---|---|
+| `(fft :size N)` | FFT of size N (Smalltalk-style keyword arg) |
+| `(bfly N)` | Radix-N butterfly (2, 4, or 8) |
+| `(lift :predict fn :update fn)` | Lifting-scheme wavelet step |
+| `(custom name)` | Call a registered C function |
+| `reduce-sum` / `reduce-max` / `reduce-min` | Reduction operations |
+| `(pipeline ...)` | Sequence multiple operations |
+
+The full language reference — including 140+ built-in operations — lives in [CHIRP.md](CHIRP.md).
+
+---
 
 ## Supported Transforms
 
@@ -32,6 +89,8 @@ FastAndFourier provides a complete set of discrete transforms with an Intermedia
 | Haar Wavelet | Yes | Yes | Lifting scheme |
 | Daubechies-4 | Yes | Yes | D4 wavelet |
 | CDF 9/7 | Yes | Yes | JPEG 2000 wavelet |
+
+---
 
 ## Quick Start
 
@@ -50,9 +109,11 @@ make test
 ./benchmarks/fastandfourier_benchmarks
 ```
 
-## Example
+---
 
-### Basic C API
+## C API Example
+
+If you prefer to build transforms by hand, the C API is straightforward:
 
 ```c
 #include <fastandfourier.h>
@@ -61,71 +122,35 @@ make test
 
 int main() {
     faf_init();
-    
+
     // Create 1024-point FFT
     faf_transform* fft = faf_create_fft(1024, false, FAF_PREC_FP32, 0);
-    
-    float* in = aligned_alloc(64, 2 * 1024 * sizeof(float));
+
+    float* in  = aligned_alloc(64, 2 * 1024 * sizeof(float));
     float* out = aligned_alloc(64, 2 * 1024 * sizeof(float));
-    
+
     // Generate complex sine wave
     for (int i = 0; i < 1024; i++) {
-        in[2*i] = sinf(2.0f * M_PI * 4.0f * i / 1024.0f);
+        in[2*i]     = sinf(2.0f * M_PI * 4.0f * i / 1024.0f);
         in[2*i + 1] = 0.0f;
     }
-    
+
     // Execute using JIT-compiled kernel (default)
     faf_execute_jit(fft, out, in);
-    
-    // Cleanup
+
     free(in); free(out);
     faf_destroy_transform(fft);
     faf_cleanup();
-    
     return 0;
 }
 ```
-
-### Chirp DSL
-
-Chirp is a Scheme-like DSL with Smalltalk-style keyword arguments for describing DSP pipelines:
-
-```c
-#include <chirp.h>
-#include <fastandfourier.h>
-
-// Register custom functions (like CUDA kernels or OpenCL devices)
-chirp_register("gaussian", (void(*)(void))my_gaussian_impl);
-chirp_register("softmax", (void(*)(void))my_softmax_impl);
-
-// Compile a Chirp program
-faf_transform *t = chirp_compile(
-    "(pipeline "
-    "  (fft :size 1024) "
-    "  twiddle "
-    "  (bfly 4) "
-    "  (lift :predict gaussian :update softmax) "
-    "  (custom softmax) "
-    "  reduce-sum)"
-);
-
-// Execute the compiled transform
-faf_execute_jit(t, out, in);
-faf_destroy_transform(t);
-```
-
-**Chirp Syntax:**
-- `(fft :size N)` - FFT with Smalltalk-style keyword argument
-- `(bfly N)` - Radix-N butterfly (2, 4, or 8)
-- `(lift :predict fn :update fn)` - Lifting scheme wavelet
-- `(custom name)` - Call registered built-in function
-- `reduce-sum`, `reduce-max`, `reduce-min` - Reduction operations
-- `(pipeline ...)` - Sequence multiple operations
 
 Compile with:
 ```bash
 gcc -O3 -o fft_example example.c -lfastandfourier -lm -ldl
 ```
+
+---
 
 ## API Reference
 
@@ -193,6 +218,8 @@ Include `<chirp.h>` to use the Chirp DSL.
 - Transform size N must be a power of 2 for FFT
 - **Split-plane mode** (default for FP32/FP64): Internally deinterleaves to separate real/imaginary arrays for optimal vectorization
 
+---
+
 ## Building
 
 ### Basic Build
@@ -229,6 +256,8 @@ The library automatically detects and uses the best available SIMD instruction s
 | x86_64 | `-march=native -O3` |
 | AArch64 | `-march=armv8.2-a+fp16+simd -O3` |
 
+---
+
 ## Benchmark Results
 
 macOS Darwin 22.6.0 (Ventura), 16 × 2300 MHz (x86\_64, AVX2 + SSE4.2; no AVX-512), -O3 -march=native -ffast-math
@@ -253,12 +282,16 @@ macOS Darwin 22.6.0 (Ventura), 16 × 2300 MHz (x86\_64, AVX2 + SSE4.2; no AVX-51
 - FFTW3 (meas) is fastest overall, with up to **10× advantage** over KissFFT and up to **47× over FAF** at small sizes
 - NotoriousFFT excluded — amalgamated header has type-mismatch and forward macro reference bugs on AVX2 x86
 
+---
+
 ## Architecture Support
 
 | Platform | SSE4.2 | AVX2 | AVX-512 | NEON | SVE | CUDA |
 |----------|--------|------|---------|------|-----|------|
 | x86_64 | Yes | Yes | Yes | No | No | Yes |
 | AArch64 | No | No | No | Yes | Yes | No |
+
+---
 
 ## Documentation
 
@@ -268,6 +301,8 @@ macOS Darwin 22.6.0 (Ventura), 16 × 2300 MHz (x86\_64, AVX2 + SSE4.2; no AVX-51
 - [Architecture Overview](docs/ARCHITECTURE.md) - IR and VM design
 - [Building Guide](docs/BUILDING.md) - Advanced build options
 
+---
+
 ## Algorithm
 
 FastAndFourier uses a flexible Intermediate Representation (IR) with 31 opcodes that can express multiple transform types. The JIT compiler generates optimized C code from this IR, which is then compiled to native machine code using the system compiler.
@@ -276,9 +311,11 @@ For FFT, the library uses radix-2 and radix-4 Cooley-Tukey algorithms with bit-r
 
 All SIMD kernels use architecture-specific intrinsics (NEON on ARM, AVX/AVX-512 on x86) for butterfly operations and twiddle factor multiplication.
 
+---
+
 ## License
 
-MIT License - see [LICENSE](LICENSE) file.
+MIT License — see [LICENSE](LICENSE) file.
 
 ## Acknowledgments
 
