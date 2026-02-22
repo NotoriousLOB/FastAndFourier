@@ -15,7 +15,7 @@
 static void BM_Compare_FFT(benchmark::State& state) {
     const size_t n = state.range(0);
     
-    dspir_transform* t = dspir_create_fft(n, false, DSPIR_PREC_FP32, 0);
+    faf_transform* t = faf_create_fft(n, false, FAF_PREC_FP32, 0);
     if (!t) {
         state.SkipWithError("Failed to create transform");
         return;
@@ -30,20 +30,20 @@ static void BM_Compare_FFT(benchmark::State& state) {
     }
     
     for (auto _ : state) {
-        dspir_execute_f32(t, out, in);
+        faf_execute_f32(t, out, in);
     }
     
     state.SetLabel("FFT");
     state.SetItemsProcessed(state.iterations() * n);
     
     free(in); free(out);
-    dspir_destroy_transform(t);
+    faf_destroy_transform(t);
 }
 
 static void BM_Compare_DCT(benchmark::State& state) {
     const size_t n = state.range(0);
     
-    dspir_transform* t = dspir_create_dct(n, 2, DSPIR_PREC_FP32, 0);
+    faf_transform* t = faf_create_dct(n, 2, FAF_PREC_FP32, 0);
     if (!t) {
         state.SkipWithError("Failed to create transform");
         return;
@@ -59,20 +59,20 @@ static void BM_Compare_DCT(benchmark::State& state) {
     }
     
     for (auto _ : state) {
-        dspir_execute_f32(t, out, in);
+        faf_execute_f32(t, out, in);
     }
     
     state.SetLabel("DCT-II");
     state.SetItemsProcessed(state.iterations() * n);
     
     free(in); free(out);
-    dspir_destroy_transform(t);
+    faf_destroy_transform(t);
 }
 
 static void BM_Compare_DST(benchmark::State& state) {
     const size_t n = state.range(0);
     
-    dspir_transform* t = dspir_create_dst(n, 2, DSPIR_PREC_FP32, 0);
+    faf_transform* t = faf_create_dst(n, 2, FAF_PREC_FP32, 0);
     if (!t) {
         state.SkipWithError("Failed to create transform");
         return;
@@ -88,14 +88,14 @@ static void BM_Compare_DST(benchmark::State& state) {
     }
     
     for (auto _ : state) {
-        dspir_execute_f32(t, out, in);
+        faf_execute_f32(t, out, in);
     }
     
     state.SetLabel("DST-II");
     state.SetItemsProcessed(state.iterations() * n);
     
     free(in); free(out);
-    dspir_destroy_transform(t);
+    faf_destroy_transform(t);
 }
 
 BENCHMARK(BM_Compare_FFT)->Range(64, 1024);
@@ -106,7 +106,7 @@ BENCHMARK(BM_Compare_DST)->Range(64, 1024);
 static void BM_Compare_Haar(benchmark::State& state) {
     const size_t n = state.range(0);
     
-    dspir_transform* t = dspir_create_haar(n, 3, DSPIR_PREC_FP32, 0);
+    faf_transform* t = faf_create_haar(n, 3, FAF_PREC_FP32, 0);
     if (!t) {
         state.SkipWithError("Failed to create transform");
         return;
@@ -122,20 +122,20 @@ static void BM_Compare_Haar(benchmark::State& state) {
     }
     
     for (auto _ : state) {
-        dspir_execute_f32(t, out, in);
+        faf_execute_f32(t, out, in);
     }
     
     state.SetLabel("Haar");
     state.SetItemsProcessed(state.iterations() * n);
     
     free(in); free(out);
-    dspir_destroy_transform(t);
+    faf_destroy_transform(t);
 }
 
 static void BM_Compare_Daubechies4(benchmark::State& state) {
     const size_t n = state.range(0);
     
-    dspir_transform* t = dspir_create_daubechies4(n, 3, DSPIR_PREC_FP32, 0);
+    faf_transform* t = faf_create_daubechies4(n, 3, FAF_PREC_FP32, 0);
     if (!t) {
         state.SkipWithError("Failed to create transform");
         return;
@@ -151,14 +151,14 @@ static void BM_Compare_Daubechies4(benchmark::State& state) {
     }
     
     for (auto _ : state) {
-        dspir_execute_f32(t, out, in);
+        faf_execute_f32(t, out, in);
     }
     
     state.SetLabel("Daubechies-4");
     state.SetItemsProcessed(state.iterations() * n);
     
     free(in); free(out);
-    dspir_destroy_transform(t);
+    faf_destroy_transform(t);
 }
 
 BENCHMARK(BM_Compare_Haar)->Range(64, 1024);

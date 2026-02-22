@@ -67,7 +67,7 @@ int main(void) {
     printf("║  \"Everything is a composition of simpler primitives\"          ║\n");
     printf("╚════════════════════════════════════════════════════════════════╝\n\n");
     
-    dspir_init();
+    faf_init();
     chirp_register_standard_builtins();
     
     /* Register custom predict/update functions */
@@ -92,14 +92,14 @@ int main(void) {
     printf("  (lift :predict haar_predict :update haar_update)\n");
     printf("  scale_sqrt2\n\n");
     
-    dspir_transform *haar_lift = chirp_compile(
+    faf_transform *haar_lift = chirp_compile(
         "(pipeline "
         "  (lift :predict haar_predict :update haar_update) "
         "  scale_sqrt2)"
     );
     if (haar_lift) {
         printf("✓ Haar via lifting: %zu instructions\n\n", haar_lift->n_inst);
-        dspir_destroy_transform(haar_lift);
+        faf_destroy_transform(haar_lift);
     }
     
     /* Example 2: CDF 5/3 wavelet (used in JPEG 2000 lossless) */
@@ -110,14 +110,14 @@ int main(void) {
     printf("  1. Predict odd samples using linear interpolation\n");
     printf("  2. Update even samples\n\n");
     
-    dspir_transform *cdf53 = chirp_compile(
+    faf_transform *cdf53 = chirp_compile(
         "(pipeline "
         "  (lift :predict predict_linear :update update_linear) "
         "  scale_sqrt2)"
     );
     if (cdf53) {
         printf("✓ CDF 5/3 via lifting: %zu instructions\n\n", cdf53->n_inst);
-        dspir_destroy_transform(cdf53);
+        faf_destroy_transform(cdf53);
     }
     
     /* Example 3: CDF 9/7 wavelet (used in JPEG 2000 lossy) */
@@ -129,7 +129,7 @@ int main(void) {
     printf("  2. Second predict/update for refinement\n");
     printf("  3. Final scaling\n\n");
     
-    dspir_transform *cdf97 = chirp_compile(
+    faf_transform *cdf97 = chirp_compile(
         "(pipeline "
         "  (lift :predict predict_cubic :update update_cubic) "
         "  (lift :predict predict_linear :update update_linear) "
@@ -137,7 +137,7 @@ int main(void) {
     );
     if (cdf97) {
         printf("✓ CDF 9/7 via lifting: %zu instructions\n\n", cdf97->n_inst);
-        dspir_destroy_transform(cdf97);
+        faf_destroy_transform(cdf97);
     }
     
     /* Example 4: Custom wavelet composition */
@@ -147,7 +147,7 @@ int main(void) {
     printf("Mix and match primitives:\n");
     printf("  Haar predict + Linear update + Gaussian activation\n\n");
     
-    dspir_transform *custom = chirp_compile(
+    faf_transform *custom = chirp_compile(
         "(pipeline "
         "  (fft :size 1024) "
         "  (lift :predict haar_predict :update update_linear) "
@@ -156,7 +156,7 @@ int main(void) {
     );
     if (custom) {
         printf("✓ Custom wavelet: %zu instructions\n\n", custom->n_inst);
-        dspir_destroy_transform(custom);
+        faf_destroy_transform(custom);
     }
     
     /* Comparison table */
@@ -183,6 +183,6 @@ int main(void) {
     printf("║  \"The power of Chirp is composition of simple primitives\"     ║\n");
     printf("╚════════════════════════════════════════════════════════════════╝\n");
     
-    dspir_cleanup();
+    faf_cleanup();
     return 0;
 }

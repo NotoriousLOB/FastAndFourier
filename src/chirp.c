@@ -96,7 +96,7 @@ typedef struct chirp_node {
 static chirp_token chirp_lexer_next(chirp_lexer *lex);
 static chirp_node* chirp_parse_expr(chirp_lexer *lex);
 static void chirp_node_free(chirp_node *node);
-static dspir_inst chirp_compile_node(chirp_node *node, dspir_transform *t, int *inst_count);
+static faf_inst chirp_compile_node(chirp_node *node, faf_transform *t, int *inst_count);
 
 /* Initialize builtin registry */
 static void chirp_init_builtins(void) {
@@ -492,7 +492,7 @@ static void chirp_node_print(chirp_node *node, int indent) {
 }
 
 /* Helper to emit an instruction */
-static void chirp_emit_inst(dspir_transform *t, dspir_inst inst, int *inst_count) {
+static void chirp_emit_inst(faf_transform *t, faf_inst inst, int *inst_count) {
     if (t->code && *inst_count < CHIRP_MAX_INST) {
         t->code[*inst_count] = inst;
     }
@@ -500,12 +500,12 @@ static void chirp_emit_inst(dspir_transform *t, dspir_inst inst, int *inst_count
 }
 
 /* Compile an AST node to IR instructions */
-static void chirp_compile_node_emit(chirp_node *node, dspir_transform *t, int *inst_count);
+static void chirp_compile_node_emit(chirp_node *node, faf_transform *t, int *inst_count);
 
-static void chirp_compile_node_emit(chirp_node *node, dspir_transform *t, int *inst_count) {
+static void chirp_compile_node_emit(chirp_node *node, faf_transform *t, int *inst_count) {
     if (!node) return;
     
-    dspir_inst inst = {0};
+    faf_inst inst = {0};
     
     switch (node->type) {
         case CHIRP_NODE_PIPELINE: {
@@ -517,7 +517,7 @@ static void chirp_compile_node_emit(chirp_node *node, dspir_transform *t, int *i
         }
         
         case CHIRP_NODE_FFT: {
-            inst.packed = DSPIR_FFT_STAGE;
+            inst.packed = FAF_FFT_STAGE;
             /* Get :size keyword */
             chirp_node *size_node = chirp_node_get_kwarg(node, "size");
             if (size_node && size_node->type == CHIRP_NODE_LITERAL) {
@@ -527,13 +527,13 @@ static void chirp_compile_node_emit(chirp_node *node, dspir_transform *t, int *i
             } else {
                 inst.a0 = 64; /* default */
             }
-            t->type = DSPIR_TRANSFORM_FFT;
+            t->type = FAF_TRANSFORM_FFT;
             if (inst.a0 > t->n) t->n = inst.a0;
             break;
         }
         
         case CHIRP_NODE_TWIDDLE: {
-            inst.packed = DSPIR_TWIDDLE_MUL;
+            inst.packed = FAF_TWIDDLE_MUL;
             inst.a0 = 0;
             inst.a1 = 0;
             break;
@@ -545,10 +545,10 @@ static void chirp_compile_node_emit(chirp_node *node, dspir_transform *t, int *i
                 radix = node->children[0]->value;
             }
             switch (radix) {
-                case 2: inst.packed = DSPIR_BFLY2; break;
-                case 4: inst.packed = DSPIR_BFLY4; break;
-                case 8: inst.packed = DSPIR_BFLY8; break;
-                default: inst.packed = DSPIR_BFLY2; break;
+                case 2: inst.packed = FAF_BFLY2; break;
+                case 4: inst.packed = FAF_BFLY4; break;
+                case 8: inst.packed = FAF_BFLY8; break;
+                default: inst.packed = FAF_BFLY2; break;
             }
             inst.a0 = 0;
             break;
@@ -560,16 +560,16 @@ static void chirp_compile_node_emit(chirp_node *node, dspir_transform *t, int *i
             chirp_node *update_node = chirp_node_get_kwarg(node, "update");
             
             if (predict_node && predict_node->sym) {
-                dspir_inst pred_inst = {0};
-                pred_inst.packed = DSPIR_LIFT_PRED;
+                faf_inst pred_inst = {0};
+                pred_inst.packed = FAF_LIFT_PRED;
                 pred_inst.a0 = chirp_lookup_builtin(predict_node->sym);
                 if (pred_inst.a0 < 0) pred_inst.a0 = 0;
                 chirp_emit_inst(t, pred_inst, inst_count);
             }
             
             if (update_node && update_node->sym) {
-                dspir_inst upd_inst = {0};
-                upd_inst.packed = DSPIR_LIFT_UPD;
+                faf_inst upd_inst = {0};
+                upd_inst.packed = FAF_LIFT_UPD;
                 upd_inst.a0 = chirp_lookup_builtin(update_node->sym);
                 if (upd_inst.a0 < 0) upd_inst.a0 = 0;
                 chirp_emit_inst(t, upd_inst, inst_count);
@@ -587,7 +587,7 @@ static void chirp_compile_node_emit(chirp_node *node, dspir_transform *t, int *i
             }
             
             if (fn_name) {
-                inst.packed = DSPIR_CALL_BUILTIN;
+                inst.packed = FAF_CALL_BUILTIN;
                 inst.a0 = chirp_lookup_builtin(fn_name);
                 if (inst.a0 < 0) {
                     fprintf(stderr, "Chirp: unknown builtin '%s'\n", fn_name);
@@ -599,11 +599,11 @@ static void chirp_compile_node_emit(chirp_node *node, dspir_transform *t, int *i
         
         case CHIRP_NODE_REDUCE: {
             if (strcmp(node->sym, "sum") == 0) {
-                inst.packed = DSPIR_REDUCE_SUM;
+                inst.packed = FAF_REDUCE_SUM;
             } else if (strcmp(node->sym, "max") == 0) {
-                inst.packed = DSPIR_REDUCE_MAX;
+                inst.packed = FAF_REDUCE_MAX;
             } else if (strcmp(node->sym, "min") == 0) {
-                inst.packed = DSPIR_REDUCE_MIN;
+                inst.packed = FAF_REDUCE_MIN;
             }
             inst.a0 = 0;
             break;
@@ -617,7 +617,7 @@ static void chirp_compile_node_emit(chirp_node *node, dspir_transform *t, int *i
 }
 
 /* Public API: Compile a Chirp program */
-dspir_transform* chirp_compile(const char *source) {
+faf_transform* chirp_compile(const char *source) {
     if (!source) return NULL;
     
     chirp_init_builtins();
@@ -632,8 +632,8 @@ dspir_transform* chirp_compile(const char *source) {
     }
     
     /* Create transform */
-    dspir_transform *t = calloc(1, sizeof(dspir_transform));
-    t->precision = DSPIR_PREC_FP32;
+    faf_transform *t = calloc(1, sizeof(faf_transform));
+    t->precision = FAF_PREC_FP32;
     t->n = 64; /* default size */
     
     /* First pass: count instructions */
@@ -642,15 +642,15 @@ dspir_transform* chirp_compile(const char *source) {
     
     /* Allocate code array (+1 for END) */
     t->n_inst = inst_count + 1;
-    t->code = calloc(t->n_inst, sizeof(dspir_inst));
+    t->code = calloc(t->n_inst, sizeof(faf_inst));
     
     /* Second pass: generate instructions */
     inst_count = 0;
     chirp_compile_node_emit(ast, t, &inst_count);
     
     /* Add END opcode */
-    dspir_inst end_inst = {0};
-    end_inst.packed = DSPIR_END;
+    faf_inst end_inst = {0};
+    end_inst.packed = FAF_END;
     t->code[inst_count] = end_inst;
     
     /* Cleanup AST */

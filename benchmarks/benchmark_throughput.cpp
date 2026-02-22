@@ -16,7 +16,7 @@ static void BM_Throughput_SmallFFTs(benchmark::State& state) {
     const size_t n = 64;
     const size_t batch = 1000;
     
-    dspir_transform* t = dspir_create_fft(n, false, DSPIR_PREC_FP32, 0);
+    faf_transform* t = faf_create_fft(n, false, FAF_PREC_FP32, 0);
     if (!t) {
         state.SkipWithError("Failed to create transform");
         return;
@@ -32,7 +32,7 @@ static void BM_Throughput_SmallFFTs(benchmark::State& state) {
     
     for (auto _ : state) {
         for (size_t b = 0; b < batch; b++) {
-            dspir_execute_f32(t, out, in);
+            faf_execute_f32(t, out, in);
             benchmark::DoNotOptimize(out);
         }
     }
@@ -41,7 +41,7 @@ static void BM_Throughput_SmallFFTs(benchmark::State& state) {
     state.SetBytesProcessed(state.iterations() * batch * n * sizeof(float) * 2);
     
     free(in); free(out);
-    dspir_destroy_transform(t);
+    faf_destroy_transform(t);
 }
 BENCHMARK(BM_Throughput_SmallFFTs)
     ->Unit(benchmark::kMillisecond);
@@ -50,7 +50,7 @@ BENCHMARK(BM_Throughput_SmallFFTs)
 static void BM_Scaling_FFT(benchmark::State& state) {
     const size_t n = state.range(0);
     
-    dspir_transform* t = dspir_create_fft(n, false, DSPIR_PREC_FP32, 0);
+    faf_transform* t = faf_create_fft(n, false, FAF_PREC_FP32, 0);
     if (!t) {
         state.SkipWithError("Failed to create transform");
         return;
@@ -65,7 +65,7 @@ static void BM_Scaling_FFT(benchmark::State& state) {
     }
     
     for (auto _ : state) {
-        dspir_execute_f32(t, out, in);
+        faf_execute_f32(t, out, in);
     }
     
     /* Set complexity N for auto-complexity calculation */
@@ -77,7 +77,7 @@ static void BM_Scaling_FFT(benchmark::State& state) {
         state.iterations() * ops, benchmark::Counter::kIsRate);
     
     free(in); free(out);
-    dspir_destroy_transform(t);
+    faf_destroy_transform(t);
 }
 BENCHMARK(BM_Scaling_FFT)
     ->RangeMultiplier(2)
@@ -89,7 +89,7 @@ BENCHMARK(BM_Scaling_FFT)
 static void BM_MemoryBandwidth(benchmark::State& state) {
     const size_t n = state.range(0);
     
-    dspir_transform* t = dspir_create_fft(n, false, DSPIR_PREC_FP32, 0);
+    faf_transform* t = faf_create_fft(n, false, FAF_PREC_FP32, 0);
     if (!t) {
         state.SkipWithError("Failed to create transform");
         return;
@@ -104,7 +104,7 @@ static void BM_MemoryBandwidth(benchmark::State& state) {
     }
     
     for (auto _ : state) {
-        dspir_execute_f32(t, out, in);
+        faf_execute_f32(t, out, in);
     }
     
     /* Report memory bandwidth */
@@ -112,7 +112,7 @@ static void BM_MemoryBandwidth(benchmark::State& state) {
     state.SetBytesProcessed(state.iterations() * bytes);
     
     free(in); free(out);
-    dspir_destroy_transform(t);
+    faf_destroy_transform(t);
 }
 BENCHMARK(BM_MemoryBandwidth)
     ->RangeMultiplier(4)
@@ -123,7 +123,7 @@ BENCHMARK(BM_MemoryBandwidth)
 static void BM_Latency_FFT(benchmark::State& state) {
     const size_t n = state.range(0);
     
-    dspir_transform* t = dspir_create_fft(n, false, DSPIR_PREC_FP32, 0);
+    faf_transform* t = faf_create_fft(n, false, FAF_PREC_FP32, 0);
     if (!t) {
         state.SkipWithError("Failed to create transform");
         return;
@@ -138,14 +138,14 @@ static void BM_Latency_FFT(benchmark::State& state) {
     }
     
     for (auto _ : state) {
-        dspir_execute_f32(t, out, in);
+        faf_execute_f32(t, out, in);
         benchmark::ClobberMemory();
     }
     
     state.SetItemsProcessed(state.iterations());
     
     free(in); free(out);
-    dspir_destroy_transform(t);
+    faf_destroy_transform(t);
 }
 BENCHMARK(BM_Latency_FFT)
     ->RangeMultiplier(2)

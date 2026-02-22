@@ -1,5 +1,5 @@
 /**
- * @file dspir_vm.c
+ * @file faf_vm.c
  * @brief Direct-threaded virtual machine implementation
  * 
  * This implements a high-performance interpreter using direct-threaded dispatch
@@ -7,7 +7,7 @@
  * dispatch on compilers that don't support computed goto.
  */
 
-#include "dspir.h"
+#include "faf.h"
 #include <string.h>
 #include <stdlib.h>
 #include <stdint.h>
@@ -18,11 +18,11 @@
 
 /* Enable direct-threaded dispatch on GCC/Clang */
 #if defined(__GNUC__) && !defined(__INTEL_COMPILER)
-    #define DSPIR_USE_DIRECT_THREADED 1
+    #define FAF_USE_DIRECT_THREADED 1
 #endif
 
 /* Maximum register file size we can allocate on stack for small transforms */
-#define DSPIR_STACK_THRESHOLD (256 * 1024)  /* 256KB */
+#define FAF_STACK_THRESHOLD (256 * 1024)  /* 256KB */
 
 /**
  * @brief Compute maximum register index used by a transform
@@ -30,21 +30,21 @@
  * Scans all instructions to find the highest register index referenced.
  * This allows allocating only the register file space actually needed.
  */
-static size_t compute_max_registers(const dspir_transform *t) {
+static size_t compute_max_registers(const faf_transform *t) {
     size_t max_reg = 0;
     
     for (size_t i = 0; i < t->n_inst; i++) {
-        const dspir_inst *inst = &t->code[i];
-        uint8_t op = DSPIR_GET_OP(inst->packed);
+        const faf_inst *inst = &t->code[i];
+        uint8_t op = FAF_GET_OP(inst->packed);
         
         /* Skip NOP and END */
-        if (op == DSPIR_NOP || op == DSPIR_END) continue;
+        if (op == FAF_NOP || op == FAF_END) continue;
         
         /* Check a0, a1, a2 based on opcode type.
          * For FFT_STAGE/DCT_STAGE/DST_STAGE: a0=radix, a1=stride, a2=tw_step —
          * none are register indices.  These opcodes touch every element 0..n-1,
          * so account for them by tracking t->n-1 instead of a0. */
-        if (op == DSPIR_FFT_STAGE || op == DSPIR_DCT_STAGE || op == DSPIR_DST_STAGE) {
+        if (op == FAF_FFT_STAGE || op == FAF_DCT_STAGE || op == FAF_DST_STAGE) {
             if (t->n > 0 && (t->n - 1) > max_reg) max_reg = t->n - 1;
             continue;
         }
@@ -52,13 +52,13 @@ static size_t compute_max_registers(const dspir_transform *t) {
         if (inst->a0 > max_reg) max_reg = inst->a0;
 
         /* For opcodes that use a1 as register index */
-        if (op != DSPIR_LOAD_CONST) {
+        if (op != FAF_LOAD_CONST) {
             if (inst->a1 > max_reg) max_reg = inst->a1;
         }
         
         /* For opcodes that use a2 */
-        if (op == DSPIR_FMA || op == DSPIR_FMUL || op == DSPIR_FADD || 
-            op == DSPIR_FSUB || op == DSPIR_POLY_FIR || op == DSPIR_POLY_IIR) {
+        if (op == FAF_FMA || op == FAF_FMUL || op == FAF_FADD || 
+            op == FAF_FSUB || op == FAF_POLY_FIR || op == FAF_POLY_IIR) {
             if (inst->a2 > max_reg) max_reg = inst->a2;
         }
     }
@@ -73,7 +73,7 @@ static size_t compute_max_registers(const dspir_transform *t) {
     if (num_regs < 64) num_regs = 64;
     
     /* Cap at maximum to prevent overflow */
-    if (num_regs > DSPIR_MAX_REGISTERS) num_regs = DSPIR_MAX_REGISTERS;
+    if (num_regs > FAF_MAX_REGISTERS) num_regs = FAF_MAX_REGISTERS;
     
     return num_regs;
 }
@@ -100,13 +100,13 @@ static inline void free_regs(void* ptr) {
  * This is the fallback interpreter that uses direct-threaded dispatch
  * for minimal overhead. Each opcode directly jumps to its handler.
  */
-int dspir_vm_execute_f32(const dspir_transform *t,
+int faf_vm_execute_f32(const faf_transform *t,
                           float *restrict out,
                           const float *restrict in) {
     if (!t || !out || !in) return -1;
     if (!t->code || t->n_inst == 0) return -1;
     
-#ifdef DSPIR_USE_DIRECT_THREADED
+#ifdef FAF_USE_DIRECT_THREADED
     /* Direct-threaded dispatch table - 256 entries for fast indexing
      * Unused opcodes (31-254) map to END handler for safety
      */
@@ -128,7 +128,7 @@ int dspir_vm_execute_f32(const dspir_transform *t,
         &&label_REDUCE_MAX, &&label_REDUCE_MIN, &&label_END,
         /* 31-254: Unused opcodes -> END handler */
         DT_END_224,
-        /* 255: DSPIR_END */
+        /* 255: FAF_END */
         &&label_END
     };
     #undef DT_END_8
@@ -150,44 +150,44 @@ int dspir_vm_execute_f32(const dspir_transform *t,
     size_t ip = 0;
     
     /* Current instruction */
-    const dspir_inst *inst;
+    const faf_inst *inst;
     uint8_t op;
     
-#ifdef DSPIR_USE_DIRECT_THREADED
+#ifdef FAF_USE_DIRECT_THREADED
     /* Direct-threaded: fetch first opcode and dispatch */
     inst = &t->code[ip++];
-    op = DSPIR_GET_OP(inst->packed);
+    op = FAF_GET_OP(inst->packed);
     goto *dispatch_table[op];
 #else
     /* Switch-based dispatch */
     while (ip < t->n_inst) {
         inst = &t->code[ip++];
-        op = DSPIR_GET_OP(inst->packed);
+        op = FAF_GET_OP(inst->packed);
         switch (op) {
 #endif
 
-#ifdef DSPIR_USE_DIRECT_THREADED
+#ifdef FAF_USE_DIRECT_THREADED
 #define DISPATCH() do { \
     inst = &t->code[ip++]; \
-    op = DSPIR_GET_OP(inst->packed); \
+    op = FAF_GET_OP(inst->packed); \
     goto *dispatch_table[op]; \
 } while(0)
 #else
 #define DISPATCH() break
 #endif
 
-#ifdef DSPIR_USE_DIRECT_THREADED
+#ifdef FAF_USE_DIRECT_THREADED
 label_NOP:
     DISPATCH();
 #else
-    case DSPIR_NOP:
+    case FAF_NOP:
         DISPATCH();
 #endif
 
-#ifdef DSPIR_USE_DIRECT_THREADED
+#ifdef FAF_USE_DIRECT_THREADED
 label_LOAD:
 #else
-    case DSPIR_LOAD:
+    case FAF_LOAD:
 #endif
         /* Load complex value from interleaved input
          * a0 = register index 
@@ -197,17 +197,17 @@ label_LOAD:
         {
             size_t in_idx = inst->a1;
             size_t reg_idx = inst->a0 * 2;  /* Interleaved: real at even, imag at odd */
-            if (reg_idx + 1 < DSPIR_MAX_REGISTERS) {
+            if (reg_idx + 1 < FAF_MAX_REGISTERS) {
                 regs[reg_idx] = in[in_idx * 2];      /* Real part */
                 regs[reg_idx + 1] = in[in_idx * 2 + 1];  /* Imag part */
             }
         }
         DISPATCH();
 
-#ifdef DSPIR_USE_DIRECT_THREADED
+#ifdef FAF_USE_DIRECT_THREADED
 label_STORE:
 #else
-    case DSPIR_STORE:
+    case FAF_STORE:
 #endif
         /* Store complex value to interleaved output
          * a0 = output index (complex element index)
@@ -217,30 +217,30 @@ label_STORE:
         {
             size_t out_idx = inst->a0;
             size_t reg_idx = inst->a1 * 2;  /* Interleaved */
-            if (reg_idx + 1 < DSPIR_MAX_REGISTERS) {
+            if (reg_idx + 1 < FAF_MAX_REGISTERS) {
                 out[out_idx * 2] = regs[reg_idx];      /* Real part */
                 out[out_idx * 2 + 1] = regs[reg_idx + 1];  /* Imag part */
             }
         }
         DISPATCH();
 
-#ifdef DSPIR_USE_DIRECT_THREADED
+#ifdef FAF_USE_DIRECT_THREADED
 label_LOAD_CONST:
 #else
-    case DSPIR_LOAD_CONST:
+    case FAF_LOAD_CONST:
 #endif
         /* a1 contains the bits of a float constant */
-        if (inst->a0 < DSPIR_MAX_REGISTERS) {
+        if (inst->a0 < FAF_MAX_REGISTERS) {
             union { uint32_t u; float f; } caster;
             caster.u = inst->a1;
             regs[inst->a0] = caster.f;
         }
         DISPATCH();
 
-#ifdef DSPIR_USE_DIRECT_THREADED
+#ifdef FAF_USE_DIRECT_THREADED
 label_BFLY2:
 #else
-    case DSPIR_BFLY2:
+    case FAF_BFLY2:
 #endif
         {
             /* Complex radix-2 butterfly
@@ -251,7 +251,7 @@ label_BFLY2:
              */
             size_t ra = inst->a0 * 2;
             size_t rb = inst->a1 * 2;
-            if (ra + 1 < DSPIR_MAX_REGISTERS && rb + 1 < DSPIR_MAX_REGISTERS) {
+            if (ra + 1 < FAF_MAX_REGISTERS && rb + 1 < FAF_MAX_REGISTERS) {
                 float ar = regs[ra];
                 float ai = regs[ra + 1];
                 float br = regs[rb];
@@ -265,10 +265,10 @@ label_BFLY2:
         }
         DISPATCH();
 
-#ifdef DSPIR_USE_DIRECT_THREADED
+#ifdef FAF_USE_DIRECT_THREADED
 label_BFLY4:
 #else
-    case DSPIR_BFLY4:
+    case FAF_BFLY4:
 #endif
         {
             /* Radix-4 butterfly for complex data
@@ -277,7 +277,7 @@ label_BFLY4:
              * Operates on 4 consecutive complex elements at base, base+1, base+2, base+3
              */
             uint32_t base = inst->a0;
-            if (base * 2 + 7 < DSPIR_MAX_REGISTERS) {
+            if (base * 2 + 7 < FAF_MAX_REGISTERS) {
                 float r0 = regs[base * 2],     i0 = regs[base * 2 + 1];
                 float r1 = regs[base * 2 + 2], i1 = regs[base * 2 + 3];
                 float r2 = regs[base * 2 + 4], i2 = regs[base * 2 + 5];
@@ -302,10 +302,10 @@ label_BFLY4:
         }
         DISPATCH();
 
-#ifdef DSPIR_USE_DIRECT_THREADED
+#ifdef FAF_USE_DIRECT_THREADED
 label_BFLY8:
 #else
-    case DSPIR_BFLY8:
+    case FAF_BFLY8:
 #endif
         {
             /* Radix-8 butterfly for complex data
@@ -314,7 +314,7 @@ label_BFLY8:
              * Operates on 8 consecutive complex elements
              */
             uint32_t base = inst->a0;
-            if (base * 2 + 15 < DSPIR_MAX_REGISTERS) {
+            if (base * 2 + 15 < FAF_MAX_REGISTERS) {
                 /* Load 8 complex values from interleaved layout */
                 float r[8], im[8];
                 for (int k = 0; k < 8; k++) {
@@ -367,15 +367,15 @@ label_BFLY8:
         }
         DISPATCH();
 
-#ifdef DSPIR_USE_DIRECT_THREADED
+#ifdef FAF_USE_DIRECT_THREADED
 label_TWIDDLE_MUL:
 #else
-    case DSPIR_TWIDDLE_MUL:
+    case FAF_TWIDDLE_MUL:
 #endif
         {
             /* Complex multiplication: (a+ib) * (c+id) = (ac-bd) + i(ad+bc) */
             size_t ra = inst->a0 * 2;
-            if (ra + 1 < DSPIR_MAX_REGISTERS) {
+            if (ra + 1 < FAF_MAX_REGISTERS) {
                 float re = regs[ra];
                 float im = regs[ra + 1];
                 if (tw) {
@@ -388,15 +388,15 @@ label_TWIDDLE_MUL:
         }
         DISPATCH();
 
-#ifdef DSPIR_USE_DIRECT_THREADED
+#ifdef FAF_USE_DIRECT_THREADED
 label_TWIDDLE_MUL_CONJ:
 #else
-    case DSPIR_TWIDDLE_MUL_CONJ:
+    case FAF_TWIDDLE_MUL_CONJ:
 #endif
         {
             /* Complex multiplication by conjugate: (a+ib) * (c-id) = (ac+bd) + i(bc-ad) */
             size_t ra = inst->a0 * 2;
-            if (ra + 1 < DSPIR_MAX_REGISTERS) {
+            if (ra + 1 < FAF_MAX_REGISTERS) {
                 float re = regs[ra];
                 float im = regs[ra + 1];
                 if (tw) {
@@ -409,55 +409,55 @@ label_TWIDDLE_MUL_CONJ:
         }
         DISPATCH();
 
-#ifdef DSPIR_USE_DIRECT_THREADED
+#ifdef FAF_USE_DIRECT_THREADED
 label_FMA:
 #else
-    case DSPIR_FMA:
+    case FAF_FMA:
 #endif
-        if (inst->a0 < DSPIR_MAX_REGISTERS && inst->a1 < DSPIR_MAX_REGISTERS && inst->a2 < DSPIR_MAX_REGISTERS)
+        if (inst->a0 < FAF_MAX_REGISTERS && inst->a1 < FAF_MAX_REGISTERS && inst->a2 < FAF_MAX_REGISTERS)
             regs[inst->a0] = regs[inst->a0] * regs[inst->a1] + regs[inst->a2];
         DISPATCH();
 
-#ifdef DSPIR_USE_DIRECT_THREADED
+#ifdef FAF_USE_DIRECT_THREADED
 label_FMUL:
 #else
-    case DSPIR_FMUL:
+    case FAF_FMUL:
 #endif
-        if (inst->a0 < DSPIR_MAX_REGISTERS && inst->a1 < DSPIR_MAX_REGISTERS && inst->a2 < DSPIR_MAX_REGISTERS)
+        if (inst->a0 < FAF_MAX_REGISTERS && inst->a1 < FAF_MAX_REGISTERS && inst->a2 < FAF_MAX_REGISTERS)
             regs[inst->a0] = regs[inst->a1] * regs[inst->a2];
         DISPATCH();
 
-#ifdef DSPIR_USE_DIRECT_THREADED
+#ifdef FAF_USE_DIRECT_THREADED
 label_FADD:
 #else
-    case DSPIR_FADD:
+    case FAF_FADD:
 #endif
-        if (inst->a0 < DSPIR_MAX_REGISTERS && inst->a1 < DSPIR_MAX_REGISTERS && inst->a2 < DSPIR_MAX_REGISTERS)
+        if (inst->a0 < FAF_MAX_REGISTERS && inst->a1 < FAF_MAX_REGISTERS && inst->a2 < FAF_MAX_REGISTERS)
             regs[inst->a0] = regs[inst->a1] + regs[inst->a2];
         DISPATCH();
 
-#ifdef DSPIR_USE_DIRECT_THREADED
+#ifdef FAF_USE_DIRECT_THREADED
 label_FSUB:
 #else
-    case DSPIR_FSUB:
+    case FAF_FSUB:
 #endif
-        if (inst->a0 < DSPIR_MAX_REGISTERS && inst->a1 < DSPIR_MAX_REGISTERS && inst->a2 < DSPIR_MAX_REGISTERS)
+        if (inst->a0 < FAF_MAX_REGISTERS && inst->a1 < FAF_MAX_REGISTERS && inst->a2 < FAF_MAX_REGISTERS)
             regs[inst->a0] = regs[inst->a1] - regs[inst->a2];
         DISPATCH();
 
-#ifdef DSPIR_USE_DIRECT_THREADED
+#ifdef FAF_USE_DIRECT_THREADED
 label_BARRIER:
 #else
-    case DSPIR_BARRIER:
+    case FAF_BARRIER:
 #endif
         /* Memory barrier / prefetch hint */
         __asm__ volatile("" ::: "memory");
         DISPATCH();
 
-#ifdef DSPIR_USE_DIRECT_THREADED
+#ifdef FAF_USE_DIRECT_THREADED
 label_FFT_STAGE:
 #else
-    case DSPIR_FFT_STAGE:
+    case FAF_FFT_STAGE:
 #endif
         {
             /* Execute complete FFT stage with complex butterflies
@@ -504,10 +504,10 @@ label_FFT_STAGE:
         }
         DISPATCH();
 
-#ifdef DSPIR_USE_DIRECT_THREADED
+#ifdef FAF_USE_DIRECT_THREADED
 label_DCT_STAGE:
 #else
-    case DSPIR_DCT_STAGE:
+    case FAF_DCT_STAGE:
 #endif
         {
             /* DCT stage using lifting or direct computation */
@@ -516,7 +516,7 @@ label_DCT_STAGE:
             
             for (size_t i = 0; i < nstage / 2; i++) {
                 size_t j = nstage - 1 - i;
-                if (i * stride < DSPIR_MAX_REGISTERS && j * stride < DSPIR_MAX_REGISTERS) {
+                if (i * stride < FAF_MAX_REGISTERS && j * stride < FAF_MAX_REGISTERS) {
                     float a = regs[i * stride];
                     float b = regs[j * stride];
                     
@@ -528,10 +528,10 @@ label_DCT_STAGE:
         }
         DISPATCH();
 
-#ifdef DSPIR_USE_DIRECT_THREADED
+#ifdef FAF_USE_DIRECT_THREADED
 label_DST_STAGE:
 #else
-    case DSPIR_DST_STAGE:
+    case FAF_DST_STAGE:
 #endif
         {
             /* DST stage — differs from DCT by negated twiddle for alternating elements */
@@ -540,7 +540,7 @@ label_DST_STAGE:
 
             for (size_t i = 0; i < nstage / 2; i++) {
                 size_t j = nstage - 1 - i;
-                if (i * stride < DSPIR_MAX_REGISTERS && j * stride < DSPIR_MAX_REGISTERS) {
+                if (i * stride < FAF_MAX_REGISTERS && j * stride < FAF_MAX_REGISTERS) {
                     float a = regs[i * stride];
                     float b = regs[j * stride];
 
@@ -552,15 +552,15 @@ label_DST_STAGE:
         }
         DISPATCH();
 
-#ifdef DSPIR_USE_DIRECT_THREADED
+#ifdef FAF_USE_DIRECT_THREADED
 label_LIFT_PRED:
 #else
-    case DSPIR_LIFT_PRED:
+    case FAF_LIFT_PRED:
 #endif
         {
             /* Lifting scheme prediction step */
             /* a2 contains the coefficient as raw bits */
-            if (inst->a0 < DSPIR_MAX_REGISTERS && inst->a1 < DSPIR_MAX_REGISTERS) {
+            if (inst->a0 < FAF_MAX_REGISTERS && inst->a1 < FAF_MAX_REGISTERS) {
                 union { uint32_t u; float f; } c;
                 c.u = inst->a2;
                 regs[inst->a0] += regs[inst->a1] * c.f;
@@ -568,14 +568,14 @@ label_LIFT_PRED:
         }
         DISPATCH();
 
-#ifdef DSPIR_USE_DIRECT_THREADED
+#ifdef FAF_USE_DIRECT_THREADED
 label_LIFT_UPD:
 #else
-    case DSPIR_LIFT_UPD:
+    case FAF_LIFT_UPD:
 #endif
         {
             /* Lifting scheme update step */
-            if (inst->a0 < DSPIR_MAX_REGISTERS && inst->a1 < DSPIR_MAX_REGISTERS) {
+            if (inst->a0 < FAF_MAX_REGISTERS && inst->a1 < FAF_MAX_REGISTERS) {
                 union { uint32_t u; float f; } c;
                 c.u = inst->a2;
                 regs[inst->a0] += regs[inst->a1] * c.f;
@@ -583,14 +583,14 @@ label_LIFT_UPD:
         }
         DISPATCH();
 
-#ifdef DSPIR_USE_DIRECT_THREADED
+#ifdef FAF_USE_DIRECT_THREADED
 label_LIFT_SCALE:
 #else
-    case DSPIR_LIFT_SCALE:
+    case FAF_LIFT_SCALE:
 #endif
         {
             /* Lifting scheme scaling step */
-            if (inst->a0 < DSPIR_MAX_REGISTERS) {
+            if (inst->a0 < FAF_MAX_REGISTERS) {
                 union { uint32_t u; float f; } c;
                 c.u = inst->a2;
                 regs[inst->a0] *= c.f;
@@ -598,42 +598,42 @@ label_LIFT_SCALE:
         }
         DISPATCH();
 
-#ifdef DSPIR_USE_DIRECT_THREADED
+#ifdef FAF_USE_DIRECT_THREADED
 label_DOWN2:
 #else
-    case DSPIR_DOWN2:
+    case FAF_DOWN2:
 #endif
         {
             /* Downsampling by 2 */
             size_t offset = inst->a0;
             for (size_t j = 0; j < t->n / 2; j++) {
-                if (j < DSPIR_MAX_REGISTERS && j * 2 + offset < DSPIR_MAX_REGISTERS)
+                if (j < FAF_MAX_REGISTERS && j * 2 + offset < FAF_MAX_REGISTERS)
                     regs[j] = regs[j * 2 + offset];
             }
         }
         DISPATCH();
 
-#ifdef DSPIR_USE_DIRECT_THREADED
+#ifdef FAF_USE_DIRECT_THREADED
 label_UP2:
 #else
-    case DSPIR_UP2:
+    case FAF_UP2:
 #endif
         {
             /* Upsampling by 2 */
             size_t offset = inst->a0;
             for (size_t j = t->n / 2; j > 0; j--) {
-                if (j * 2 - 1 + offset < DSPIR_MAX_REGISTERS && j - 1 < DSPIR_MAX_REGISTERS)
+                if (j * 2 - 1 + offset < FAF_MAX_REGISTERS && j - 1 < FAF_MAX_REGISTERS)
                     regs[j * 2 - 1 + offset] = regs[j - 1];
-                if (j * 2 - 2 + offset < DSPIR_MAX_REGISTERS)
+                if (j * 2 - 2 + offset < FAF_MAX_REGISTERS)
                     regs[j * 2 - 2 + offset] = 0;
             }
         }
         DISPATCH();
 
-#ifdef DSPIR_USE_DIRECT_THREADED
+#ifdef FAF_USE_DIRECT_THREADED
 label_POLY_FIR:
 #else
-    case DSPIR_POLY_FIR:
+    case FAF_POLY_FIR:
 #endif
         {
             /* Polyphase FIR filter */
@@ -651,10 +651,10 @@ label_POLY_FIR:
         }
         DISPATCH();
 
-#ifdef DSPIR_USE_DIRECT_THREADED
+#ifdef FAF_USE_DIRECT_THREADED
 label_POLY_IIR:
 #else
-    case DSPIR_POLY_IIR:
+    case FAF_POLY_IIR:
 #endif
         {
             /* Polyphase IIR filter (simplified) */
@@ -666,10 +666,10 @@ label_POLY_IIR:
         }
         DISPATCH();
 
-#ifdef DSPIR_USE_DIRECT_THREADED
+#ifdef FAF_USE_DIRECT_THREADED
 label_PERMUTE:
 #else
-    case DSPIR_PERMUTE:
+    case FAF_PERMUTE:
 #endif
         {
             /* Register permutation */
@@ -677,20 +677,20 @@ label_PERMUTE:
             float temp[4];
             for (int k = 0; k < 4; k++) {
                 int src = (pattern >> (k * 8)) & 0xFF;
-                if (inst->a0 + src < DSPIR_MAX_REGISTERS)
+                if (inst->a0 + src < FAF_MAX_REGISTERS)
                     temp[k] = regs[inst->a0 + src];
             }
             for (int k = 0; k < 4; k++) {
-                if (inst->a0 + k < DSPIR_MAX_REGISTERS)
+                if (inst->a0 + k < FAF_MAX_REGISTERS)
                     regs[inst->a0 + k] = temp[k];
             }
         }
         DISPATCH();
 
-#ifdef DSPIR_USE_DIRECT_THREADED
+#ifdef FAF_USE_DIRECT_THREADED
 label_SHUFFLE:
 #else
-    case DSPIR_SHUFFLE:
+    case FAF_SHUFFLE:
 #endif
         {
             /* Vector shuffle */
@@ -698,10 +698,10 @@ label_SHUFFLE:
         }
         DISPATCH();
 
-#ifdef DSPIR_USE_DIRECT_THREADED
+#ifdef FAF_USE_DIRECT_THREADED
 label_BLEND:
 #else
-    case DSPIR_BLEND:
+    case FAF_BLEND:
 #endif
         {
             /* Vector blend */
@@ -709,34 +709,34 @@ label_BLEND:
         }
         DISPATCH();
 
-#ifdef DSPIR_USE_DIRECT_THREADED
+#ifdef FAF_USE_DIRECT_THREADED
 label_REDUCE_SUM:
 #else
-    case DSPIR_REDUCE_SUM:
+    case FAF_REDUCE_SUM:
 #endif
         {
             /* Horizontal sum reduction */
             float sum = 0.0f;
             for (size_t k = 0; k < inst->a1; k++) {
-                if (inst->a0 + k < DSPIR_MAX_REGISTERS)
+                if (inst->a0 + k < FAF_MAX_REGISTERS)
                     sum += regs[inst->a0 + k];
             }
-            if (inst->a0 < DSPIR_MAX_REGISTERS)
+            if (inst->a0 < FAF_MAX_REGISTERS)
                 regs[inst->a0] = sum;
         }
         DISPATCH();
 
-#ifdef DSPIR_USE_DIRECT_THREADED
+#ifdef FAF_USE_DIRECT_THREADED
 label_REDUCE_MAX:
 #else
-    case DSPIR_REDUCE_MAX:
+    case FAF_REDUCE_MAX:
 #endif
         {
             /* Horizontal max reduction */
-            if (inst->a0 < DSPIR_MAX_REGISTERS) {
+            if (inst->a0 < FAF_MAX_REGISTERS) {
                 float max_val = regs[inst->a0];
                 for (size_t k = 1; k < inst->a1; k++) {
-                    if (inst->a0 + k < DSPIR_MAX_REGISTERS && regs[inst->a0 + k] > max_val) {
+                    if (inst->a0 + k < FAF_MAX_REGISTERS && regs[inst->a0 + k] > max_val) {
                         max_val = regs[inst->a0 + k];
                     }
                 }
@@ -745,17 +745,17 @@ label_REDUCE_MAX:
         }
         DISPATCH();
 
-#ifdef DSPIR_USE_DIRECT_THREADED
+#ifdef FAF_USE_DIRECT_THREADED
 label_REDUCE_MIN:
 #else
-    case DSPIR_REDUCE_MIN:
+    case FAF_REDUCE_MIN:
 #endif
         {
             /* Horizontal min reduction */
-            if (inst->a0 < DSPIR_MAX_REGISTERS) {
+            if (inst->a0 < FAF_MAX_REGISTERS) {
                 float min_val = regs[inst->a0];
                 for (size_t k = 1; k < inst->a1; k++) {
-                    if (inst->a0 + k < DSPIR_MAX_REGISTERS && regs[inst->a0 + k] < min_val) {
+                    if (inst->a0 + k < FAF_MAX_REGISTERS && regs[inst->a0 + k] < min_val) {
                         min_val = regs[inst->a0 + k];
                     }
                 }
@@ -764,14 +764,14 @@ label_REDUCE_MIN:
         }
         DISPATCH();
 
-#ifdef DSPIR_USE_DIRECT_THREADED
+#ifdef FAF_USE_DIRECT_THREADED
 label_END:
 #else
-    case DSPIR_END:
+    case FAF_END:
 #endif
         goto done;
 
-#ifndef DSPIR_USE_DIRECT_THREADED
+#ifndef FAF_USE_DIRECT_THREADED
         default:
             /* Unknown opcode - skip */
             break;
@@ -786,12 +786,12 @@ done:
 }
 
 /* Wrapper for core API compatibility - uses split-plane by default */
-int dspir_execute_f32(const dspir_transform *t,
+int faf_execute_f32(const faf_transform *t,
                       float *restrict out,
                       const float *restrict in) {
     /* Auto-JIT: for large transforms try the cached compiled kernel first */
-    if (t->n >= DSPIR_JIT_AUTO_THRESHOLD) {
-        if (dspir_execute_jit_cached(t, (void*)out, (const void*)in) == 0)
+    if (t->n >= FAF_JIT_AUTO_THRESHOLD) {
+        if (faf_execute_jit_cached(t, (void*)out, (const void*)in) == 0)
             return 0;
         /* JIT unavailable or failed — fall through to split-plane VM */
     }
@@ -806,7 +806,7 @@ int dspir_execute_f32(const dspir_transform *t,
     if (!in_re || !in_im || !out_re || !out_im) {
         free_regs(in_re); free_regs(in_im);
         free_regs(out_re); free_regs(out_im);
-        return dspir_vm_execute_f32(t, out, in);  /* Fallback to interleaved */
+        return faf_vm_execute_f32(t, out, in);  /* Fallback to interleaved */
     }
     
     /* Deinterleave input */
@@ -816,7 +816,7 @@ int dspir_execute_f32(const dspir_transform *t,
     }
     
     /* Execute split-plane */
-    int result = dspir_execute_split_f32(t, out_re, out_im, in_re, in_im);
+    int result = faf_execute_split_f32(t, out_re, out_im, in_re, in_im);
     
     /* Reinterleave output */
     if (result == 0) {
@@ -834,7 +834,7 @@ int dspir_execute_f32(const dspir_transform *t,
 /**
  * @brief FP64 VM execution
  */
-int dspir_vm_execute_f64(const dspir_transform *t,
+int faf_vm_execute_f64(const faf_transform *t,
                           double *restrict out,
                           const double *restrict in) {
     if (!t || !out || !in) return -1;
@@ -849,40 +849,40 @@ int dspir_vm_execute_f64(const dspir_transform *t,
     const double *tw = (const double *)t->twiddles[0];
     
     for (size_t ip = 0; ip < t->n_inst; ip++) {
-        const dspir_inst *inst = &t->code[ip];
-        uint8_t op = DSPIR_GET_OP(inst->packed);
+        const faf_inst *inst = &t->code[ip];
+        uint8_t op = FAF_GET_OP(inst->packed);
         
         switch (op) {
-            case DSPIR_LOAD: {
+            case FAF_LOAD: {
                 size_t in_idx = inst->a1;
                 size_t reg_idx = inst->a0 * 2;
-                if (reg_idx + 1 < DSPIR_MAX_REGISTERS) {
+                if (reg_idx + 1 < FAF_MAX_REGISTERS) {
                     regs[reg_idx] = in[in_idx * 2];
                     regs[reg_idx + 1] = in[in_idx * 2 + 1];
                 }
                 break;
             }
-            case DSPIR_STORE: {
+            case FAF_STORE: {
                 size_t out_idx = inst->a0;
                 size_t reg_idx = inst->a1 * 2;
-                if (reg_idx + 1 < DSPIR_MAX_REGISTERS) {
+                if (reg_idx + 1 < FAF_MAX_REGISTERS) {
                     out[out_idx * 2] = regs[reg_idx];
                     out[out_idx * 2 + 1] = regs[reg_idx + 1];
                 }
                 break;
             }
-            case DSPIR_LOAD_CONST: {
-                if (inst->a0 < DSPIR_MAX_REGISTERS) {
+            case FAF_LOAD_CONST: {
+                if (inst->a0 < FAF_MAX_REGISTERS) {
                     union { uint32_t u; float f; } caster;
                     caster.u = inst->a1;
                     regs[inst->a0] = (double)caster.f;
                 }
                 break;
             }
-            case DSPIR_BFLY2: {
+            case FAF_BFLY2: {
                 size_t ra = inst->a0 * 2;
                 size_t rb = inst->a1 * 2;
-                if (ra + 1 < DSPIR_MAX_REGISTERS && rb + 1 < DSPIR_MAX_REGISTERS) {
+                if (ra + 1 < FAF_MAX_REGISTERS && rb + 1 < FAF_MAX_REGISTERS) {
                     double ar = regs[ra], ai = regs[ra + 1];
                     double br = regs[rb], bi = regs[rb + 1];
                     regs[ra] = ar + br; regs[ra + 1] = ai + bi;
@@ -890,9 +890,9 @@ int dspir_vm_execute_f64(const dspir_transform *t,
                 }
                 break;
             }
-            case DSPIR_BFLY4: {
+            case FAF_BFLY4: {
                 uint32_t base = inst->a0;
-                if (base * 2 + 7 < DSPIR_MAX_REGISTERS) {
+                if (base * 2 + 7 < FAF_MAX_REGISTERS) {
                     double r0 = regs[base * 2],     i0 = regs[base * 2 + 1];
                     double r1 = regs[base * 2 + 2], i1 = regs[base * 2 + 3];
                     double r2 = regs[base * 2 + 4], i2 = regs[base * 2 + 5];
@@ -912,9 +912,9 @@ int dspir_vm_execute_f64(const dspir_transform *t,
                 }
                 break;
             }
-            case DSPIR_BFLY8: {
+            case FAF_BFLY8: {
                 uint32_t base = inst->a0;
-                if (base * 2 + 15 < DSPIR_MAX_REGISTERS) {
+                if (base * 2 + 15 < FAF_MAX_REGISTERS) {
                     double r[8], im[8];
                     for (int k = 0; k < 8; k++) {
                         r[k]  = regs[base * 2 + 2 * k];
@@ -954,9 +954,9 @@ int dspir_vm_execute_f64(const dspir_transform *t,
                 }
                 break;
             }
-            case DSPIR_TWIDDLE_MUL: {
+            case FAF_TWIDDLE_MUL: {
                 size_t ra = inst->a0 * 2;
-                if (ra + 1 < DSPIR_MAX_REGISTERS && tw) {
+                if (ra + 1 < FAF_MAX_REGISTERS && tw) {
                     double re = regs[ra], im = regs[ra + 1];
                     double wr = tw[inst->a1 * 2], wi = tw[inst->a1 * 2 + 1];
                     regs[ra] = re * wr - im * wi;
@@ -964,9 +964,9 @@ int dspir_vm_execute_f64(const dspir_transform *t,
                 }
                 break;
             }
-            case DSPIR_TWIDDLE_MUL_CONJ: {
+            case FAF_TWIDDLE_MUL_CONJ: {
                 size_t ra = inst->a0 * 2;
-                if (ra + 1 < DSPIR_MAX_REGISTERS && tw) {
+                if (ra + 1 < FAF_MAX_REGISTERS && tw) {
                     double re = regs[ra], im = regs[ra + 1];
                     double wr = tw[inst->a1 * 2], wi = -tw[inst->a1 * 2 + 1];
                     regs[ra] = re * wr - im * wi;
@@ -974,23 +974,23 @@ int dspir_vm_execute_f64(const dspir_transform *t,
                 }
                 break;
             }
-            case DSPIR_FMA:
-                if (inst->a0 < DSPIR_MAX_REGISTERS && inst->a1 < DSPIR_MAX_REGISTERS && inst->a2 < DSPIR_MAX_REGISTERS)
+            case FAF_FMA:
+                if (inst->a0 < FAF_MAX_REGISTERS && inst->a1 < FAF_MAX_REGISTERS && inst->a2 < FAF_MAX_REGISTERS)
                     regs[inst->a0] = regs[inst->a0] * regs[inst->a1] + regs[inst->a2];
                 break;
-            case DSPIR_FMUL:
-                if (inst->a0 < DSPIR_MAX_REGISTERS && inst->a1 < DSPIR_MAX_REGISTERS && inst->a2 < DSPIR_MAX_REGISTERS)
+            case FAF_FMUL:
+                if (inst->a0 < FAF_MAX_REGISTERS && inst->a1 < FAF_MAX_REGISTERS && inst->a2 < FAF_MAX_REGISTERS)
                     regs[inst->a0] = regs[inst->a1] * regs[inst->a2];
                 break;
-            case DSPIR_FADD:
-                if (inst->a0 < DSPIR_MAX_REGISTERS && inst->a1 < DSPIR_MAX_REGISTERS && inst->a2 < DSPIR_MAX_REGISTERS)
+            case FAF_FADD:
+                if (inst->a0 < FAF_MAX_REGISTERS && inst->a1 < FAF_MAX_REGISTERS && inst->a2 < FAF_MAX_REGISTERS)
                     regs[inst->a0] = regs[inst->a1] + regs[inst->a2];
                 break;
-            case DSPIR_FSUB:
-                if (inst->a0 < DSPIR_MAX_REGISTERS && inst->a1 < DSPIR_MAX_REGISTERS && inst->a2 < DSPIR_MAX_REGISTERS)
+            case FAF_FSUB:
+                if (inst->a0 < FAF_MAX_REGISTERS && inst->a1 < FAF_MAX_REGISTERS && inst->a2 < FAF_MAX_REGISTERS)
                     regs[inst->a0] = regs[inst->a1] - regs[inst->a2];
                 break;
-            case DSPIR_FFT_STAGE: {
+            case FAF_FFT_STAGE: {
                 size_t radix = inst->a0;
                 size_t stride = inst->a1;
                 size_t tw_step = inst->a2;
@@ -1018,7 +1018,7 @@ int dspir_vm_execute_f64(const dspir_transform *t,
                 }
                 break;
             }
-            case DSPIR_END:
+            case FAF_END:
                 goto done_f64;
             default:
                 break;
@@ -1031,7 +1031,7 @@ done_f64:
 }
 
 /* Wrapper for core API compatibility - uses split-plane by default */
-int dspir_execute_f64(const dspir_transform *t,
+int faf_execute_f64(const faf_transform *t,
                       double *restrict out,
                       const double *restrict in) {
     /* Use split-plane execution for better performance */
@@ -1044,7 +1044,7 @@ int dspir_execute_f64(const dspir_transform *t,
     if (!in_re || !in_im || !out_re || !out_im) {
         free_regs(in_re); free_regs(in_im);
         free_regs(out_re); free_regs(out_im);
-        return dspir_vm_execute_f64(t, out, in);  /* Fallback to interleaved */
+        return faf_vm_execute_f64(t, out, in);  /* Fallback to interleaved */
     }
     
     /* Deinterleave input */
@@ -1054,7 +1054,7 @@ int dspir_execute_f64(const dspir_transform *t,
     }
     
     /* Execute split-plane */
-    int result = dspir_execute_split_f64(t, out_re, out_im, in_re, in_im);
+    int result = faf_execute_split_f64(t, out_re, out_im, in_re, in_im);
     
     /* Reinterleave output */
     if (result == 0) {
@@ -1075,7 +1075,7 @@ int dspir_execute_f64(const dspir_transform *t,
  * This is more efficient for SIMD on x86 with AVX-512.
  * Input/output are separate real and imaginary arrays instead of interleaved.
  */
-int dspir_execute_split_f32(const dspir_transform *t,
+int faf_execute_split_f32(const faf_transform *t,
                              float *restrict out_re,
                              float *restrict out_im,
                              const float *restrict in_re,
@@ -1097,13 +1097,13 @@ int dspir_execute_split_f32(const dspir_transform *t,
     const float *tw = (const float *)t->twiddles[0];
     
     for (size_t ip = 0; ip < t->n_inst; ip++) {
-        const dspir_inst *inst = &t->code[ip];
-        uint8_t op = DSPIR_GET_OP(inst->packed);
+        const faf_inst *inst = &t->code[ip];
+        uint8_t op = FAF_GET_OP(inst->packed);
         
         switch (op) {
-            case DSPIR_NOP:
+            case FAF_NOP:
                 break;
-            case DSPIR_LOAD: {
+            case FAF_LOAD: {
                 size_t in_idx = inst->a1;
                 size_t reg_idx = inst->a0;
                 if (reg_idx < t->n && in_idx < t->n) {
@@ -1112,7 +1112,7 @@ int dspir_execute_split_f32(const dspir_transform *t,
                 }
                 break;
             }
-            case DSPIR_STORE: {
+            case FAF_STORE: {
                 size_t out_idx = inst->a0;
                 size_t reg_idx = inst->a1;
                 if (out_idx < t->n && reg_idx < t->n) {
@@ -1121,7 +1121,7 @@ int dspir_execute_split_f32(const dspir_transform *t,
                 }
                 break;
             }
-            case DSPIR_LOAD_CONST: {
+            case FAF_LOAD_CONST: {
                 if (inst->a0 < t->n) {
                     union { uint32_t u; float f; } caster;
                     caster.u = inst->a1;
@@ -1129,7 +1129,7 @@ int dspir_execute_split_f32(const dspir_transform *t,
                 }
                 break;
             }
-            case DSPIR_BFLY2: {
+            case FAF_BFLY2: {
                 uint32_t a0 = inst->a0;
                 uint32_t a1 = inst->a1;
                 if (a0 < t->n && a1 < t->n) {
@@ -1140,7 +1140,7 @@ int dspir_execute_split_f32(const dspir_transform *t,
                 }
                 break;
             }
-            case DSPIR_BFLY4: {
+            case FAF_BFLY4: {
                 uint32_t base = inst->a0;
                 if (base + 3 < t->n) {
                     float r0 = regs_re[base],     i0 = regs_im[base];
@@ -1158,7 +1158,7 @@ int dspir_execute_split_f32(const dspir_transform *t,
                 }
                 break;
             }
-            case DSPIR_BFLY8: {
+            case FAF_BFLY8: {
                 uint32_t base = inst->a0;
                 if (base + 7 < t->n) {
                     float r[8], im[8];
@@ -1194,7 +1194,7 @@ int dspir_execute_split_f32(const dspir_transform *t,
                 }
                 break;
             }
-            case DSPIR_TWIDDLE_MUL: {
+            case FAF_TWIDDLE_MUL: {
                 uint32_t a0 = inst->a0;
                 uint32_t a1 = inst->a1;
                 if (a0 < t->n && tw) {
@@ -1205,7 +1205,7 @@ int dspir_execute_split_f32(const dspir_transform *t,
                 }
                 break;
             }
-            case DSPIR_TWIDDLE_MUL_CONJ: {
+            case FAF_TWIDDLE_MUL_CONJ: {
                 uint32_t a0 = inst->a0;
                 uint32_t a1 = inst->a1;
                 if (a0 < t->n && tw) {
@@ -1216,26 +1216,26 @@ int dspir_execute_split_f32(const dspir_transform *t,
                 }
                 break;
             }
-            case DSPIR_FMA:
+            case FAF_FMA:
                 if (inst->a0 < t->n && inst->a1 < t->n && inst->a2 < t->n)
                     regs_re[inst->a0] = regs_re[inst->a0] * regs_re[inst->a1] + regs_re[inst->a2];
                 break;
-            case DSPIR_FMUL:
+            case FAF_FMUL:
                 if (inst->a0 < t->n && inst->a1 < t->n && inst->a2 < t->n)
                     regs_re[inst->a0] = regs_re[inst->a1] * regs_re[inst->a2];
                 break;
-            case DSPIR_FADD:
+            case FAF_FADD:
                 if (inst->a0 < t->n && inst->a1 < t->n && inst->a2 < t->n)
                     regs_re[inst->a0] = regs_re[inst->a1] + regs_re[inst->a2];
                 break;
-            case DSPIR_FSUB:
+            case FAF_FSUB:
                 if (inst->a0 < t->n && inst->a1 < t->n && inst->a2 < t->n)
                     regs_re[inst->a0] = regs_re[inst->a1] - regs_re[inst->a2];
                 break;
-            case DSPIR_BARRIER:
+            case FAF_BARRIER:
                 __asm__ volatile("" ::: "memory");
                 break;
-            case DSPIR_FFT_STAGE: {
+            case FAF_FFT_STAGE: {
                 size_t radix = inst->a0;
                 size_t stride = inst->a1;
                 size_t tw_step = inst->a2;
@@ -1266,7 +1266,7 @@ int dspir_execute_split_f32(const dspir_transform *t,
                 }
                 break;
             }
-            case DSPIR_DCT_STAGE: {
+            case FAF_DCT_STAGE: {
                 size_t stride = inst->a1;
                 size_t nstage = t->n / stride;
                 for (size_t i = 0; i < nstage / 2; i++) {
@@ -1280,7 +1280,7 @@ int dspir_execute_split_f32(const dspir_transform *t,
                 }
                 break;
             }
-            case DSPIR_DST_STAGE: {
+            case FAF_DST_STAGE: {
                 size_t stride = inst->a1;
                 size_t nstage = t->n / stride;
                 for (size_t i = 0; i < nstage / 2; i++) {
@@ -1294,7 +1294,7 @@ int dspir_execute_split_f32(const dspir_transform *t,
                 }
                 break;
             }
-            case DSPIR_LIFT_PRED: {
+            case FAF_LIFT_PRED: {
                 if (inst->a0 < t->n && inst->a1 < t->n) {
                     union { uint32_t u; float f; } cv;
                     cv.u = inst->a2;
@@ -1302,7 +1302,7 @@ int dspir_execute_split_f32(const dspir_transform *t,
                 }
                 break;
             }
-            case DSPIR_LIFT_UPD: {
+            case FAF_LIFT_UPD: {
                 if (inst->a0 < t->n && inst->a1 < t->n) {
                     union { uint32_t u; float f; } cv;
                     cv.u = inst->a2;
@@ -1310,7 +1310,7 @@ int dspir_execute_split_f32(const dspir_transform *t,
                 }
                 break;
             }
-            case DSPIR_LIFT_SCALE: {
+            case FAF_LIFT_SCALE: {
                 if (inst->a0 < t->n) {
                     union { uint32_t u; float f; } cv;
                     cv.u = inst->a2;
@@ -1318,7 +1318,7 @@ int dspir_execute_split_f32(const dspir_transform *t,
                 }
                 break;
             }
-            case DSPIR_END:
+            case FAF_END:
                 goto done_split;
             default:
                 break;
@@ -1337,7 +1337,7 @@ done_split:
  * 
  * Double precision variant for higher accuracy requirements.
  */
-int dspir_execute_split_f64(const dspir_transform *t,
+int faf_execute_split_f64(const faf_transform *t,
                              double *restrict out_re,
                              double *restrict out_im,
                              const double *restrict in_re,
@@ -1359,13 +1359,13 @@ int dspir_execute_split_f64(const dspir_transform *t,
     const double *tw = (const double *)t->twiddles[0];
     
     for (size_t ip = 0; ip < t->n_inst; ip++) {
-        const dspir_inst *inst = &t->code[ip];
-        uint8_t op = DSPIR_GET_OP(inst->packed);
+        const faf_inst *inst = &t->code[ip];
+        uint8_t op = FAF_GET_OP(inst->packed);
         
         switch (op) {
-            case DSPIR_NOP:
+            case FAF_NOP:
                 break;
-            case DSPIR_LOAD: {
+            case FAF_LOAD: {
                 size_t in_idx = inst->a1;
                 size_t reg_idx = inst->a0;
                 if (reg_idx < t->n && in_idx < t->n) {
@@ -1374,7 +1374,7 @@ int dspir_execute_split_f64(const dspir_transform *t,
                 }
                 break;
             }
-            case DSPIR_STORE: {
+            case FAF_STORE: {
                 size_t out_idx = inst->a0;
                 size_t reg_idx = inst->a1;
                 if (out_idx < t->n && reg_idx < t->n) {
@@ -1383,7 +1383,7 @@ int dspir_execute_split_f64(const dspir_transform *t,
                 }
                 break;
             }
-            case DSPIR_LOAD_CONST: {
+            case FAF_LOAD_CONST: {
                 if (inst->a0 < t->n) {
                     union { uint32_t u; float f; } caster;
                     caster.u = inst->a1;
@@ -1391,7 +1391,7 @@ int dspir_execute_split_f64(const dspir_transform *t,
                 }
                 break;
             }
-            case DSPIR_BFLY2: {
+            case FAF_BFLY2: {
                 uint32_t a0 = inst->a0;
                 uint32_t a1 = inst->a1;
                 if (a0 < t->n && a1 < t->n) {
@@ -1402,7 +1402,7 @@ int dspir_execute_split_f64(const dspir_transform *t,
                 }
                 break;
             }
-            case DSPIR_BFLY4: {
+            case FAF_BFLY4: {
                 uint32_t base = inst->a0;
                 if (base + 3 < t->n) {
                     double r0 = regs_re[base],     i0 = regs_im[base];
@@ -1420,7 +1420,7 @@ int dspir_execute_split_f64(const dspir_transform *t,
                 }
                 break;
             }
-            case DSPIR_BFLY8: {
+            case FAF_BFLY8: {
                 uint32_t base = inst->a0;
                 if (base + 7 < t->n) {
                     double r[8], im[8];
@@ -1456,7 +1456,7 @@ int dspir_execute_split_f64(const dspir_transform *t,
                 }
                 break;
             }
-            case DSPIR_TWIDDLE_MUL: {
+            case FAF_TWIDDLE_MUL: {
                 uint32_t a0 = inst->a0;
                 uint32_t a1 = inst->a1;
                 if (a0 < t->n && tw) {
@@ -1467,7 +1467,7 @@ int dspir_execute_split_f64(const dspir_transform *t,
                 }
                 break;
             }
-            case DSPIR_TWIDDLE_MUL_CONJ: {
+            case FAF_TWIDDLE_MUL_CONJ: {
                 uint32_t a0 = inst->a0;
                 uint32_t a1 = inst->a1;
                 if (a0 < t->n && tw) {
@@ -1478,26 +1478,26 @@ int dspir_execute_split_f64(const dspir_transform *t,
                 }
                 break;
             }
-            case DSPIR_FMA:
+            case FAF_FMA:
                 if (inst->a0 < t->n && inst->a1 < t->n && inst->a2 < t->n)
                     regs_re[inst->a0] = regs_re[inst->a0] * regs_re[inst->a1] + regs_re[inst->a2];
                 break;
-            case DSPIR_FMUL:
+            case FAF_FMUL:
                 if (inst->a0 < t->n && inst->a1 < t->n && inst->a2 < t->n)
                     regs_re[inst->a0] = regs_re[inst->a1] * regs_re[inst->a2];
                 break;
-            case DSPIR_FADD:
+            case FAF_FADD:
                 if (inst->a0 < t->n && inst->a1 < t->n && inst->a2 < t->n)
                     regs_re[inst->a0] = regs_re[inst->a1] + regs_re[inst->a2];
                 break;
-            case DSPIR_FSUB:
+            case FAF_FSUB:
                 if (inst->a0 < t->n && inst->a1 < t->n && inst->a2 < t->n)
                     regs_re[inst->a0] = regs_re[inst->a1] - regs_re[inst->a2];
                 break;
-            case DSPIR_BARRIER:
+            case FAF_BARRIER:
                 __asm__ volatile("" ::: "memory");
                 break;
-            case DSPIR_FFT_STAGE: {
+            case FAF_FFT_STAGE: {
                 size_t radix = inst->a0;
                 size_t stride = inst->a1;
                 size_t tw_step = inst->a2;
@@ -1528,7 +1528,7 @@ int dspir_execute_split_f64(const dspir_transform *t,
                 }
                 break;
             }
-            case DSPIR_DCT_STAGE: {
+            case FAF_DCT_STAGE: {
                 size_t stride = inst->a1;
                 size_t nstage = t->n / stride;
                 for (size_t i = 0; i < nstage / 2; i++) {
@@ -1542,7 +1542,7 @@ int dspir_execute_split_f64(const dspir_transform *t,
                 }
                 break;
             }
-            case DSPIR_DST_STAGE: {
+            case FAF_DST_STAGE: {
                 size_t stride = inst->a1;
                 size_t nstage = t->n / stride;
                 for (size_t i = 0; i < nstage / 2; i++) {
@@ -1556,7 +1556,7 @@ int dspir_execute_split_f64(const dspir_transform *t,
                 }
                 break;
             }
-            case DSPIR_LIFT_PRED: {
+            case FAF_LIFT_PRED: {
                 if (inst->a0 < t->n && inst->a1 < t->n) {
                     union { uint32_t u; float f; } cv;
                     cv.u = inst->a2;
@@ -1564,7 +1564,7 @@ int dspir_execute_split_f64(const dspir_transform *t,
                 }
                 break;
             }
-            case DSPIR_LIFT_UPD: {
+            case FAF_LIFT_UPD: {
                 if (inst->a0 < t->n && inst->a1 < t->n) {
                     union { uint32_t u; float f; } cv;
                     cv.u = inst->a2;
@@ -1572,7 +1572,7 @@ int dspir_execute_split_f64(const dspir_transform *t,
                 }
                 break;
             }
-            case DSPIR_LIFT_SCALE: {
+            case FAF_LIFT_SCALE: {
                 if (inst->a0 < t->n) {
                     union { uint32_t u; float f; } cv;
                     cv.u = inst->a2;
@@ -1580,7 +1580,7 @@ int dspir_execute_split_f64(const dspir_transform *t,
                 }
                 break;
             }
-            case DSPIR_END:
+            case FAF_END:
                 goto done_split_f64;
             default:
                 break;

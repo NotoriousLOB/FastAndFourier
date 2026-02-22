@@ -16,7 +16,7 @@
 TEST(TransformTest, FFTLinearity) {
     const size_t n = 64;
     
-    dspir_transform* t = dspir_create_fft(n, false, DSPIR_PREC_FP32, 0);
+    faf_transform* t = faf_create_fft(n, false, FAF_PREC_FP32, 0);
     ASSERT_NE(t, nullptr);
     
     /* Complex format: 2*n floats for n complex samples */
@@ -39,13 +39,13 @@ TEST(TransformTest, FFTLinearity) {
     }
     
     /* FFT(a) */
-    dspir_execute_f32(t, out_a, a);
+    faf_execute_f32(t, out_a, a);
     
     /* FFT(b) */
-    dspir_execute_f32(t, out_b, b);
+    faf_execute_f32(t, out_b, b);
     
     /* FFT(a+b) */
-    dspir_execute_f32(t, out_sum, sum);
+    faf_execute_f32(t, out_sum, sum);
     
     /* Expected: FFT(a) + FFT(b) */
     for (size_t i = 0; i < 2 * n; i++) {
@@ -64,14 +64,14 @@ TEST(TransformTest, FFTLinearity) {
     
     free(a); free(b); free(sum);
     free(out_a); free(out_b); free(out_sum); free(expected);
-    dspir_destroy_transform(t);
+    faf_destroy_transform(t);
 }
 
 /* Test FFT shift property */
 TEST(TransformTest, FFTShift) {
     const size_t n = 64;
     
-    dspir_transform* t = dspir_create_fft(n, false, DSPIR_PREC_FP32, 0);
+    faf_transform* t = faf_create_fft(n, false, FAF_PREC_FP32, 0);
     ASSERT_NE(t, nullptr);
     
     float *in = (float*)aligned_alloc(64, 2 * n * sizeof(float));
@@ -87,8 +87,8 @@ TEST(TransformTest, FFTShift) {
         shifted[2*i + 1] = 0.0f;
     }
     
-    dspir_execute_f32(t, out1, in);
-    dspir_execute_f32(t, out2, shifted);
+    faf_execute_f32(t, out1, in);
+    faf_execute_f32(t, out2, shifted);
     
     /* Shifted signal should have alternating signs in frequency domain */
     for (size_t i = 0; i < n; i++) {
@@ -99,14 +99,14 @@ TEST(TransformTest, FFTShift) {
     }
     
     free(in); free(shifted); free(out1); free(out2);
-    dspir_destroy_transform(t);
+    faf_destroy_transform(t);
 }
 
 /* Test DCT orthogonality (energy preservation) */
 TEST(TransformTest, DCTEnergy) {
     const size_t n = 64;
     
-    dspir_transform* t = dspir_create_dct(n, 2, DSPIR_PREC_FP32, 0);
+    faf_transform* t = faf_create_dct(n, 2, FAF_PREC_FP32, 0);
     ASSERT_NE(t, nullptr);
     
     float *in = (float*)aligned_alloc(64, 2 * n * sizeof(float));
@@ -121,7 +121,7 @@ TEST(TransformTest, DCTEnergy) {
         input_energy += in[2*i] * in[2*i];
     }
     
-    dspir_execute_f32(t, out, in);
+    faf_execute_f32(t, out, in);
     
     /* Output energy (with DCT-II normalization) */
     float output_energy = 0.0f;
@@ -137,14 +137,14 @@ TEST(TransformTest, DCTEnergy) {
     EXPECT_LT(output_energy / input_energy, 100.0f);  /* Within reasonable bounds */
     
     free(in); free(out);
-    dspir_destroy_transform(t);
+    faf_destroy_transform(t);
 }
 
 /* Test wavelet perfect reconstruction */
 TEST(TransformTest, WaveletPerfectReconstruction) {
     const size_t n = 64;
     
-    dspir_transform* t = dspir_create_haar(n, 3, DSPIR_PREC_FP32, 0);
+    faf_transform* t = faf_create_haar(n, 3, FAF_PREC_FP32, 0);
     ASSERT_NE(t, nullptr);
     
     float *original = (float*)aligned_alloc(64, 2 * n * sizeof(float));
@@ -158,13 +158,13 @@ TEST(TransformTest, WaveletPerfectReconstruction) {
     }
     
     /* Forward transform */
-    dspir_execute_f32(t, transformed, original);
+    faf_execute_f32(t, transformed, original);
     
     /* Note: Inverse transform not yet implemented */
     /* For now, just verify forward transform executes */
     
     free(original); free(transformed); free(reconstructed);
-    dspir_destroy_transform(t);
+    faf_destroy_transform(t);
 }
 
 /* Test all DCT types */
@@ -172,7 +172,7 @@ TEST(TransformTest, AllDCTTypes) {
     const size_t n = 64;
     
     for (int type = 1; type <= 4; type++) {
-        dspir_transform* t = dspir_create_dct(n, type, DSPIR_PREC_FP32, 0);
+        faf_transform* t = faf_create_dct(n, type, FAF_PREC_FP32, 0);
         ASSERT_NE(t, nullptr) << "Failed to create DCT type " << type;
         
         float *in = (float*)aligned_alloc(64, 2 * n * sizeof(float));
@@ -183,11 +183,11 @@ TEST(TransformTest, AllDCTTypes) {
             in[2*i + 1] = 0.0f;
         }
         
-        int result = dspir_execute_f32(t, out, in);
+        int result = faf_execute_f32(t, out, in);
         EXPECT_EQ(result, 0) << "DCT type " << type << " execution failed";
         
         free(in); free(out);
-        dspir_destroy_transform(t);
+        faf_destroy_transform(t);
     }
 }
 
@@ -196,7 +196,7 @@ TEST(TransformTest, AllDSTTypes) {
     const size_t n = 64;
     
     for (int type = 1; type <= 4; type++) {
-        dspir_transform* t = dspir_create_dst(n, type, DSPIR_PREC_FP32, 0);
+        faf_transform* t = faf_create_dst(n, type, FAF_PREC_FP32, 0);
         ASSERT_NE(t, nullptr) << "Failed to create DST type " << type;
         
         float *in = (float*)aligned_alloc(64, 2 * n * sizeof(float));
@@ -207,11 +207,11 @@ TEST(TransformTest, AllDSTTypes) {
             in[2*i + 1] = 0.0f;
         }
         
-        int result = dspir_execute_f32(t, out, in);
+        int result = faf_execute_f32(t, out, in);
         EXPECT_EQ(result, 0) << "DST type " << type << " execution failed";
         
         free(in); free(out);
-        dspir_destroy_transform(t);
+        faf_destroy_transform(t);
     }
 }
 
@@ -220,7 +220,7 @@ TEST(TransformTest, MultiLevelWavelet) {
     const size_t n = 64;
     
     for (size_t levels = 1; levels <= 4; levels++) {
-        dspir_transform* t = dspir_create_haar(n, levels, DSPIR_PREC_FP32, 0);
+        faf_transform* t = faf_create_haar(n, levels, FAF_PREC_FP32, 0);
         ASSERT_NE(t, nullptr) << "Failed to create Haar with " << levels << " levels";
         
         float *in = (float*)aligned_alloc(64, 2 * n * sizeof(float));
@@ -231,11 +231,11 @@ TEST(TransformTest, MultiLevelWavelet) {
             in[2*i + 1] = 0.0f;
         }
         
-        int result = dspir_execute_f32(t, out, in);
+        int result = faf_execute_f32(t, out, in);
         EXPECT_EQ(result, 0) << "Haar with " << levels << " levels execution failed";
         
         free(in); free(out);
-        dspir_destroy_transform(t);
+        faf_destroy_transform(t);
     }
 }
 
@@ -243,7 +243,7 @@ TEST(TransformTest, MultiLevelWavelet) {
 TEST(TransformTest, Daubechies4Wavelet) {
     const size_t n = 64;
     
-    dspir_transform* t = dspir_create_daubechies4(n, 3, DSPIR_PREC_FP32, 0);
+    faf_transform* t = faf_create_daubechies4(n, 3, FAF_PREC_FP32, 0);
     ASSERT_NE(t, nullptr);
     
     float *in = (float*)aligned_alloc(64, 2 * n * sizeof(float));
@@ -255,9 +255,9 @@ TEST(TransformTest, Daubechies4Wavelet) {
         in[2*i + 1] = 0.0f;
     }
     
-    int result = dspir_execute_f32(t, out, in);
+    int result = faf_execute_f32(t, out, in);
     EXPECT_EQ(result, 0);
     
     free(in); free(out);
-    dspir_destroy_transform(t);
+    faf_destroy_transform(t);
 }

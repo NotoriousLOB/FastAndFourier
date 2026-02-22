@@ -1,16 +1,16 @@
 /**
- * @file dspir_arm_sve.c
+ * @file faf_arm_sve.c
  * @brief ARM SVE (Scalable Vector Extension) kernels for AArch64
  * 
  * SVE provides variable-width vector registers (128-2048 bits)
  * The vector length is determined at runtime
  */
 
-#include "dspir.h"
+#include "faf.h"
 
-#ifdef DSPIR_ARCH_AARCH64
+#ifdef FAF_ARCH_AARCH64
 
-#ifdef DSPIR_HAVE_SVE
+#ifdef FAF_HAVE_SVE
 
 #include <arm_sve.h>
 #include <string.h>
@@ -55,7 +55,7 @@ static inline svfloat32_t sve_complex_mul_im(svfloat32_t a_re, svfloat32_t a_im,
  * Uses variable-width vectors for optimal performance across
  * different SVE implementations (128-bit to 2048-bit)
  */
-void dspir_arm_sve_execute_f32(const dspir_transform *t,
+void faf_arm_sve_execute_f32(const faf_transform *t,
                                 float *restrict out,
                                 const float *restrict in) {
     const size_t n = t->n;
@@ -203,7 +203,7 @@ void dspir_arm_sve_execute_f32(const dspir_transform *t,
  * 
  * Uses SVE's horizontal add reduction for efficient accumulation
  */
-void dspir_arm_sve_polyfir_f32(const dspir_transform *t,
+void faf_arm_sve_polyfir_f32(const faf_transform *t,
                                 float *restrict out,
                                 const float *restrict in) {
     const size_t nch = 8;
@@ -253,7 +253,7 @@ void dspir_arm_sve_polyfir_f32(const dspir_transform *t,
  * 
  * Variable-width vectorization adapts to SVE vector length
  */
-void dspir_arm_sve_haar_f32(const dspir_transform *t,
+void faf_arm_sve_haar_f32(const faf_transform *t,
                              float *restrict out,
                              const float *restrict in) {
     const size_t n = t->n;
@@ -329,5 +329,5 @@ void dspir_arm_sve_haar_f32(const dspir_transform *t,
     free(work);
 }
 
-#endif /* DSPIR_HAVE_SVE */
-#endif /* DSPIR_ARCH_AARCH64 */
+#endif /* FAF_HAVE_SVE */
+#endif /* FAF_ARCH_AARCH64 */

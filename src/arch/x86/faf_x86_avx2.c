@@ -1,13 +1,13 @@
 /**
- * @file dspir_x86_avx2.c
+ * @file faf_x86_avx2.c
  * @brief AVX2 vectorized kernels for x86_64
  * 
  * AVX2 provides 256-bit registers (8 floats) and FMA support
  */
 
-#include "dspir.h"
+#include "faf.h"
 
-#ifdef DSPIR_ARCH_X86_64
+#ifdef FAF_ARCH_X86_64
 
 #include <immintrin.h>
 #include <string.h>
@@ -97,7 +97,7 @@ static inline void avx2_bfly4(__m256 *r0, __m256 *i0,
 /**
  * @brief AVX2-optimized FFT execution
  */
-void dspir_x86_avx2_execute_f32(const dspir_transform *t,
+void faf_x86_avx2_execute_f32(const faf_transform *t,
                                  float *restrict out,
                                  const float *restrict in) {
     const size_t n = t->n;
@@ -249,7 +249,7 @@ void dspir_x86_avx2_execute_f32(const dspir_transform *t,
 /**
  * @brief AVX2-optimized polyphase FIR
  */
-void dspir_x86_avx2_polyfir_f32(const dspir_transform *t,
+void faf_x86_avx2_polyfir_f32(const faf_transform *t,
                                  float *restrict out,
                                  const float *restrict in) {
     const size_t nch = 8;  /* 8 channels */
@@ -287,4 +287,4 @@ void dspir_x86_avx2_polyfir_f32(const dspir_transform *t,
     }
 }
 
-#endif /* DSPIR_ARCH_X86_64 */
+#endif /* FAF_ARCH_X86_64 */

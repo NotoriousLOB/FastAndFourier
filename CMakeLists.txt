@@ -53,7 +53,7 @@ endif()
 if(ARCH_X86_64)
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -march=native")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -march=native")
-    add_compile_definitions(DSPIR_ARCH_X86_64)
+    add_compile_definitions(FAF_ARCH_X86_64)
     
     # Check for AVX512
     check_c_source_compiles("
@@ -61,7 +61,7 @@ if(ARCH_X86_64)
         int main() { __m512i a = _mm512_set1_epi32(0); return 0; }
     " HAVE_AVX512)
     if(HAVE_AVX512)
-        add_compile_definitions(DSPIR_HAVE_AVX512)
+        add_compile_definitions(FAF_HAVE_AVX512)
     endif()
     
     # Check for AVX2
@@ -70,7 +70,7 @@ if(ARCH_X86_64)
         int main() { __m256i a = _mm256_set1_epi32(0); return 0; }
     " HAVE_AVX2)
     if(HAVE_AVX2)
-        add_compile_definitions(DSPIR_HAVE_AVX2)
+        add_compile_definitions(FAF_HAVE_AVX2)
     endif()
     
     # Check for SSE4.2
@@ -79,12 +79,12 @@ if(ARCH_X86_64)
         int main() { int a = 0; return _mm_popcnt_u32(a); }
     " HAVE_SSE42)
     if(HAVE_SSE42)
-        add_compile_definitions(DSPIR_HAVE_SSE42)
+        add_compile_definitions(FAF_HAVE_SSE42)
     endif()
     
 elseif(ARCH_AARCH64)
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -march=native")
-    add_compile_definitions(DSPIR_ARCH_AARCH64)
+    add_compile_definitions(FAF_ARCH_AARCH64)
     
     # Check for SVE
     check_c_source_compiles("
@@ -92,7 +92,7 @@ elseif(ARCH_AARCH64)
         int main() { svint32_t a = svdup_s32(0); return 0; }
     " HAVE_SVE)
     if(HAVE_SVE)
-        add_compile_definitions(DSPIR_HAVE_SVE)
+        add_compile_definitions(FAF_HAVE_SVE)
     endif()
     
     # Check for NEON
@@ -101,7 +101,7 @@ elseif(ARCH_AARCH64)
         int main() { int32x4_t a = vdupq_n_s32(0); return 0; }
     " HAVE_NEON)
     if(HAVE_NEON)
-        add_compile_definitions(DSPIR_HAVE_NEON)
+        add_compile_definitions(FAF_HAVE_NEON)
     endif()
 endif()
 
@@ -115,7 +115,7 @@ if(ENABLE_CUDA)
     if(CMAKE_CUDA_COMPILER)
         enable_language(CUDA)
         set(CUDA_FOUND TRUE)
-        add_compile_definitions(DSPIR_HAVE_CUDA)
+        add_compile_definitions(FAF_HAVE_CUDA)
         
         # Set CUDA architectures if not specified
         if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
@@ -131,20 +131,20 @@ endif()
 
 # Precision levels
 if(ENABLE_FP8)
-    add_compile_definitions(DSPIR_ENABLE_FP8)
+    add_compile_definitions(FAF_ENABLE_FP8)
 endif()
 if(ENABLE_FP16)
-    add_compile_definitions(DSPIR_ENABLE_FP16)
+    add_compile_definitions(FAF_ENABLE_FP16)
     if(CUDA_FOUND)
-        set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -DDSPIR_ENABLE_FP16")
+        set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -DFAF_ENABLE_FP16")
     endif()
 endif()
-add_compile_definitions(DSPIR_ENABLE_FP32)
-add_compile_definitions(DSPIR_ENABLE_FP64)
+add_compile_definitions(FAF_ENABLE_FP32)
+add_compile_definitions(FAF_ENABLE_FP64)
 
 # Single-header fallback mode (disables JIT, uses VM only)
 if(FASTANDFOURIER_SINGLE_HEADER)
-    add_compile_definitions(DSPIR_SINGLE_HEADER)
+    add_compile_definitions(FAF_SINGLE_HEADER)
     message(STATUS "Single-header mode: JIT disabled, VM only")
 endif()
 
@@ -153,55 +153,55 @@ include_directories(${CMAKE_SOURCE_DIR}/include)
 include_directories(${CMAKE_SOURCE_DIR}/src)
 
 # Source files
-set(DSPIR_CORE_SOURCES
-    src/dspir_core.c
-    src/dspir_vm.c
-    src/dspir_transforms.c
-    src/dspir_twiddles.c
+set(FAF_CORE_SOURCES
+    src/faf_core.c
+    src/faf_vm.c
+    src/faf_transforms.c
+    src/faf_twiddles.c
     src/chirp.c
     src/chirp_builtins.c
 )
 
-set(DSPIR_X86_SOURCES
-    src/arch/x86/dspir_x86_sse.c
-    src/arch/x86/dspir_x86_avx2.c
-    src/arch/x86/dspir_x86_avx512.c
+set(FAF_X86_SOURCES
+    src/arch/x86/faf_x86_sse.c
+    src/arch/x86/faf_x86_avx2.c
+    src/arch/x86/faf_x86_avx512.c
 )
 
-set(DSPIR_ARM_SOURCES
-    src/arch/arm/dspir_arm_neon.c
-    src/arch/arm/dspir_arm_sve.c
+set(FAF_ARM_SOURCES
+    src/arch/arm/faf_arm_neon.c
+    src/arch/arm/faf_arm_sve.c
 )
 
-set(DSPIR_CUDA_SOURCES
-    src/arch/cuda/dspir_cuda.cu
+set(FAF_CUDA_SOURCES
+    src/arch/cuda/faf_cuda.cu
 )
 
-set(DSPIR_JIT_SOURCES
-    src/jit/dspir_jit.c
+set(FAF_JIT_SOURCES
+    src/jit/faf_jit.c
 )
 
 # Architecture-specific source selection
 if(ARCH_X86_64)
-    list(APPEND DSPIR_CORE_SOURCES ${DSPIR_X86_SOURCES})
+    list(APPEND FAF_CORE_SOURCES ${FAF_X86_SOURCES})
 elseif(ARCH_AARCH64)
-    list(APPEND DSPIR_CORE_SOURCES ${DSPIR_ARM_SOURCES})
+    list(APPEND FAF_CORE_SOURCES ${FAF_ARM_SOURCES})
 endif()
 
 if(CUDA_FOUND)
-    list(APPEND DSPIR_CORE_SOURCES ${DSPIR_CUDA_SOURCES})
+    list(APPEND FAF_CORE_SOURCES ${FAF_CUDA_SOURCES})
 endif()
 
-list(APPEND DSPIR_CORE_SOURCES ${DSPIR_JIT_SOURCES})
+list(APPEND FAF_CORE_SOURCES ${FAF_JIT_SOURCES})
 
 # Main library
-add_library(fastandfourier STATIC ${DSPIR_CORE_SOURCES})
+add_library(fastandfourier STATIC ${FAF_CORE_SOURCES})
 
 # Set library properties
 set_target_properties(fastandfourier PROPERTIES
     VERSION ${PROJECT_VERSION}
     SOVERSION ${PROJECT_VERSION_MAJOR}
-    PUBLIC_HEADER "include/dspir.h;include/fastandfourier.h;include/chirp.h;include/chirp_builtins.h"
+    PUBLIC_HEADER "include/faf.h;include/fastandfourier.h;include/chirp.h;include/chirp_builtins.h"
     C_STANDARD 11
     C_STANDARD_REQUIRED ON
     POSITION_INDEPENDENT_CODE ON

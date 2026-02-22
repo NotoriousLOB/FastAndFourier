@@ -82,7 +82,7 @@ static void generate_signal_complex(std::complex<float>* out, size_t n, int num_
 static void BM_FAF_FFT_Real(benchmark::State& state) {
     const size_t n = state.range(0);
     
-    dspir_transform* t = dspir_create_fft(n, false, DSPIR_PREC_FP32, 0);
+    faf_transform* t = faf_create_fft(n, false, FAF_PREC_FP32, 0);
     if (!t) {
         state.SkipWithError("Failed to create transform");
         return;
@@ -96,7 +96,7 @@ static void BM_FAF_FFT_Real(benchmark::State& state) {
     }
     
     for (auto _ : state) {
-        dspir_execute_f32(t, out, in);
+        faf_execute_f32(t, out, in);
         benchmark::DoNotOptimize(out);
     }
     
@@ -104,7 +104,7 @@ static void BM_FAF_FFT_Real(benchmark::State& state) {
     state.SetBytesProcessed(state.iterations() * n * sizeof(float) * 2);
     
     free(in); free(out);
-    dspir_destroy_transform(t);
+    faf_destroy_transform(t);
 }
 BENCHMARK(BM_FAF_FFT_Real)
     ->RangeMultiplier(4)
@@ -255,7 +255,7 @@ BENCHMARK(BM_FFTW3_Measure)
 static void BM_Latency_FAF(benchmark::State& state) {
     const size_t n = state.range(0);
     
-    dspir_transform* t = dspir_create_fft(n, false, DSPIR_PREC_FP32, 0);
+    faf_transform* t = faf_create_fft(n, false, FAF_PREC_FP32, 0);
     float* in = (float*)aligned_alloc(64, 2 * n * sizeof(float));
     float* out = (float*)aligned_alloc(64, 2 * n * sizeof(float));
     for (size_t i = 0; i < n; i++) {
@@ -264,12 +264,12 @@ static void BM_Latency_FAF(benchmark::State& state) {
     }
     
     for (auto _ : state) {
-        dspir_execute_f32(t, out, in);
+        faf_execute_f32(t, out, in);
         benchmark::ClobberMemory();
     }
     
     free(in); free(out);
-    dspir_destroy_transform(t);
+    faf_destroy_transform(t);
 }
 BENCHMARK(BM_Latency_FAF)
     ->RangeMultiplier(2)
@@ -311,7 +311,7 @@ static void BM_Throughput_FAF(benchmark::State& state) {
     const size_t n = state.range(0);
     const int batch = 100;
     
-    dspir_transform* t = dspir_create_fft(n, false, DSPIR_PREC_FP32, 0);
+    faf_transform* t = faf_create_fft(n, false, FAF_PREC_FP32, 0);
     float* in = (float*)aligned_alloc(64, 2 * n * sizeof(float));
     float* out = (float*)aligned_alloc(64, 2 * n * sizeof(float));
     for (size_t i = 0; i < n; i++) {
@@ -321,7 +321,7 @@ static void BM_Throughput_FAF(benchmark::State& state) {
     
     for (auto _ : state) {
         for (int b = 0; b < batch; b++) {
-            dspir_execute_f32(t, out, in);
+            faf_execute_f32(t, out, in);
         }
         benchmark::DoNotOptimize(out);
     }
@@ -330,7 +330,7 @@ static void BM_Throughput_FAF(benchmark::State& state) {
     state.SetBytesProcessed(state.iterations() * batch * 2 * n * sizeof(float) * 2);
     
     free(in); free(out);
-    dspir_destroy_transform(t);
+    faf_destroy_transform(t);
 }
 BENCHMARK(BM_Throughput_FAF)
     ->RangeMultiplier(4)

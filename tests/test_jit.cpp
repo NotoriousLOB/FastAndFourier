@@ -13,11 +13,11 @@
 
 /* Test JIT context creation and destruction */
 TEST(JITTest, ContextLifecycle) {
-    dspir_jit_ctx* ctx = dspir_jit_create();
+    faf_jit_ctx* ctx = faf_jit_create();
     EXPECT_NE(ctx, nullptr);
     
     if (ctx) {
-        dspir_jit_destroy(ctx);
+        faf_jit_destroy(ctx);
     }
 }
 
@@ -26,33 +26,33 @@ TEST(JITTest, CompileFFT) {
     const size_t n = 64;
     
     /* Create transform */
-    dspir_transform* t = dspir_create_fft(n, false, DSPIR_PREC_FP32, 0);
+    faf_transform* t = faf_create_fft(n, false, FAF_PREC_FP32, 0);
     ASSERT_NE(t, nullptr);
     
     /* Create JIT context */
-    dspir_jit_ctx* ctx = dspir_jit_create();
+    faf_jit_ctx* ctx = faf_jit_create();
     ASSERT_NE(ctx, nullptr);
     
     /* Compile */
-    int result = dspir_jit_compile(ctx, t);
+    int result = faf_jit_compile(ctx, t);
     
     /* JIT compilation may fail if compiler not available */
     /* Just verify it doesn't crash */
     (void)result;
     
     /* Get kernel */
-    dspir_kernel_fn fn = dspir_jit_get_kernel(ctx);
+    faf_kernel_fn fn = faf_jit_get_kernel(ctx);
     /* fn may be NULL if compilation failed */
     
-    dspir_jit_destroy(ctx);
-    dspir_destroy_transform(t);
+    faf_jit_destroy(ctx);
+    faf_destroy_transform(t);
 }
 
 /* Test JIT execution if available */
 TEST(JITTest, ExecuteJIT) {
     const size_t n = 64;
     
-    dspir_transform* t = dspir_create_fft(n, false, DSPIR_PREC_FP32, 0);
+    faf_transform* t = faf_create_fft(n, false, FAF_PREC_FP32, 0);
     ASSERT_NE(t, nullptr);
     
     /* Complex data format: 2*n floats */
@@ -67,10 +67,10 @@ TEST(JITTest, ExecuteJIT) {
     }
     
     /* VM execution */
-    dspir_execute_f32(t, out_vm, in);
+    faf_execute_f32(t, out_vm, in);
     
     /* JIT execution */
-    int result = dspir_execute_jit(t, out_jit, in);
+    int result = faf_execute_jit(t, out_jit, in);
     
     /* Compare results if JIT succeeded */
     if (result == 0) {
@@ -81,41 +81,41 @@ TEST(JITTest, ExecuteJIT) {
     }
     
     free(in); free(out_jit); free(out_vm);
-    dspir_destroy_transform(t);
+    faf_destroy_transform(t);
 }
 
 /* Test JIT compilation of DCT */
 TEST(JITTest, CompileDCT) {
     const size_t n = 64;
     
-    dspir_transform* t = dspir_create_dct(n, 2, DSPIR_PREC_FP32, 0);
+    faf_transform* t = faf_create_dct(n, 2, FAF_PREC_FP32, 0);
     ASSERT_NE(t, nullptr);
     
-    dspir_jit_ctx* ctx = dspir_jit_create();
+    faf_jit_ctx* ctx = faf_jit_create();
     ASSERT_NE(ctx, nullptr);
     
-    int result = dspir_jit_compile(ctx, t);
+    int result = faf_jit_compile(ctx, t);
     (void)result;
     
-    dspir_jit_destroy(ctx);
-    dspir_destroy_transform(t);
+    faf_jit_destroy(ctx);
+    faf_destroy_transform(t);
 }
 
 /* Test JIT compilation of wavelet */
 TEST(JITTest, CompileWavelet) {
     const size_t n = 64;
     
-    dspir_transform* t = dspir_create_haar(n, 3, DSPIR_PREC_FP32, 0);
+    faf_transform* t = faf_create_haar(n, 3, FAF_PREC_FP32, 0);
     ASSERT_NE(t, nullptr);
     
-    dspir_jit_ctx* ctx = dspir_jit_create();
+    faf_jit_ctx* ctx = faf_jit_create();
     ASSERT_NE(ctx, nullptr);
     
-    int result = dspir_jit_compile(ctx, t);
+    int result = faf_jit_compile(ctx, t);
     (void)result;
     
-    dspir_jit_destroy(ctx);
-    dspir_destroy_transform(t);
+    faf_jit_destroy(ctx);
+    faf_destroy_transform(t);
 }
 
 /* Test JIT with different sizes */
@@ -123,18 +123,18 @@ TEST(JITTest, VariousSizes) {
     size_t sizes[] = {16, 32, 64, 128, 256};
     
     for (size_t n : sizes) {
-        dspir_transform* t = dspir_create_fft(n, false, DSPIR_PREC_FP32, 0);
+        faf_transform* t = faf_create_fft(n, false, FAF_PREC_FP32, 0);
         ASSERT_NE(t, nullptr) << "Failed to create FFT of size " << n;
         
-        dspir_jit_ctx* ctx = dspir_jit_create();
+        faf_jit_ctx* ctx = faf_jit_create();
         ASSERT_NE(ctx, nullptr);
         
-        int result = dspir_jit_compile(ctx, t);
+        int result = faf_jit_compile(ctx, t);
         /* Compilation may fail - just verify no crash */
         (void)result;
         
-        dspir_jit_destroy(ctx);
-        dspir_destroy_transform(t);
+        faf_jit_destroy(ctx);
+        faf_destroy_transform(t);
     }
 }
 
@@ -142,42 +142,42 @@ TEST(JITTest, VariousSizes) {
 TEST(JITTest, DoublePrecisionJIT) {
     const size_t n = 64;
     
-    dspir_transform* t = dspir_create_fft(n, false, DSPIR_PREC_FP64, 0);
+    faf_transform* t = faf_create_fft(n, false, FAF_PREC_FP64, 0);
     ASSERT_NE(t, nullptr);
     
-    dspir_jit_ctx* ctx = dspir_jit_create();
+    faf_jit_ctx* ctx = faf_jit_create();
     ASSERT_NE(ctx, nullptr);
     
-    int result = dspir_jit_compile(ctx, t);
+    int result = faf_jit_compile(ctx, t);
     (void)result;
     
-    dspir_jit_destroy(ctx);
-    dspir_destroy_transform(t);
+    faf_jit_destroy(ctx);
+    faf_destroy_transform(t);
 }
 
 /* Test JIT with SIMD intrinsics */
 TEST(JITTest, SIMDCompilation) {
     const size_t n = 64;
     
-    dspir_transform* t = dspir_create_fft(n, false, DSPIR_PREC_FP32, 0);
+    faf_transform* t = faf_create_fft(n, false, FAF_PREC_FP32, 0);
     ASSERT_NE(t, nullptr);
     
-    dspir_jit_ctx* ctx = dspir_jit_create();
+    faf_jit_ctx* ctx = faf_jit_create();
     ASSERT_NE(ctx, nullptr);
     
     /* Compile with SIMD flag */
-    int result = dspir_jit_compile_ex(ctx, t, DSPIR_FLAG_JIT_SIMD);
+    int result = faf_jit_compile_ex(ctx, t, FAF_FLAG_JIT_SIMD);
     (void)result;
     
-    dspir_jit_destroy(ctx);
-    dspir_destroy_transform(t);
+    faf_jit_destroy(ctx);
+    faf_destroy_transform(t);
 }
 
 /* Test JIT with in-place execution */
 TEST(JITTest, InPlaceExecution) {
     const size_t n = 64;
     
-    dspir_transform* t = dspir_create_fft(n, false, DSPIR_PREC_FP32, 0);
+    faf_transform* t = faf_create_fft(n, false, FAF_PREC_FP32, 0);
     ASSERT_NE(t, nullptr);
     
     /* Complex data format: 2*n floats */
@@ -193,7 +193,7 @@ TEST(JITTest, InPlaceExecution) {
     }
     
     /* VM execution for reference */
-    dspir_execute_f32(t, expected, data);
+    faf_execute_f32(t, expected, data);
     
     /* Reset data */
     for (size_t i = 0; i < n; i++) {
@@ -202,7 +202,7 @@ TEST(JITTest, InPlaceExecution) {
     }
     
     /* In-place JIT execution */
-    int result = dspir_execute_jit_ex(t, data, data, DSPIR_FLAG_JIT_INPLACE);
+    int result = faf_execute_jit_ex(t, data, data, FAF_FLAG_JIT_INPLACE);
     
     /* Compare results if JIT succeeded */
     if (result == 0) {
@@ -213,14 +213,14 @@ TEST(JITTest, InPlaceExecution) {
     }
     
     free(data); free(expected);
-    dspir_destroy_transform(t);
+    faf_destroy_transform(t);
 }
 
 /* Test JIT with SIMD + in-place combined */
 TEST(JITTest, SIMDInPlaceCombined) {
     const size_t n = 64;
     
-    dspir_transform* t = dspir_create_fft(n, false, DSPIR_PREC_FP32, 0);
+    faf_transform* t = faf_create_fft(n, false, FAF_PREC_FP32, 0);
     ASSERT_NE(t, nullptr);
     
     float *data = (float*)aligned_alloc(64, 2 * n * sizeof(float));
@@ -235,7 +235,7 @@ TEST(JITTest, SIMDInPlaceCombined) {
     }
     
     /* VM execution for reference */
-    dspir_execute_f32(t, expected, data);
+    faf_execute_f32(t, expected, data);
     
     /* Reset data */
     for (size_t i = 0; i < n; i++) {
@@ -244,8 +244,8 @@ TEST(JITTest, SIMDInPlaceCombined) {
     }
     
     /* Combined SIMD + in-place JIT execution */
-    uint32_t flags = DSPIR_FLAG_JIT_SIMD | DSPIR_FLAG_JIT_INPLACE;
-    int result = dspir_execute_jit_ex(t, data, data, flags);
+    uint32_t flags = FAF_FLAG_JIT_SIMD | FAF_FLAG_JIT_INPLACE;
+    int result = faf_execute_jit_ex(t, data, data, flags);
     
     if (result == 0) {
         for (size_t i = 0; i < 2 * n; i++) {
@@ -255,5 +255,5 @@ TEST(JITTest, SIMDInPlaceCombined) {
     }
     
     free(data); free(expected);
-    dspir_destroy_transform(t);
+    faf_destroy_transform(t);
 }

@@ -1,11 +1,11 @@
 /**
- * @file dspir_x86_sse.c
+ * @file faf_x86_sse.c
  * @brief SSE4.2 vectorized kernels for x86_64
  */
 
-#include "dspir.h"
+#include "faf.h"
 
-#ifdef DSPIR_ARCH_X86_64
+#ifdef FAF_ARCH_X86_64
 
 #include <immintrin.h>
 #include <string.h>
@@ -59,7 +59,7 @@ static inline void sse_bfly2(__m128 *a_re, __m128 *a_im,
 /**
  * @brief SSE-optimized FFT execution
  */
-void dspir_x86_sse_execute_f32(const dspir_transform *t,
+void faf_x86_sse_execute_f32(const faf_transform *t,
                                 float *restrict out,
                                 const float *restrict in) {
     const size_t n = t->n;
@@ -185,7 +185,7 @@ void dspir_x86_sse_execute_f32(const dspir_transform *t,
 /**
  * @brief SSE-optimized DCT-II
  */
-void dspir_x86_sse_dct_ii_f32(const dspir_transform *t,
+void faf_x86_sse_dct_ii_f32(const faf_transform *t,
                                float *restrict out,
                                const float *restrict in) {
     const size_t n = t->n;
@@ -236,7 +236,7 @@ void dspir_x86_sse_dct_ii_f32(const dspir_transform *t,
 /**
  * @brief SSE-optimized Haar wavelet
  */
-void dspir_x86_sse_haar_f32(const dspir_transform *t,
+void faf_x86_sse_haar_f32(const faf_transform *t,
                              float *restrict out,
                              const float *restrict in) {
     const size_t n = t->n;
@@ -292,4 +292,4 @@ void dspir_x86_sse_haar_f32(const dspir_transform *t,
     free(work);
 }
 
-#endif /* DSPIR_ARCH_X86_64 */
+#endif /* FAF_ARCH_X86_64 */

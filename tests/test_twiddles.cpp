@@ -4,7 +4,7 @@
  */
 
 #include <gtest/gtest.h>
-#include "dspir.h"
+#include "faf.h"
 #include <cmath>
 
 #ifndef M_PI
@@ -16,7 +16,7 @@ TEST(TwiddlesTest, FFTTwiddles) {
     const size_t n = 64;
     float *tw = (float*)aligned_alloc(64, n * 2 * sizeof(float));
     
-    dspir_gen_twiddles_f32(tw, n, false);
+    faf_gen_twiddles_f32(tw, n, false);
     
     /* Check first twiddle (k=0): W_N^0 = 1 + 0i */
     EXPECT_NEAR(tw[0], 1.0f, 1e-6f);
@@ -63,8 +63,8 @@ TEST(TwiddlesTest, InverseFFTTwiddles) {
     float *tw_forward = (float*)aligned_alloc(64, n * 2 * sizeof(float));
     float *tw_inverse = (float*)aligned_alloc(64, n * 2 * sizeof(float));
     
-    dspir_gen_twiddles_f32(tw_forward, n, false);
-    dspir_gen_twiddles_f32(tw_inverse, n, true);
+    faf_gen_twiddles_f32(tw_forward, n, false);
+    faf_gen_twiddles_f32(tw_inverse, n, true);
     
     /* Inverse twiddles should be conjugates of forward twiddles */
     for (size_t k = 0; k < n / 2; k++) {
@@ -81,7 +81,7 @@ TEST(TwiddlesTest, DoublePrecisionTwiddles) {
     const size_t n = 64;
     double *tw = (double*)aligned_alloc(64, n * 2 * sizeof(double));
     
-    dspir_gen_twiddles_f64(tw, n, false);
+    faf_gen_twiddles_f64(tw, n, false);
     
     /* Check with higher precision */
     for (size_t k = 0; k < n / 2; k++) {
@@ -101,7 +101,7 @@ TEST(TwiddlesTest, DCTTwiddles) {
     const size_t n = 64;
     float *tw = (float*)aligned_alloc(64, n * 2 * sizeof(float));
     
-    dspir_gen_dct_twiddles_f32(tw, n, 2);
+    faf_gen_dct_twiddles_f32(tw, n, 2);
     
     /* DCT-II pre-twiddles: exp(-i*pi*k/(2*n)) */
     for (size_t k = 0; k < n; k++) {
@@ -121,7 +121,7 @@ TEST(TwiddlesTest, DSTTwiddles) {
     const size_t n = 64;
     float *tw = (float*)aligned_alloc(64, n * 2 * sizeof(float));
     
-    dspir_gen_dst_twiddles_f32(tw, n, 2);
+    faf_gen_dst_twiddles_f32(tw, n, 2);
     
     /* Verify twiddles have unit magnitude */
     for (size_t k = 0; k < n; k++) {
@@ -140,7 +140,7 @@ TEST(TwiddlesTest, WindowFunctions) {
     float *win = (float*)aligned_alloc(64, n * sizeof(float));
     
     /* Hann window */
-    dspir_gen_hann_window_f32(win, n);
+    faf_gen_hann_window_f32(win, n);
     
     /* Check endpoints */
     EXPECT_NEAR(win[0], 0.0f, 1e-6f);
@@ -164,7 +164,7 @@ TEST(TwiddlesTest, WindowFunctions) {
     EXPECT_NEAR(max_val, 1.0f, 0.01f);
     
     /* Hamming window */
-    dspir_gen_hamming_window_f32(win, n);
+    faf_gen_hamming_window_f32(win, n);
     
     /* Hamming doesn't go to zero at endpoints */
     EXPECT_GT(win[0], 0.05f);
@@ -176,7 +176,7 @@ TEST(TwiddlesTest, WindowFunctions) {
     }
     
     /* Blackman window */
-    dspir_gen_blackman_window_f32(win, n);
+    faf_gen_blackman_window_f32(win, n);
     
     /* Check endpoints */
     EXPECT_NEAR(win[0], 0.0f, 1e-5f);
@@ -190,7 +190,7 @@ TEST(TwiddlesTest, WaveletCoefficients) {
     float lo[4], hi[4];
     
     /* Haar coefficients */
-    dspir_gen_haar_coeffs_f32(lo, hi);
+    faf_gen_haar_coeffs_f32(lo, hi);
     
     /* Check orthogonality: lo[0]*lo[1] + hi[0]*hi[1] = 0 */
     float ortho = lo[0] * lo[1] + hi[0] * hi[1];
@@ -211,7 +211,7 @@ TEST(TwiddlesTest, WaveletCoefficients) {
     
     /* Daubechies-4 coefficients */
     float lo_d4[4], hi_d4[4];
-    dspir_gen_daubechies4_coeffs_f32(lo_d4, hi_d4);
+    faf_gen_daubechies4_coeffs_f32(lo_d4, hi_d4);
     
     /* Check sum of low-pass coefficients */
     float sum_lo = lo_d4[0] + lo_d4[1] + lo_d4[2] + lo_d4[3];

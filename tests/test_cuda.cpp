@@ -6,7 +6,7 @@
 #include <gtest/gtest.h>
 #include "fastandfourier.h"
 
-#ifdef DSPIR_HAVE_CUDA
+#ifdef FAF_HAVE_CUDA
 
 #include <cuda_runtime.h>
 
@@ -51,7 +51,7 @@ TEST(CUDATest, MemoryOperations) {
 TEST(CUDATest, FFTExecute) {
     const size_t n = 64;
     
-    dspir_transform* t = dspir_create_fft(n, false, DSPIR_PREC_FP32, 0);
+    faf_transform* t = faf_create_fft(n, false, FAF_PREC_FP32, 0);
     ASSERT_NE(t, nullptr);
     
     float *in = (float*)aligned_alloc(64, n * sizeof(float));
@@ -63,7 +63,7 @@ TEST(CUDATest, FFTExecute) {
     }
     
     /* Execute using CUDA */
-    dspir_cuda_execute_f32(t, out, in);
+    faf_cuda_execute_f32(t, out, in);
     
     /* FFT of impulse should be all ones */
     for (size_t i = 0; i < n; i++) {
@@ -71,7 +71,7 @@ TEST(CUDATest, FFTExecute) {
     }
     
     free(in); free(out);
-    dspir_destroy_transform(t);
+    faf_destroy_transform(t);
 }
 
 /* Test CUDA with various sizes */
@@ -79,7 +79,7 @@ TEST(CUDATest, VariousSizes) {
     size_t sizes[] = {64, 128, 256, 512, 1024, 2048, 4096};
     
     for (size_t n : sizes) {
-        dspir_transform* t = dspir_create_fft(n, false, DSPIR_PREC_FP32, 0);
+        faf_transform* t = faf_create_fft(n, false, FAF_PREC_FP32, 0);
         ASSERT_NE(t, nullptr) << "Failed to create FFT of size " << n;
         
         float *in = (float*)aligned_alloc(64, n * sizeof(float));
@@ -89,7 +89,7 @@ TEST(CUDATest, VariousSizes) {
             in[i] = sinf(2.0f * (float)M_PI * 4.0f * (float)i / (float)n);
         }
         
-        dspir_cuda_execute_f32(t, out, in);
+        faf_cuda_execute_f32(t, out, in);
         
         /* Check for NaN/Inf */
         for (size_t i = 0; i < n; i++) {
@@ -98,8 +98,8 @@ TEST(CUDATest, VariousSizes) {
         }
         
         free(in); free(out);
-        dspir_destroy_transform(t);
+        faf_destroy_transform(t);
     }
 }
 
-#endif /* DSPIR_HAVE_CUDA */
+#endif /* FAF_HAVE_CUDA */

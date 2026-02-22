@@ -1,9 +1,9 @@
 /**
- * @file dspir_core.c
+ * @file faf_core.c
  * @brief Core library implementation
  */
 
-#include "dspir.h"
+#include "faf.h"
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -22,26 +22,26 @@ _Thread_local static char g_error_buf[256] = {0};
 /* Architecture info */
 static const char* g_arch_name = NULL;
 
-const char* dspir_version(void) {
+const char* faf_version(void) {
     return FASTANDFOURIER_VERSION_STRING;
 }
 
-const char* dspir_arch_name(void) {
+const char* faf_arch_name(void) {
     if (g_arch_name == NULL) {
-        #if defined(DSPIR_ARCH_X86_64)
-            #if defined(DSPIR_HAVE_AVX512)
+        #if defined(FAF_ARCH_X86_64)
+            #if defined(FAF_HAVE_AVX512)
                 g_arch_name = "x86_64-avx512";
-            #elif defined(DSPIR_HAVE_AVX2)
+            #elif defined(FAF_HAVE_AVX2)
                 g_arch_name = "x86_64-avx2";
-            #elif defined(DSPIR_HAVE_SSE42)
+            #elif defined(FAF_HAVE_SSE42)
                 g_arch_name = "x86_64-sse4.2";
             #else
                 g_arch_name = "x86_64-generic";
             #endif
-        #elif defined(DSPIR_ARCH_AARCH64)
-            #if defined(DSPIR_HAVE_SVE)
+        #elif defined(FAF_ARCH_AARCH64)
+            #if defined(FAF_HAVE_SVE)
                 g_arch_name = "aarch64-sve";
-            #elif defined(DSPIR_HAVE_NEON)
+            #elif defined(FAF_HAVE_NEON)
                 g_arch_name = "aarch64-neon";
             #else
                 g_arch_name = "aarch64-generic";
@@ -53,22 +53,22 @@ const char* dspir_arch_name(void) {
     return g_arch_name;
 }
 
-int dspir_init(void) {
+int faf_init(void) {
     /* Initialize any global state */
     g_arch_name = NULL;
-    dspir_clear_error();
+    faf_clear_error();
     return 0;
 }
 
-void dspir_cleanup(void) {
+void faf_cleanup(void) {
     /* Cleanup global state */
 }
 
-const char* dspir_get_error(void) {
+const char* faf_get_error(void) {
     return g_error_buf;
 }
 
-void dspir_clear_error(void) {
+void faf_clear_error(void) {
     g_error_buf[0] = '\0';
 }
 
@@ -79,58 +79,58 @@ static void set_error(const char *fmt, ...) {
     va_end(args);
 }
 
-size_t dspir_get_alignment(void) {
-    return DSPIR_ALIGN;
+size_t faf_get_alignment(void) {
+    return FAF_ALIGN;
 }
 
-size_t dspir_precision_size(dspir_precision prec) {
+size_t faf_precision_size(faf_precision prec) {
     switch (prec) {
-        case DSPIR_PREC_FP8:  return 1;
-        case DSPIR_PREC_FP16:
-        case DSPIR_PREC_BF16: return 2;
-        case DSPIR_PREC_FP32: return 4;
-        case DSPIR_PREC_FP64: return 8;
-        case DSPIR_PREC_INT8: return 1;
-        case DSPIR_PREC_INT16: return 2;
-        case DSPIR_PREC_INT32: return 4;
+        case FAF_PREC_FP8:  return 1;
+        case FAF_PREC_FP16:
+        case FAF_PREC_BF16: return 2;
+        case FAF_PREC_FP32: return 4;
+        case FAF_PREC_FP64: return 8;
+        case FAF_PREC_INT8: return 1;
+        case FAF_PREC_INT16: return 2;
+        case FAF_PREC_INT32: return 4;
         default: return 4;
     }
 }
 
-const char* dspir_precision_name(dspir_precision prec) {
+const char* faf_precision_name(faf_precision prec) {
     switch (prec) {
-        case DSPIR_PREC_FP8:  return "fp8";
-        case DSPIR_PREC_FP16: return "fp16";
-        case DSPIR_PREC_BF16: return "bf16";
-        case DSPIR_PREC_FP32: return "fp32";
-        case DSPIR_PREC_FP64: return "fp64";
-        case DSPIR_PREC_INT8: return "int8";
-        case DSPIR_PREC_INT16: return "int16";
-        case DSPIR_PREC_INT32: return "int32";
+        case FAF_PREC_FP8:  return "fp8";
+        case FAF_PREC_FP16: return "fp16";
+        case FAF_PREC_BF16: return "bf16";
+        case FAF_PREC_FP32: return "fp32";
+        case FAF_PREC_FP64: return "fp64";
+        case FAF_PREC_INT8: return "int8";
+        case FAF_PREC_INT16: return "int16";
+        case FAF_PREC_INT32: return "int32";
         default: return "unknown";
     }
 }
 
-const char* dspir_transform_name(dspir_transform_type type) {
+const char* faf_transform_name(faf_transform_type type) {
     switch (type) {
-        case DSPIR_TRANSFORM_FFT:          return "fft";
-        case DSPIR_TRANSFORM_IFFT:         return "ifft";
-        case DSPIR_TRANSFORM_RFFT:         return "rfft";
-        case DSPIR_TRANSFORM_IRFFT:        return "irfft";
-        case DSPIR_TRANSFORM_DCT_I:        return "dct_i";
-        case DSPIR_TRANSFORM_DCT_II:       return "dct_ii";
-        case DSPIR_TRANSFORM_DCT_III:      return "dct_iii";
-        case DSPIR_TRANSFORM_DCT_IV:       return "dct_iv";
-        case DSPIR_TRANSFORM_DST_I:        return "dst_i";
-        case DSPIR_TRANSFORM_DST_II:       return "dst_ii";
-        case DSPIR_TRANSFORM_DST_III:      return "dst_iii";
-        case DSPIR_TRANSFORM_DST_IV:       return "dst_iv";
-        case DSPIR_TRANSFORM_STFT:         return "stft";
-        case DSPIR_TRANSFORM_MDCT:         return "mdct";
-        case DSPIR_TRANSFORM_IMDCT:        return "imdct";
-        case DSPIR_TRANSFORM_HAAR:         return "haar";
-        case DSPIR_TRANSFORM_DAUBECHIES4:  return "daubechies4";
-        case DSPIR_TRANSFORM_CDF97:        return "cdf97";
+        case FAF_TRANSFORM_FFT:          return "fft";
+        case FAF_TRANSFORM_IFFT:         return "ifft";
+        case FAF_TRANSFORM_RFFT:         return "rfft";
+        case FAF_TRANSFORM_IRFFT:        return "irfft";
+        case FAF_TRANSFORM_DCT_I:        return "dct_i";
+        case FAF_TRANSFORM_DCT_II:       return "dct_ii";
+        case FAF_TRANSFORM_DCT_III:      return "dct_iii";
+        case FAF_TRANSFORM_DCT_IV:       return "dct_iv";
+        case FAF_TRANSFORM_DST_I:        return "dst_i";
+        case FAF_TRANSFORM_DST_II:       return "dst_ii";
+        case FAF_TRANSFORM_DST_III:      return "dst_iii";
+        case FAF_TRANSFORM_DST_IV:       return "dst_iv";
+        case FAF_TRANSFORM_STFT:         return "stft";
+        case FAF_TRANSFORM_MDCT:         return "mdct";
+        case FAF_TRANSFORM_IMDCT:        return "imdct";
+        case FAF_TRANSFORM_HAAR:         return "haar";
+        case FAF_TRANSFORM_DAUBECHIES4:  return "daubechies4";
+        case FAF_TRANSFORM_CDF97:        return "cdf97";
         default: return "unknown";
     }
 }
@@ -149,11 +149,11 @@ size_t dsir_next_power_of_2(size_t n) {
     return n + 1;
 }
 
-int dspir_is_power_of_2(size_t n) {
+int faf_is_power_of_2(size_t n) {
     return n && ((n & (n - 1)) == 0);
 }
 
-void dspir_bit_reverse_permute_f32(float *data, size_t n) {
+void faf_bit_reverse_permute_f32(float *data, size_t n) {
     size_t bits = 0;
     size_t temp = n;
     while (temp > 1) {
@@ -176,7 +176,7 @@ void dspir_bit_reverse_permute_f32(float *data, size_t n) {
     }
 }
 
-void dspir_bit_reverse_permute_f64(double *data, size_t n) {
+void faf_bit_reverse_permute_f64(double *data, size_t n) {
     size_t bits = 0;
     size_t temp = n;
     while (temp > 1) {
@@ -199,41 +199,41 @@ void dspir_bit_reverse_permute_f64(double *data, size_t n) {
     }
 }
 
-bool dspir_is_size_supported(dspir_transform_type type, size_t n) {
+bool faf_is_size_supported(faf_transform_type type, size_t n) {
     if (n == 0) return false;
     
     switch (type) {
-        case DSPIR_TRANSFORM_FFT:
-        case DSPIR_TRANSFORM_IFFT:
-        case DSPIR_TRANSFORM_HAAR:
-        case DSPIR_TRANSFORM_DAUBECHIES4:
-            return dspir_is_power_of_2(n);
-        case DSPIR_TRANSFORM_RFFT:
-        case DSPIR_TRANSFORM_IRFFT:
-            return dspir_is_power_of_2(n) && n >= 2;
-        case DSPIR_TRANSFORM_DCT_I:
+        case FAF_TRANSFORM_FFT:
+        case FAF_TRANSFORM_IFFT:
+        case FAF_TRANSFORM_HAAR:
+        case FAF_TRANSFORM_DAUBECHIES4:
+            return faf_is_power_of_2(n);
+        case FAF_TRANSFORM_RFFT:
+        case FAF_TRANSFORM_IRFFT:
+            return faf_is_power_of_2(n) && n >= 2;
+        case FAF_TRANSFORM_DCT_I:
             return n >= 2;
-        case DSPIR_TRANSFORM_DCT_II:
-        case DSPIR_TRANSFORM_DCT_III:
-        case DSPIR_TRANSFORM_DCT_IV:
-        case DSPIR_TRANSFORM_DST_I:
-        case DSPIR_TRANSFORM_DST_II:
-        case DSPIR_TRANSFORM_DST_III:
-        case DSPIR_TRANSFORM_DST_IV:
+        case FAF_TRANSFORM_DCT_II:
+        case FAF_TRANSFORM_DCT_III:
+        case FAF_TRANSFORM_DCT_IV:
+        case FAF_TRANSFORM_DST_I:
+        case FAF_TRANSFORM_DST_II:
+        case FAF_TRANSFORM_DST_III:
+        case FAF_TRANSFORM_DST_IV:
             return n > 0;
-        case DSPIR_TRANSFORM_MDCT:
-        case DSPIR_TRANSFORM_IMDCT:
+        case FAF_TRANSFORM_MDCT:
+        case FAF_TRANSFORM_IMDCT:
             return (n % 2) == 0;
         default:
             return true;
     }
 }
 
-size_t dspir_get_recommended_size(dspir_transform_type type, size_t min_size) {
+size_t faf_get_recommended_size(faf_transform_type type, size_t min_size) {
     size_t n = dsir_next_power_of_2(min_size);
     
     /* For FFT, prefer sizes with small prime factors for Bluestein */
-    if (type == DSPIR_TRANSFORM_FFT || type == DSPIR_TRANSFORM_IFFT) {
+    if (type == FAF_TRANSFORM_FFT || type == FAF_TRANSFORM_IFFT) {
         /* Already power of 2, good for Cooley-Tukey */
         return n;
     }
@@ -242,13 +242,13 @@ size_t dspir_get_recommended_size(dspir_transform_type type, size_t min_size) {
 }
 
 /* Transform creation functions */
-dspir_transform* dspir_create_fft(size_t n, bool inverse, dspir_precision precision, uint32_t flags) {
-    if (!dspir_is_power_of_2(n)) {
+faf_transform* faf_create_fft(size_t n, bool inverse, faf_precision precision, uint32_t flags) {
+    if (!faf_is_power_of_2(n)) {
         set_error("FFT size must be power of 2, got %zu", n);
         return NULL;
     }
     
-    dspir_transform *t = calloc(1, sizeof(dspir_transform));
+    faf_transform *t = calloc(1, sizeof(faf_transform));
     if (!t) {
         set_error("Failed to allocate transform");
         return NULL;
@@ -256,22 +256,22 @@ dspir_transform* dspir_create_fft(size_t n, bool inverse, dspir_precision precis
     
     t->n = n;
     t->precision = precision;
-    t->type = inverse ? DSPIR_TRANSFORM_IFFT : DSPIR_TRANSFORM_FFT;
-    t->flags = flags | (inverse ? DSPIR_FLAG_INVERSE : 0);
+    t->type = inverse ? FAF_TRANSFORM_IFFT : FAF_TRANSFORM_FFT;
+    t->flags = flags | (inverse ? FAF_FLAG_INVERSE : 0);
     
     /* Choose optimal radix based on size */
     if (n <= 16) {
-        dspir_gen_fft_radix2(t, n, inverse);
+        faf_gen_fft_radix2(t, n, inverse);
     } else if ((n & (n - 1)) == 0 && n >= 64) {
-        dspir_gen_fft_radix4(t, n, inverse);
+        faf_gen_fft_radix4(t, n, inverse);
     } else {
-        dspir_gen_fft_mixed(t, n, inverse);
+        faf_gen_fft_mixed(t, n, inverse);
     }
     
     return t;
 }
 
-dspir_transform* dspir_create_dct(size_t n, int type, dspir_precision precision, uint32_t flags) {
+faf_transform* faf_create_dct(size_t n, int type, faf_precision precision, uint32_t flags) {
     if (n == 0) {
         set_error("DCT size must be > 0");
         return NULL;
@@ -281,7 +281,7 @@ dspir_transform* dspir_create_dct(size_t n, int type, dspir_precision precision,
         return NULL;
     }
     
-    dspir_transform *t = calloc(1, sizeof(dspir_transform));
+    faf_transform *t = calloc(1, sizeof(faf_transform));
     if (!t) {
         set_error("Failed to allocate transform");
         return NULL;
@@ -290,31 +290,31 @@ dspir_transform* dspir_create_dct(size_t n, int type, dspir_precision precision,
     t->n = n;
     t->precision = precision;
     switch (type) {
-        case 1: t->type = DSPIR_TRANSFORM_DCT_I; break;
-        case 2: t->type = DSPIR_TRANSFORM_DCT_II; break;
-        case 3: t->type = DSPIR_TRANSFORM_DCT_III; break;
-        case 4: t->type = DSPIR_TRANSFORM_DCT_IV; break;
+        case 1: t->type = FAF_TRANSFORM_DCT_I; break;
+        case 2: t->type = FAF_TRANSFORM_DCT_II; break;
+        case 3: t->type = FAF_TRANSFORM_DCT_III; break;
+        case 4: t->type = FAF_TRANSFORM_DCT_IV; break;
     }
     t->flags = flags;
     
     /* Generate appropriate DCT bytecode */
     switch (type) {
         case 2:
-            dspir_gen_dct_ii(t, n);
+            faf_gen_dct_ii(t, n);
             break;
         case 4:
-            dspir_gen_dct_iv(t, n);
+            faf_gen_dct_iv(t, n);
             break;
         default:
             /* Fall back to general DCT via FFT for other types */
-            dspir_gen_dct_ii(t, n);
+            faf_gen_dct_ii(t, n);
             break;
     }
     
     return t;
 }
 
-dspir_transform* dspir_create_dst(size_t n, int type, dspir_precision precision, uint32_t flags) {
+faf_transform* faf_create_dst(size_t n, int type, faf_precision precision, uint32_t flags) {
     if (n == 0) {
         set_error("DST size must be > 0");
         return NULL;
@@ -324,7 +324,7 @@ dspir_transform* dspir_create_dst(size_t n, int type, dspir_precision precision,
         return NULL;
     }
     
-    dspir_transform *t = calloc(1, sizeof(dspir_transform));
+    faf_transform *t = calloc(1, sizeof(faf_transform));
     if (!t) {
         set_error("Failed to allocate transform");
         return NULL;
@@ -333,25 +333,25 @@ dspir_transform* dspir_create_dst(size_t n, int type, dspir_precision precision,
     t->n = n;
     t->precision = precision;
     switch (type) {
-        case 1: t->type = DSPIR_TRANSFORM_DST_I; break;
-        case 2: t->type = DSPIR_TRANSFORM_DST_II; break;
-        case 3: t->type = DSPIR_TRANSFORM_DST_III; break;
-        case 4: t->type = DSPIR_TRANSFORM_DST_IV; break;
+        case 1: t->type = FAF_TRANSFORM_DST_I; break;
+        case 2: t->type = FAF_TRANSFORM_DST_II; break;
+        case 3: t->type = FAF_TRANSFORM_DST_III; break;
+        case 4: t->type = FAF_TRANSFORM_DST_IV; break;
     }
     t->flags = flags;
     
-    dspir_gen_dst_ii(t, n);
+    faf_gen_dst_ii(t, n);
     
     return t;
 }
 
-dspir_transform* dspir_create_mdct(size_t n, dspir_precision precision, uint32_t flags) {
+faf_transform* faf_create_mdct(size_t n, faf_precision precision, uint32_t flags) {
     if (n % 2 != 0) {
         set_error("MDCT size must be even, got %zu", n);
         return NULL;
     }
     
-    dspir_transform *t = calloc(1, sizeof(dspir_transform));
+    faf_transform *t = calloc(1, sizeof(faf_transform));
     if (!t) {
         set_error("Failed to allocate transform");
         return NULL;
@@ -359,21 +359,21 @@ dspir_transform* dspir_create_mdct(size_t n, dspir_precision precision, uint32_t
     
     t->n = n;
     t->precision = precision;
-    t->type = DSPIR_TRANSFORM_MDCT;
+    t->type = FAF_TRANSFORM_MDCT;
     t->flags = flags;
     
-    dspir_gen_mdct(t, n);
+    faf_gen_mdct(t, n);
     
     return t;
 }
 
-dspir_transform* dspir_create_haar(size_t n, size_t levels, dspir_precision precision, uint32_t flags) {
-    if (!dspir_is_power_of_2(n)) {
+faf_transform* faf_create_haar(size_t n, size_t levels, faf_precision precision, uint32_t flags) {
+    if (!faf_is_power_of_2(n)) {
         set_error("Haar transform size must be power of 2, got %zu", n);
         return NULL;
     }
     
-    dspir_transform *t = calloc(1, sizeof(dspir_transform));
+    faf_transform *t = calloc(1, sizeof(faf_transform));
     if (!t) {
         set_error("Failed to allocate transform");
         return NULL;
@@ -381,21 +381,21 @@ dspir_transform* dspir_create_haar(size_t n, size_t levels, dspir_precision prec
     
     t->n = n;
     t->precision = precision;
-    t->type = DSPIR_TRANSFORM_HAAR;
+    t->type = FAF_TRANSFORM_HAAR;
     t->flags = flags;
     
-    dspir_gen_haar(t, n, levels);
+    faf_gen_haar(t, n, levels);
     
     return t;
 }
 
-dspir_transform* dspir_create_daubechies4(size_t n, size_t levels, dspir_precision precision, uint32_t flags) {
-    if (!dspir_is_power_of_2(n)) {
+faf_transform* faf_create_daubechies4(size_t n, size_t levels, faf_precision precision, uint32_t flags) {
+    if (!faf_is_power_of_2(n)) {
         set_error("Daubechies-4 transform size must be power of 2, got %zu", n);
         return NULL;
     }
     
-    dspir_transform *t = calloc(1, sizeof(dspir_transform));
+    faf_transform *t = calloc(1, sizeof(faf_transform));
     if (!t) {
         set_error("Failed to allocate transform");
         return NULL;
@@ -403,16 +403,16 @@ dspir_transform* dspir_create_daubechies4(size_t n, size_t levels, dspir_precisi
     
     t->n = n;
     t->precision = precision;
-    t->type = DSPIR_TRANSFORM_DAUBECHIES4;
+    t->type = FAF_TRANSFORM_DAUBECHIES4;
     t->flags = flags;
     
-    dspir_gen_daubechies4(t, n, levels);
+    faf_gen_daubechies4(t, n, levels);
     
     return t;
 }
 
-dspir_transform* dspir_create_stft(size_t n_fft, size_t hop_length, size_t win_length,
-                                    dspir_precision precision, uint32_t flags) {
+faf_transform* faf_create_stft(size_t n_fft, size_t hop_length, size_t win_length,
+                                    faf_precision precision, uint32_t flags) {
     if (win_length == 0) win_length = n_fft;
     if (hop_length == 0) hop_length = win_length / 4;
     if (win_length > n_fft) {
@@ -421,20 +421,20 @@ dspir_transform* dspir_create_stft(size_t n_fft, size_t hop_length, size_t win_l
     }
 
     /* Create the underlying FFT transform */
-    dspir_transform *t = dspir_create_fft(n_fft, false, precision, flags);
+    faf_transform *t = faf_create_fft(n_fft, false, precision, flags);
     if (!t) return NULL;
 
-    t->type = DSPIR_TRANSFORM_STFT;
+    t->type = FAF_TRANSFORM_STFT;
     t->hop_length = hop_length;
     t->win_length = win_length;
 
     /* Store Hann window in twiddles[1] */
     float *win = (float*)malloc(n_fft * sizeof(float));
     if (!win) {
-        dspir_destroy_transform(t);
+        faf_destroy_transform(t);
         return NULL;
     }
-    dspir_gen_hann_window_f32(win, win_length);
+    faf_gen_hann_window_f32(win, win_length);
     /* Zero-pad if win_length < n_fft */
     for (size_t i = win_length; i < n_fft; i++) {
         win[i] = 0.0f;
@@ -445,7 +445,7 @@ dspir_transform* dspir_create_stft(size_t n_fft, size_t hop_length, size_t win_l
     return t;
 }
 
-void dspir_destroy_transform(dspir_transform *t) {
+void faf_destroy_transform(faf_transform *t) {
     if (!t) return;
     
     /* Clean up JIT cache if present */
@@ -481,22 +481,22 @@ void dspir_destroy_transform(dspir_transform *t) {
 }
 
 /* Execution dispatch */
-int dspir_execute(const dspir_transform *t, void *restrict out, const void *restrict in) {
+int faf_execute(const faf_transform *t, void *restrict out, const void *restrict in) {
     if (!t || !out || !in) return -1;
 
     /* Auto-select: try cached JIT for FP32 transforms at or above the threshold */
-    if (t->precision == DSPIR_PREC_FP32 && t->n >= DSPIR_JIT_AUTO_THRESHOLD) {
-        int ret = dspir_execute_jit_cached(t, (void*)out, (const void*)in);
+    if (t->precision == FAF_PREC_FP32 && t->n >= FAF_JIT_AUTO_THRESHOLD) {
+        int ret = faf_execute_jit_cached(t, (void*)out, (const void*)in);
         if (ret == 0) return 0;
         /* JIT unavailable or failed — fall back to VM */
     }
 
-    return dspir_execute_vm(t, out, in);
+    return faf_execute_vm(t, out, in);
 }
 
-int dspir_execute_vm(const dspir_transform *t, void *restrict out, const void *restrict in) {
+int faf_execute_vm(const faf_transform *t, void *restrict out, const void *restrict in) {
     /* STFT: apply window to input before FFT */
-    if (t->type == DSPIR_TRANSFORM_STFT && t->twiddles[1] && t->precision == DSPIR_PREC_FP32) {
+    if (t->type == FAF_TRANSFORM_STFT && t->twiddles[1] && t->precision == FAF_PREC_FP32) {
         const float *win = (const float *)t->twiddles[1];
         const float *in_f = (const float *)in;
         float *windowed = (float *)aligned_alloc(64, t->n * 2 * sizeof(float));
@@ -505,16 +505,16 @@ int dspir_execute_vm(const dspir_transform *t, void *restrict out, const void *r
             windowed[i * 2]     = in_f[i * 2]     * win[i];
             windowed[i * 2 + 1] = in_f[i * 2 + 1] * win[i];
         }
-        int ret = dspir_execute_f32(t, out, windowed);
+        int ret = faf_execute_f32(t, out, windowed);
         free(windowed);
         return ret;
     }
 
     switch (t->precision) {
-        case DSPIR_PREC_FP32:
-            return dspir_execute_f32(t, out, in);
-        case DSPIR_PREC_FP64:
-            return dspir_execute_f64(t, out, in);
+        case FAF_PREC_FP32:
+            return faf_execute_f32(t, out, in);
+        case FAF_PREC_FP64:
+            return faf_execute_f64(t, out, in);
         default:
             set_error("Unsupported precision for VM execution");
             return -1;

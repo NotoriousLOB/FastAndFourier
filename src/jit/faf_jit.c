@@ -1,5 +1,5 @@
 /**
- * @file dspir_jit.c
+ * @file faf_jit.c
  * @brief JIT compilation system for FastAndFourier
  * 
  * Compiles IR bytecode to native machine code for maximum performance.
@@ -11,7 +11,7 @@
 #define _GNU_SOURCE
 #endif
 
-#include "dspir.h"
+#include "faf.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -21,25 +21,25 @@
 #include <sys/stat.h>
 
 /* JIT logging control */
-static int dspir_jit_verbose_level = 0;
+static int faf_jit_verbose_level = 0;
 
-void dspir_jit_set_verbose(int level) {
-    dspir_jit_verbose_level = level;
+void faf_jit_set_verbose(int level) {
+    faf_jit_verbose_level = level;
 }
 
-#define JIT_LOG(...) do { if (dspir_jit_verbose_level) fprintf(stderr, __VA_ARGS__); } while(0)
+#define JIT_LOG(...) do { if (faf_jit_verbose_level) fprintf(stderr, __VA_ARGS__); } while(0)
 
 /* Platform-specific dynamic library extension */
 #ifdef __APPLE__
-    #define DSPIR_SO_EXT ".dylib"
+    #define FAF_SO_EXT ".dylib"
 #elif defined(_WIN32)
-    #define DSPIR_SO_EXT ".dll"
+    #define FAF_SO_EXT ".dll"
 #else
-    #define DSPIR_SO_EXT ".so"
+    #define FAF_SO_EXT ".so"
 #endif
 
 /* Cache directory */
-#define DSPIR_CACHE_DIR ".cache/fastandfourier"
+#define FAF_CACHE_DIR ".cache/fastandfourier"
 
 /**
  * @brief Simple hash function for IR bytecode (FNV-1a variant)
@@ -47,7 +47,7 @@ void dspir_jit_set_verbose(int level) {
  * This generates a unique identifier for a transform based on its
  * IR bytecode, size, type, and flags. Used for cache filenames.
  */
-static uint64_t hash_transform(const dspir_transform *t, uint32_t flags) {
+static uint64_t hash_transform(const faf_transform *t, uint32_t flags) {
     const uint64_t FNV_OFFSET = 14695981039346656037ULL;
     const uint64_t FNV_PRIME = 1099511628211ULL;
     
@@ -89,7 +89,7 @@ static int get_cache_dir(char *buf, size_t bufsize) {
     if (!home) home = getenv("USERPROFILE");  /* Windows */
     if (!home) return -1;
     
-    snprintf(buf, bufsize, "%s/%s", home, DSPIR_CACHE_DIR);
+    snprintf(buf, bufsize, "%s/%s", home, FAF_CACHE_DIR);
     return 0;
 }
 
@@ -119,9 +119,9 @@ static void ensure_cache_dir(void) {
 /**
  * @brief JIT compilation context
  */
-struct dspir_jit_ctx {
+struct faf_jit_ctx {
     void *handle;              /**< Dynamic library handle */
-    dspir_kernel_fn fn;        /**< Compiled kernel function */
+    faf_kernel_fn fn;        /**< Compiled kernel function */
     char so_path[256];         /**< Path to compiled shared object */
     char c_path[256];          /**< Path to generated C source */
     int use_native_jit;        /**< Use native code generator instead of compiler */
@@ -140,13 +140,13 @@ struct dspir_jit_ctx {
  * @param flags JIT flags
  * @return 1 if loaded from cache, 0 if not found
  */
-static int try_load_cached_kernel(dspir_jit_ctx *ctx, const dspir_transform *t, uint32_t flags) {
+static int try_load_cached_kernel(faf_jit_ctx *ctx, const faf_transform *t, uint32_t flags) {
     char cache_dir[256];
     if (get_cache_dir(cache_dir, sizeof(cache_dir)) != 0) return 0;
     
     uint64_t hash = hash_transform(t, flags);
     snprintf(ctx->so_path, sizeof(ctx->so_path), 
-             "%s/jit_%016lx%s", cache_dir, hash, DSPIR_SO_EXT);
+             "%s/jit_%016lx%s", cache_dir, hash, FAF_SO_EXT);
     
     /* Check if cached file exists */
     struct stat st;
@@ -156,7 +156,7 @@ static int try_load_cached_kernel(dspir_jit_ctx *ctx, const dspir_transform *t, 
     ctx->handle = dlopen(ctx->so_path, RTLD_NOW | RTLD_LOCAL);
     if (!ctx->handle) return 0;
     
-    ctx->fn = (dspir_kernel_fn)dlsym(ctx->handle, "dspir_jit_kernel");
+    ctx->fn = (faf_kernel_fn)dlsym(ctx->handle, "faf_jit_kernel");
     if (!ctx->fn) {
         dlclose(ctx->handle);
         ctx->handle = NULL;
@@ -175,7 +175,7 @@ static int try_load_cached_kernel(dspir_jit_ctx *ctx, const dspir_transform *t, 
  * @param t Transform that was compiled
  * @param flags JIT flags
  */
-static void save_kernel_to_cache(dspir_jit_ctx *ctx, const dspir_transform *t, uint32_t flags) {
+static void save_kernel_to_cache(faf_jit_ctx *ctx, const faf_transform *t, uint32_t flags) {
     if (ctx->from_cache) return;  /* Already cached */
     if (!ctx->so_path[0]) return;  /* No SO to cache */
     
@@ -187,7 +187,7 @@ static void save_kernel_to_cache(dspir_jit_ctx *ctx, const dspir_transform *t, u
     uint64_t hash = hash_transform(t, flags);
     char cached_so[256];
     snprintf(cached_so, sizeof(cached_so), 
-             "%s/jit_%016lx%s", cache_dir, hash, DSPIR_SO_EXT);
+             "%s/jit_%016lx%s", cache_dir, hash, FAF_SO_EXT);
     
     /* Copy the compiled .so to cache */
     FILE *src = fopen(ctx->so_path, "rb");
@@ -213,8 +213,8 @@ static void save_kernel_to_cache(dspir_jit_ctx *ctx, const dspir_transform *t, u
 /**
  * @brief Create a JIT compilation context
  */
-dspir_jit_ctx* dspir_jit_create(void) {
-    dspir_jit_ctx *ctx = calloc(1, sizeof(dspir_jit_ctx));
+faf_jit_ctx* faf_jit_create(void) {
+    faf_jit_ctx *ctx = calloc(1, sizeof(faf_jit_ctx));
     if (!ctx) return NULL;
     
     ctx->use_native_jit = 0;  /* Default to compiler-based JIT */
@@ -226,7 +226,7 @@ dspir_jit_ctx* dspir_jit_create(void) {
 /**
  * @brief Destroy JIT context and cleanup resources
  */
-void dspir_jit_destroy(dspir_jit_ctx *ctx) {
+void faf_jit_destroy(faf_jit_ctx *ctx) {
     if (!ctx) return;
     
     if (ctx->handle) {
@@ -252,13 +252,13 @@ void dspir_jit_destroy(dspir_jit_ctx *ctx) {
 /**
  * @brief Detect architecture type
  */
-static dspir_arch_type detect_arch(void) {
+static faf_arch_type detect_arch(void) {
 #if defined(__aarch64__)
-    return DSPIR_ARCH_TYPE_AARCH64;
+    return FAF_ARCH_TYPE_AARCH64;
 #elif defined(__x86_64__) || defined(_M_X64)
-    return DSPIR_ARCH_TYPE_X86_64;
+    return FAF_ARCH_TYPE_X86_64;
 #else
-    return DSPIR_ARCH_TYPE_GENERIC;
+    return FAF_ARCH_TYPE_GENERIC;
 #endif
 }
 
@@ -350,7 +350,7 @@ static void emit_neon_split_twiddle_mul_f64(FILE *f, uint8_t base_idx) {
 }
 
 /* Dead code removed: emit_avx512_bfly2, emit_avx512_twiddle_mul, emit_neon_twiddle_mul
- * were never called from dspir_jit_generate_c_ex(). The live path uses split-plane emitters. */
+ * were never called from faf_jit_generate_c_ex(). The live path uses split-plane emitters. */
 
 /**
  * @brief Generate C source code from IR with SIMD and in-place support
@@ -358,16 +358,16 @@ static void emit_neon_split_twiddle_mul_f64(FILE *f, uint8_t base_idx) {
  * This is the compiler-based JIT approach - generates C code
  * and compiles it to a shared library.
  */
-static void dspir_jit_generate_c_ex(dspir_transform *t, 
+static void faf_jit_generate_c_ex(faf_transform *t, 
                                      const char *path,
-                                     dspir_arch_type arch,
+                                     faf_arch_type arch,
                                      uint32_t flags) {
     FILE *f = fopen(path, "w");
     if (!f) return;
     
-    int use_simd = (flags & DSPIR_FLAG_JIT_SIMD) && (arch == DSPIR_ARCH_TYPE_AARCH64);
-    int inplace = flags & DSPIR_FLAG_JIT_INPLACE;
-    int split_plane = flags & DSPIR_FLAG_JIT_SPLIT_PLANE;
+    int use_simd = (flags & FAF_FLAG_JIT_SIMD) && (arch == FAF_ARCH_TYPE_AARCH64);
+    int inplace = flags & FAF_FLAG_JIT_INPLACE;
+    int split_plane = flags & FAF_FLAG_JIT_SPLIT_PLANE;
     
     /* Header */
     fprintf(f, "/* Auto-generated JIT kernel for FastAndFourier */\n");
@@ -383,10 +383,10 @@ static void dspir_jit_generate_c_ex(dspir_transform *t,
     /* Architecture-specific includes */
     if (use_simd) {
         switch (arch) {
-            case DSPIR_ARCH_TYPE_X86_64:
+            case FAF_ARCH_TYPE_X86_64:
                 fprintf(f, "#include <immintrin.h>\n");
                 break;
-            case DSPIR_ARCH_TYPE_AARCH64:
+            case FAF_ARCH_TYPE_AARCH64:
                 fprintf(f, "#include <arm_neon.h>\n");
                 break;
             default:
@@ -398,17 +398,17 @@ static void dspir_jit_generate_c_ex(dspir_transform *t,
     /* Compute maximum register index needed */
     size_t max_reg_idx = 0;
     for (size_t i = 0; i < t->n_inst; i++) {
-        const dspir_inst *inst = &t->code[i];
-        uint8_t op = DSPIR_GET_OP(inst->packed);
-        if (op == DSPIR_NOP || op == DSPIR_END) continue;
+        const faf_inst *inst = &t->code[i];
+        uint8_t op = FAF_GET_OP(inst->packed);
+        if (op == FAF_NOP || op == FAF_END) continue;
         /* FFT_STAGE/DCT_STAGE/DST_STAGE: a0=group_size, a1=stride, a2=tw_step
          * None are register indices; the loop accesses regs 0..t->n-1 */
-        if (op == DSPIR_FFT_STAGE || op == DSPIR_DCT_STAGE || op == DSPIR_DST_STAGE) {
+        if (op == FAF_FFT_STAGE || op == FAF_DCT_STAGE || op == FAF_DST_STAGE) {
             if (t->n > 0 && t->n - 1 > max_reg_idx) max_reg_idx = t->n - 1;
             continue;
         }
         if (inst->a0 > max_reg_idx) max_reg_idx = inst->a0;
-        if (op != DSPIR_LOAD_CONST) {
+        if (op != FAF_LOAD_CONST) {
             if (inst->a1 > max_reg_idx) max_reg_idx = inst->a1;
         }
     }
@@ -416,7 +416,7 @@ static void dspir_jit_generate_c_ex(dspir_transform *t,
     
     /* Kernel function signature - always interleaved I/O for API compatibility */
     fprintf(f, "__attribute__((visibility(\"default\"), flatten, hot, aligned(64)))\n");
-    fprintf(f, "void dspir_jit_kernel(void *restrict out,\n");
+    fprintf(f, "void faf_jit_kernel(void *restrict out,\n");
     fprintf(f, "                      const void *restrict in,\n");
     fprintf(f, "                      size_t n,\n");
     fprintf(f, "                      const void *restrict twiddles) {\n");
@@ -452,7 +452,7 @@ static void dspir_jit_generate_c_ex(dspir_transform *t,
     /* Detect leading LOAD run */
     {
         size_t run = 0;
-        while (run < t->n_inst && DSPIR_GET_OP(t->code[run].packed) == DSPIR_LOAD) {
+        while (run < t->n_inst && FAF_GET_OP(t->code[run].packed) == FAF_LOAD) {
             if (t->code[run].a0 != run) load_is_bitrev = 0;
             run++;
         }
@@ -470,9 +470,9 @@ static void dspir_jit_generate_c_ex(dspir_transform *t,
     if (t->n_inst > 0) {
         size_t end = t->n_inst;
         /* Find END instruction */
-        if (DSPIR_GET_OP(t->code[end - 1].packed) == DSPIR_END) end--;
+        if (FAF_GET_OP(t->code[end - 1].packed) == FAF_END) end--;
         size_t run_start = end;
-        while (run_start > 0 && DSPIR_GET_OP(t->code[run_start - 1].packed) == DSPIR_STORE)
+        while (run_start > 0 && FAF_GET_OP(t->code[run_start - 1].packed) == FAF_STORE)
             run_start--;
         if (end - run_start >= 2) {
             /* Verify sequential pattern: a0=i, a1=i for i=0..N-1 */
@@ -493,8 +493,8 @@ static void dspir_jit_generate_c_ex(dspir_transform *t,
 
     /* Generate code for each instruction */
     for (size_t i = 0; i < t->n_inst; i++) {
-        const dspir_inst *inst = &t->code[i];
-        uint8_t op = DSPIR_GET_OP(inst->packed);
+        const faf_inst *inst = &t->code[i];
+        uint8_t op = FAF_GET_OP(inst->packed);
 
         /* Emit looped LOAD for bit-reversal pattern */
         if (i == 0 && load_run_end > 0 && load_is_bitrev) {
@@ -524,34 +524,34 @@ static void dspir_jit_generate_c_ex(dspir_transform *t,
         fprintf(f, "    /* Inst %zu: opcode %d */\n", i, op);
 
         switch (op) {
-            case DSPIR_NOP:
+            case FAF_NOP:
                 fprintf(f, "    /* NOP */\n");
                 break;
 
-            case DSPIR_LOAD:
+            case FAF_LOAD:
                 /* Deinterleave on load: regs[inst->a0] = in[inst->a1] */
                 fprintf(f, "    regs_re[%u] = in_f[%u];\n", inst->a0, inst->a1 * 2);
                 fprintf(f, "    regs_im[%u] = in_f[%u];\n", inst->a0, inst->a1 * 2 + 1);
                 break;
 
-            case DSPIR_STORE:
+            case FAF_STORE:
                 /* Reinterleave on store: out[inst->a0] = regs[inst->a1] */
                 fprintf(f, "    out_f[%u] = regs_re[%u];\n", inst->a0 * 2, inst->a1);
                 fprintf(f, "    out_f[%u] = regs_im[%u];\n", inst->a0 * 2 + 1, inst->a1);
                 break;
                 
-            case DSPIR_LOAD_CONST: {
+            case FAF_LOAD_CONST: {
                 union { uint32_t u; float f; } c = { .u = inst->a1 };
                 fprintf(f, "    regs_re[%u] = %.9ef;\n", inst->a0, c.f);
                 break;
             }
                 
-            case DSPIR_BFLY2:
+            case FAF_BFLY2:
                 /* Always use split-plane butterfly */
                 emit_split_bfly2(f, inst->a0, inst->a1);
                 break;
                 
-            case DSPIR_BFLY4:
+            case FAF_BFLY4:
                 fprintf(f, "    {\n");
                 fprintf(f, "        float r0r = regs_re[%u], r0i = regs_im[%u];\n", inst->a0, inst->a0);
                 fprintf(f, "        float r1r = regs_re[%u], r1i = regs_im[%u];\n", inst->a0 + 1, inst->a0 + 1);
@@ -568,7 +568,7 @@ static void dspir_jit_generate_c_ex(dspir_transform *t,
                 fprintf(f, "    }\n");
                 break;
                 
-            case DSPIR_TWIDDLE_MUL:
+            case FAF_TWIDDLE_MUL:
                 /* Always use split-plane twiddle multiply */
                 fprintf(f, "    {\n");
                 fprintf(f, "        float r = regs_re[%u], i = regs_im[%u];\n", inst->a0, inst->a0);
@@ -578,7 +578,7 @@ static void dspir_jit_generate_c_ex(dspir_transform *t,
                 fprintf(f, "    }\n");
                 break;
                 
-            case DSPIR_FMA:
+            case FAF_FMA:
                 if (inplace) {
                     fprintf(f, "    data[%u] = data[%u] * data[%u] + data[%u];\n",
                             inst->a0, inst->a0, inst->a1, inst->a2);
@@ -588,7 +588,7 @@ static void dspir_jit_generate_c_ex(dspir_transform *t,
                 }
                 break;
                 
-            case DSPIR_FFT_STAGE:
+            case FAF_FFT_STAGE:
                 /* Split-plane complex FFT stage with looped emission
                  * a0 = group_size (radix), a1 = stride, a2 = twiddle_step
                  * Pairs elements at (base+r) and (base+r+half), with
@@ -618,7 +618,7 @@ static void dspir_jit_generate_c_ex(dspir_transform *t,
                 fprintf(f, "    }\n");
                 break;
                 
-            case DSPIR_LIFT_PRED:
+            case FAF_LIFT_PRED:
                 if (inplace) {
                     fprintf(f, "    {\n");
                     fprintf(f, "        union { uint32_t u; float f; } c = { .u = %u };\n", 
@@ -634,7 +634,7 @@ static void dspir_jit_generate_c_ex(dspir_transform *t,
                 }
                 break;
                 
-            case DSPIR_LIFT_UPD:
+            case FAF_LIFT_UPD:
                 if (inplace) {
                     fprintf(f, "    {\n");
                     fprintf(f, "        union { uint32_t u; float f; } c = { .u = %u };\n",
@@ -650,7 +650,7 @@ static void dspir_jit_generate_c_ex(dspir_transform *t,
                 }
                 break;
                 
-            case DSPIR_DOWN2:
+            case FAF_DOWN2:
                 if (inplace) {
                     fprintf(f, "    for (size_t j = 0; j < %zu/2; j++) {\n", t->n);
                     fprintf(f, "        data[j] = data[j*2 + %u];\n", inst->a0);
@@ -662,7 +662,7 @@ static void dspir_jit_generate_c_ex(dspir_transform *t,
                 }
                 break;
                 
-            case DSPIR_POLY_FIR:
+            case FAF_POLY_FIR:
                 fprintf(f, "    {\n");
                 fprintf(f, "        size_t taps = %u;\n", inst->a0);
                 fprintf(f, "        size_t stride = %u;\n", inst->a1);
@@ -676,7 +676,7 @@ static void dspir_jit_generate_c_ex(dspir_transform *t,
                 fprintf(f, "    }\n");
                 break;
                 
-            case DSPIR_END:
+            case FAF_END:
                 fprintf(f, "    goto cleanup;\n");
                 break;
                 
@@ -698,35 +698,35 @@ static void dspir_jit_generate_c_ex(dspir_transform *t,
 }
 
 /* Backward compatibility wrapper */
-static void dspir_jit_generate_c(dspir_transform *t, 
+static void faf_jit_generate_c(faf_transform *t, 
                                   const char *path,
-                                  dspir_arch_type arch) {
-    dspir_jit_generate_c_ex(t, path, arch, 0);
+                                  faf_arch_type arch) {
+    faf_jit_generate_c_ex(t, path, arch, 0);
 }
 
 /**
  * @brief Compile generated C code to shared library
  */
-static int dspir_jit_compile_c(dspir_jit_ctx *ctx, const char *c_path, 
-                                const char *so_path, dspir_arch_type arch,
+static int faf_jit_compile_c(faf_jit_ctx *ctx, const char *c_path, 
+                                const char *so_path, faf_arch_type arch,
                                 uint32_t flags) {
     char cmd[2048];
     
     /* Determine compiler flags based on architecture */
     const char *arch_flags = "";
     switch (arch) {
-        case DSPIR_ARCH_TYPE_X86_64:
-            #if defined(DSPIR_HAVE_AVX512)
+        case FAF_ARCH_TYPE_X86_64:
+            #if defined(FAF_HAVE_AVX512)
                 arch_flags = "-march=native -mavx512f -mavx512dq";
-            #elif defined(DSPIR_HAVE_AVX2)
+            #elif defined(FAF_HAVE_AVX2)
                 arch_flags = "-march=native -mavx2 -mfma";
             #else
                 arch_flags = "-march=native";
             #endif
             break;
-        case DSPIR_ARCH_TYPE_AARCH64:
+        case FAF_ARCH_TYPE_AARCH64:
             /* AArch64 has NEON enabled by default, but enable full ISA */
-            if (flags & DSPIR_FLAG_JIT_SIMD) {
+            if (flags & FAF_FLAG_JIT_SIMD) {
                 arch_flags = "-march=armv8.2-a+fp16+simd+crypto -mtune=cortex-a78";
             } else {
                 arch_flags = "-march=native";
@@ -747,7 +747,7 @@ static int dspir_jit_compile_c(dspir_jit_ctx *ctx, const char *c_path,
              "-fvisibility=hidden "
              "-o %s %s",
              arch_flags,
-             (flags & DSPIR_FLAG_JIT_SIMD) ? "-DSPIR_SIMD" : "",
+             (flags & FAF_FLAG_JIT_SIMD) ? "-FAF_SIMD" : "",
              so_path, c_path);
     
     int ret = system(cmd);
@@ -761,7 +761,7 @@ static int dspir_jit_compile_c(dspir_jit_ctx *ctx, const char *c_path,
 /**
  * @brief Compile a transform to native code with flags
  */
-int dspir_jit_compile_ex(dspir_jit_ctx *ctx, dspir_transform *t, uint32_t flags) {
+int faf_jit_compile_ex(faf_jit_ctx *ctx, faf_transform *t, uint32_t flags) {
     if (!ctx || !t) return -1;
     
     ctx->from_cache = 0;
@@ -776,16 +776,16 @@ int dspir_jit_compile_ex(dspir_jit_ctx *ctx, dspir_transform *t, uint32_t flags)
     ctx->flags = flags;
     
     /* Detect architecture */
-    dspir_arch_type arch = detect_arch();
+    faf_arch_type arch = detect_arch();
     
     /* Generate unique temp file names (thread-safe) */
     static _Atomic int counter = 0;
     int id = atomic_fetch_add(&counter, 1);
-    snprintf(ctx->c_path, sizeof(ctx->c_path), "/tmp/dspir_jit_%d_%d.c", getpid(), id);
-    snprintf(ctx->so_path, sizeof(ctx->so_path), "/tmp/dspir_jit_%d_%d%s", getpid(), id, DSPIR_SO_EXT);
+    snprintf(ctx->c_path, sizeof(ctx->c_path), "/tmp/faf_jit_%d_%d.c", getpid(), id);
+    snprintf(ctx->so_path, sizeof(ctx->so_path), "/tmp/faf_jit_%d_%d%s", getpid(), id, FAF_SO_EXT);
     
     /* Generate C source */
-    dspir_jit_generate_c_ex(t, ctx->c_path, arch, flags);
+    faf_jit_generate_c_ex(t, ctx->c_path, arch, flags);
     
     /* Get file size for debugging */
     struct stat st;
@@ -795,7 +795,7 @@ int dspir_jit_compile_ex(dspir_jit_ctx *ctx, dspir_transform *t, uint32_t flags)
     
     /* Compile to shared library */
     JIT_LOG("[JIT] Compiling (this may take a moment)...\n");
-    if (dspir_jit_compile_c(ctx, ctx->c_path, ctx->so_path, arch, flags) != 0) {
+    if (faf_jit_compile_c(ctx, ctx->c_path, ctx->so_path, arch, flags) != 0) {
         fprintf(stderr, "[JIT] Compilation failed\n");
         return -1;
     }
@@ -809,7 +809,7 @@ int dspir_jit_compile_ex(dspir_jit_ctx *ctx, dspir_transform *t, uint32_t flags)
     }
     
     /* Get the kernel function */
-    ctx->fn = (dspir_kernel_fn)dlsym(ctx->handle, "dspir_jit_kernel");
+    ctx->fn = (faf_kernel_fn)dlsym(ctx->handle, "faf_jit_kernel");
     if (!ctx->fn) {
         fprintf(stderr, "[JIT] Failed to find kernel: %s\n", dlerror());
         dlclose(ctx->handle);
@@ -830,11 +830,11 @@ int dspir_jit_compile_ex(dspir_jit_ctx *ctx, dspir_transform *t, uint32_t flags)
  * INPLACE should be explicitly requested when the caller knows input == output.
  */
 static uint32_t get_default_jit_flags(void) {
-    uint32_t flags = DSPIR_FLAG_JIT_SPLIT_PLANE;  /* Split-plane by default */
+    uint32_t flags = FAF_FLAG_JIT_SPLIT_PLANE;  /* Split-plane by default */
 #if defined(__aarch64__) || defined(_M_ARM64)
-    flags |= DSPIR_FLAG_JIT_SIMD;  /* Enable NEON on ARM64 */
+    flags |= FAF_FLAG_JIT_SIMD;  /* Enable NEON on ARM64 */
 #elif defined(__x86_64__) || defined(_M_X64)
-    flags |= DSPIR_FLAG_JIT_SIMD;  /* Enable SIMD on x86_64 */
+    flags |= FAF_FLAG_JIT_SIMD;  /* Enable SIMD on x86_64 */
 #endif
     return flags;
 }
@@ -842,14 +842,14 @@ static uint32_t get_default_jit_flags(void) {
 /**
  * @brief Compile a transform to native code (backward compatible)
  */
-int dspir_jit_compile(dspir_jit_ctx *ctx, dspir_transform *t) {
-    return dspir_jit_compile_ex(ctx, t, get_default_jit_flags());
+int faf_jit_compile(faf_jit_ctx *ctx, faf_transform *t) {
+    return faf_jit_compile_ex(ctx, t, get_default_jit_flags());
 }
 
 /**
  * @brief Get the compiled kernel function
  */
-dspir_kernel_fn dspir_jit_get_kernel(dspir_jit_ctx *ctx) {
+faf_kernel_fn faf_jit_get_kernel(faf_jit_ctx *ctx) {
     if (!ctx) return NULL;
     return ctx->fn;
 }
@@ -864,43 +864,43 @@ dspir_kernel_fn dspir_jit_get_kernel(dspir_jit_ctx *ctx) {
  * A compare-and-swap guards the cache write so concurrent first calls are
  * safe: at most one extra compilation is wasted and no handles are leaked.
  */
-int dspir_execute_jit_cached(const dspir_transform *t, void *out, const void *in) {
+int faf_execute_jit_cached(const faf_transform *t, void *out, const void *in) {
     if (!t || !out || !in) return -1;
 
     /* Fast path: kernel already compiled and pinned */
     if (t->jit_cache && t->jit_cache->kernel_fn) {
-        ((dspir_kernel_fn)t->jit_cache->kernel_fn)(out, in, t->n, t->twiddles[0]);
+        ((faf_kernel_fn)t->jit_cache->kernel_fn)(out, in, t->n, t->twiddles[0]);
         return 0;
     }
 
     /* Slow path: compile (uses disk cache if available) */
-    dspir_jit_ctx *ctx = dspir_jit_create();
+    faf_jit_ctx *ctx = faf_jit_create();
     if (!ctx) return -1;
 
     uint32_t flags = get_default_jit_flags();
-    if (dspir_jit_compile_ex(ctx, (dspir_transform *)t, flags) != 0) {
-        dspir_jit_destroy(ctx);
+    if (faf_jit_compile_ex(ctx, (faf_transform *)t, flags) != 0) {
+        faf_jit_destroy(ctx);
         return -1;
     }
 
-    dspir_kernel_fn fn = ctx->fn;
+    faf_kernel_fn fn = ctx->fn;
     if (!fn) {
-        dspir_jit_destroy(ctx);
+        faf_jit_destroy(ctx);
         return -1;
     }
 
     /* Build cache entry and pin it to the transform */
-    dspir_jit_cache *cache = (dspir_jit_cache *)calloc(1, sizeof(dspir_jit_cache));
+    faf_jit_cache *cache = (faf_jit_cache *)calloc(1, sizeof(faf_jit_cache));
     if (cache) {
         cache->handle    = ctx->handle;
         cache->kernel_fn = (void *)fn;
-        /* Steal the handle so dspir_jit_destroy doesn't dlclose it */
+        /* Steal the handle so faf_jit_destroy doesn't dlclose it */
         ctx->handle = NULL;
 
         /* CAS: if another thread compiled concurrently, discard ours cleanly */
-        dspir_jit_cache *expected = NULL;
+        faf_jit_cache *expected = NULL;
         if (!__sync_bool_compare_and_swap(
-                &((dspir_transform *)t)->jit_cache, expected, cache)) {
+                &((faf_transform *)t)->jit_cache, expected, cache)) {
             /* Lost the race — return the handle to ctx so destroy frees it */
             ctx->handle = cache->handle;
             free(cache);
@@ -908,14 +908,14 @@ int dspir_execute_jit_cached(const dspir_transform *t, void *out, const void *in
     }
 
     fn(out, in, t->n, t->twiddles[0]);
-    dspir_jit_destroy(ctx);  /* Cleans up temp files; handle already stolen (or returned) */
+    faf_jit_destroy(ctx);  /* Cleans up temp files; handle already stolen (or returned) */
     return 0;
 }
 
 /**
  * @brief Execute transform using JIT compilation with flags
  */
-int dspir_execute_jit_ex(const dspir_transform *t, void *out, const void *in, uint32_t flags) {
+int faf_execute_jit_ex(const faf_transform *t, void *out, const void *in, uint32_t flags) {
     if (!t || !out || !in) return -1;
     
     /* Use default flags if none specified */
@@ -924,36 +924,36 @@ int dspir_execute_jit_ex(const dspir_transform *t, void *out, const void *in, ui
     }
     
     /* Compile with flags */
-    dspir_jit_ctx *ctx = dspir_jit_create();
+    faf_jit_ctx *ctx = faf_jit_create();
     if (!ctx) return -1;
     
-    if (dspir_jit_compile_ex(ctx, t, flags) != 0) {
-        dspir_jit_destroy(ctx);
+    if (faf_jit_compile_ex(ctx, t, flags) != 0) {
+        faf_jit_destroy(ctx);
         return -1;
     }
     
     /* Get library handle */
     void *handle = ctx->handle;
     if (!handle) {
-        dspir_jit_destroy(ctx);
+        faf_jit_destroy(ctx);
         return -1;
     }
     
     /* Get and execute the kernel - kernel handles deinterleave/reinterleave internally */
-    dspir_kernel_fn fn = dspir_jit_get_kernel(ctx);
+    faf_kernel_fn fn = faf_jit_get_kernel(ctx);
     if (!fn) {
-        dspir_jit_destroy(ctx);
+        faf_jit_destroy(ctx);
         return -1;
     }
     fn(out, in, t->n, t->twiddles[0]);
     
-    dspir_jit_destroy(ctx);
+    faf_jit_destroy(ctx);
     return 0;
 }
 
 /**
  * @brief Execute transform using JIT compilation
  */
-int dspir_execute_jit(const dspir_transform *t, void *out, const void *in) {
-    return dspir_execute_jit_ex(t, out, in, 0);
+int faf_execute_jit(const faf_transform *t, void *out, const void *in) {
+    return faf_execute_jit_ex(t, out, in, 0);
 }

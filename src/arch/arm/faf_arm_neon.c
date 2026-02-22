@@ -1,13 +1,13 @@
 /**
- * @file dspir_arm_neon.c
+ * @file faf_arm_neon.c
  * @brief ARM NEON vectorized kernels for AArch64
  * 
  * NEON provides 128-bit registers (4 floats) on AArch64
  */
 
-#include "dspir.h"
+#include "faf.h"
 
-#ifdef DSPIR_ARCH_AARCH64
+#ifdef FAF_ARCH_AARCH64
 
 #include <arm_neon.h>
 #include <string.h>
@@ -65,7 +65,7 @@ static inline void neon_bfly2(float32x4_t *a_re, float32x4_t *a_im,
 /**
  * @brief NEON-optimized FFT execution
  */
-void dspir_arm_neon_execute_f32(const dspir_transform *t,
+void faf_arm_neon_execute_f32(const faf_transform *t,
                                  float *restrict out,
                                  const float *restrict in) {
     const size_t n = t->n;
@@ -172,7 +172,7 @@ void dspir_arm_neon_execute_f32(const dspir_transform *t,
 /**
  * @brief NEON-optimized DCT-II
  */
-void dspir_arm_neon_dct_ii_f32(const dspir_transform *t,
+void faf_arm_neon_dct_ii_f32(const faf_transform *t,
                                 float *restrict out,
                                 const float *restrict in) {
     const size_t n = t->n;
@@ -219,7 +219,7 @@ void dspir_arm_neon_dct_ii_f32(const dspir_transform *t,
 /**
  * @brief NEON-optimized Haar wavelet
  */
-void dspir_arm_neon_haar_f32(const dspir_transform *t,
+void faf_arm_neon_haar_f32(const faf_transform *t,
                               float *restrict out,
                               const float *restrict in) {
     const size_t n = t->n;
@@ -277,7 +277,7 @@ void dspir_arm_neon_haar_f32(const dspir_transform *t,
 /**
  * @brief NEON-optimized polyphase FIR
  */
-void dspir_arm_neon_polyfir_f32(const dspir_transform *t,
+void faf_arm_neon_polyfir_f32(const faf_transform *t,
                                  float *restrict out,
                                  const float *restrict in) {
     const size_t nch = 8;
@@ -316,4 +316,4 @@ void dspir_arm_neon_polyfir_f32(const dspir_transform *t,
     }
 }
 
-#endif /* DSPIR_ARCH_AARCH64 */
+#endif /* FAF_ARCH_AARCH64 */

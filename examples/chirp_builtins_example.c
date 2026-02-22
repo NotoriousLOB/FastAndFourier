@@ -39,7 +39,7 @@ int main(void) {
     printf("╚════════════════════════════════════════════════════════════════╝\n");
     
     /* Initialize */
-    dspir_init();
+    faf_init();
     
     /* Register ALL standard builtins (trig, distributions, etc.) */
     print_section("REGISTERING STANDARD BUILTINS");
@@ -59,10 +59,10 @@ int main(void) {
     print_section("EXAMPLE 1: TRIGONOMETRIC PIPELINE");
     printf("Program: (pipeline (fft :size 512) twiddle)\n\n");
     
-    dspir_transform *t1 = chirp_compile("(pipeline (fft :size 512) twiddle)");
+    faf_transform *t1 = chirp_compile("(pipeline (fft :size 512) twiddle)");
     if (t1) {
         printf("Generated %zu instructions\n", t1->n_inst);
-        dspir_destroy_transform(t1);
+        faf_destroy_transform(t1);
     }
     
     /* Example 2: Distribution-based filtering */
@@ -81,10 +81,10 @@ int main(void) {
         "  (custom sigmoid) "
         "  reduce-sum)";
     
-    dspir_transform *t2 = chirp_compile(dist_program);
+    faf_transform *t2 = chirp_compile(dist_program);
     if (t2) {
         printf("✓ Compiled successfully with %zu instructions\n", t2->n_inst);
-        dspir_destroy_transform(t2);
+        faf_destroy_transform(t2);
     }
     
     /* Example 3: Multi-stage butterfly with reductions */
@@ -95,12 +95,12 @@ int main(void) {
     printf("    reduce-max\n");
     printf("    (custom relu))\n\n");
     
-    dspir_transform *t3 = chirp_compile(
+    faf_transform *t3 = chirp_compile(
         "(pipeline (bfly 2) (bfly 4) (bfly 8) reduce-max (custom relu))"
     );
     if (t3) {
         printf("✓ Butterfly cascade compiled: %zu instructions\n", t3->n_inst);
-        dspir_destroy_transform(t3);
+        faf_destroy_transform(t3);
     }
     
     /* Example 4: Activation function pipeline */
@@ -109,12 +109,12 @@ int main(void) {
     printf("New first-class syntax: (pipeline sigmoid gelu reduce-sum)\n");
     printf("Old syntax also works: (pipeline (custom sigmoid) (custom gelu))\n\n");
     
-    dspir_transform *t4 = chirp_compile(
+    faf_transform *t4 = chirp_compile(
         "(pipeline sigmoid gelu reduce-sum)"
     );
     if (t4) {
         printf("✓ Neural pipeline compiled: %zu instructions\n", t4->n_inst);
-        dspir_destroy_transform(t4);
+        faf_destroy_transform(t4);
     }
     
     /* Example 5: Window function generation */
@@ -220,10 +220,10 @@ int main(void) {
         "  relu "
         "  reduce-max)";
     
-    dspir_transform *t10 = chirp_compile(complex_pipeline);
+    faf_transform *t10 = chirp_compile(complex_pipeline);
     if (t10) {
         printf("✓ Complex pipeline: %zu instructions\n", t10->n_inst);
-        dspir_destroy_transform(t10);
+        faf_destroy_transform(t10);
     }
     
     /* Summary */
@@ -242,6 +242,6 @@ int main(void) {
     printf("║  \"With great functions comes great DSP capability\" - Uncle Ben ║\n");
     printf("╚════════════════════════════════════════════════════════════════╝\n");
     
-    dspir_cleanup();
+    faf_cleanup();
     return 0;
 }

@@ -26,7 +26,7 @@ Chirp is a Scheme-like domain-specific language (DSL) with Smalltalk-style keywo
 chirp_register_standard_builtins();
 
 // Compile a Chirp program
-dspir_transform *t = chirp_compile(
+faf_transform *t = chirp_compile(
     "(pipeline "
     "  (fft :size 1024) "
     "  hann_window "
@@ -35,8 +35,8 @@ dspir_transform *t = chirp_compile(
 );
 
 // Execute
-dspir_execute_jit(t, output, input);
-dspir_destroy_transform(t);
+faf_execute_jit(t, output, input);
+faf_destroy_transform(t);
 ```
 
 ---
@@ -445,10 +445,10 @@ void chirp_cleanup(void);
 
 ```c
 // Compile Chirp source to transform
-dspir_transform *chirp_compile(const char *source);
+faf_transform *chirp_compile(const char *source);
 ```
 
-Returns `NULL` on parse error. The returned transform can be executed with `dspir_execute_jit()`.
+Returns `NULL` on parse error. The returned transform can be executed with `faf_execute_jit()`.
 
 ### Builtin Function Signatures
 
@@ -517,9 +517,9 @@ chirp_register("my_update", (void*)my_update);
 The precision of generated IR is determined by the transform's `precision` field:
 
 ```c
-dspir_transform *t = chirp_compile("(fft :size 1024)");
-t->precision = DSPIR_PREC_FP32;  // Use f32 variants
-t->precision = DSPIR_PREC_FP64;  // Use f64 variants
+faf_transform *t = chirp_compile("(fft :size 1024)");
+t->precision = FAF_PREC_FP32;  // Use f32 variants
+t->precision = FAF_PREC_FP64;  // Use f64 variants
 ```
 
 ### Error Handling
@@ -527,7 +527,7 @@ t->precision = DSPIR_PREC_FP64;  // Use f64 variants
 `chirp_compile()` returns `NULL` on parse errors. Check stderr for messages:
 
 ```c
-dspir_transform *t = chirp_compile(bad_source);
+faf_transform *t = chirp_compile(bad_source);
 if (!t) {
     fprintf(stderr, "Compilation failed\n");
     // Error message already printed by Chirp
@@ -539,9 +539,9 @@ if (!t) {
 Transforms created by `chirp_compile()` must be freed:
 
 ```c
-dspir_transform *t = chirp_compile(source);
+faf_transform *t = chirp_compile(source);
 // ... use t ...
-dspir_destroy_transform(t);
+faf_destroy_transform(t);
 ```
 
 Builtin registration persists for the lifetime of the program.
@@ -562,12 +562,12 @@ Chirp compiles to FastAndFourier IR opcodes:
 
 | Chirp Form | IR Opcode |
 |------------|-----------|
-| `(fft :size N)` | `DSPIR_FFT_STAGE` |
-| `(bfly N)` | `DSPIR_BFLY2/4/8` |
-| `twiddle` | `DSPIR_TWIDDLE_MUL` |
-| `(lift ...)` | `DSPIR_LIFT_PRED/UPD` |
-| `function` | `DSPIR_CALL_BUILTIN` |
-| `reduce-*` | `DSPIR_REDUCE_*` |
+| `(fft :size N)` | `FAF_FFT_STAGE` |
+| `(bfly N)` | `FAF_BFLY2/4/8` |
+| `twiddle` | `FAF_TWIDDLE_MUL` |
+| `(lift ...)` | `FAF_LIFT_PRED/UPD` |
+| `function` | `FAF_CALL_BUILTIN` |
+| `reduce-*` | `FAF_REDUCE_*` |
 
 ### Performance
 
