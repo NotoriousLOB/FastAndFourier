@@ -284,7 +284,7 @@ FAF VM and FAF JIT are measured separately. `faf_execute_f32` dispatches automat
 - FAF JIT overtakes KissFFT at N=64 (**3.27 vs 2.92 M/s**, +12%) as the AVX2 butterfly path engages; it stays ahead through N=16384
 - FAF JIT benchmark suite does not cover N=65536; the N=65536 FAF/Real result was discarded (benchmark defect — returns immediately without computing)
 - FFTW3 Measure is fastest overall; at N=64 it is **6.9× faster** than JIT and **7.7× faster** than KissFFT
-- NotoriousFFT excluded — amalgamated header has type-mismatch and forward macro reference bugs on AVX2 x86
+- NotoriousFFT now included (double precision) — bugs fixed in latest version
 
 ---
 
@@ -326,5 +326,4 @@ MIT License — see [LICENSE](LICENSE) file.
 - FFT algorithms based on Cooley-Tukey
 - Wavelet transforms using lifting scheme
 - JIT approach inspired by GNU Lightning and LLVM ORC
-- Benchmark comparisons use [Kiss FFT](https://github.com/mborgerding/kissfft), [Notorious FFT](https://github.com/NotoriousLOB/Notorious-FFT), and [FFTW3](http://www.fftw.org/)
-- Benchmark comparisons use Kiss FFT, PocketFFT, and minFFT
+- Benchmark comparisons use [Kiss FFT](https://github.com/mborgerding/kissfft), [Notorious FFT](https://github.com/NotoriousLOB/Notorious-FFT), [FFTW3](http://www.fftw.org/), PocketFFT, and minFFT

@@ -42,11 +42,10 @@ extern "C" {
 // #include <fft.h>
 // }
 
-// Notorious FFT — disabled: header has two unfixable bugs:
-//   1. Single-precision AVX2 path uses _mm256_storeu_pd on float* (type mismatch)
-//   2. Double-precision path uses macros before they are #defined (forward reference)
-// #define NOTORIOUS_FFT_IMPLEMENTATION
-// #include <notorious_fft.h>
+// Notorious FFT — enabled (bugs fixed in latest version)
+// Uses double precision (default)
+#define NOTORIOUS_FFT_IMPLEMENTATION
+#include <notorious_fft.h>
 
 // FFTW3 (optional)
 #ifdef HAS_FFTW3
@@ -247,8 +246,43 @@ BENCHMARK(BM_FFTW3_Measure)
 
 #endif // HAS_FFTW3
 
-/* ============ Notorious FFT Benchmarks — DISABLED ============ */
-// NotoriousFFT header has unfixable compilation bugs; benchmarks omitted.
+/* ============ Notorious FFT Benchmarks ============ */
+
+static void BM_NotoriousFFT_Real(benchmark::State& state) {
+    const size_t n = state.range(0);
+    
+    // NotoriousFFT uses a plan-based API (double precision)
+    notorious_fft_plan* plan = notorious_fft_create_plan(n, 0);
+    if (!plan) {
+        state.SkipWithError("Failed to create NotoriousFFT plan");
+        return;
+    }
+    
+    double* in = (double*)aligned_alloc(64, 2 * n * sizeof(double));
+    double* out = (double*)aligned_alloc(64, 2 * n * sizeof(double));
+    
+    // Initialize complex input (interleaved real/imag)
+    for (size_t i = 0; i < n; i++) {
+        in[2*i] = sin(2.0 * M_PI * (double)i / (double)n);
+        in[2*i+1] = 0.0;
+    }
+    
+    for (auto _ : state) {
+        notorious_fft_execute_cx(plan, in, out, 0);
+        benchmark::DoNotOptimize(out);
+    }
+    
+    state.SetItemsProcessed(state.iterations() * n);
+    state.SetBytesProcessed(state.iterations() * n * sizeof(double) * 2 * 2);
+    
+    free(in); free(out);
+    notorious_fft_destroy_plan(plan);
+}
+BENCHMARK(BM_NotoriousFFT_Real)
+    ->RangeMultiplier(4)
+    ->Range(16, 65536)
+    ->Unit(benchmark::kMicrosecond)
+    ->Name("NotoriousFFT/FFT_Real");
 
 /* ============ Latency Comparison (Small Sizes) ============ */
 
@@ -303,7 +337,31 @@ BENCHMARK(BM_Latency_KissFFT)
     ->Unit(benchmark::kNanosecond)
     ->Name("Latency/KissFFT");
 
-// NotoriousFFT latency benchmark omitted (library disabled — see above).
+static void BM_Latency_NotoriousFFT(benchmark::State& state) {
+    const size_t n = state.range(0);
+    
+    notorious_fft_plan* plan = notorious_fft_create_plan(n, 0);
+    double* in = (double*)aligned_alloc(64, 2 * n * sizeof(double));
+    double* out = (double*)aligned_alloc(64, 2 * n * sizeof(double));
+    
+    for (size_t i = 0; i < n; i++) {
+        in[2*i] = sin(2.0 * M_PI * (double)i / (double)n);
+        in[2*i+1] = 0.0;
+    }
+    
+    for (auto _ : state) {
+        notorious_fft_execute_cx(plan, in, out, 0);
+        benchmark::ClobberMemory();
+    }
+    
+    free(in); free(out);
+    notorious_fft_destroy_plan(plan);
+}
+BENCHMARK(BM_Latency_NotoriousFFT)
+    ->RangeMultiplier(2)
+    ->Range(8, 512)
+    ->Unit(benchmark::kNanosecond)
+    ->Name("Latency/NotoriousFFT");
 
 /* ============ Throughput Comparison (Large Sizes) ============ */
 
