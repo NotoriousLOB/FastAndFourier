@@ -15,7 +15,7 @@ FetchContent_MakeAvailable(benchmark)
 option(ENABLE_EXTERNAL_BENCHMARKS "Enable benchmarks against external FFT libraries" OFF)
 
 if(ENABLE_EXTERNAL_BENCHMARKS)
-    # Kiss FFT - uses FetchContent
+    # Kiss FFT - uses FetchContent (double precision)
     FetchContent_Declare(
         kissfft
         GIT_REPOSITORY https://github.com/mborgerding/kissfft.git
@@ -23,6 +23,7 @@ if(ENABLE_EXTERNAL_BENCHMARKS)
     )
     set(KISSFFT_PKGCONFIG OFF CACHE BOOL "" FORCE)
     set(KISSFFT_TEST OFF CACHE BOOL "" FORCE)
+    set(KISSFFT_DATATYPE double CACHE STRING "" FORCE)
     FetchContent_MakeAvailable(kissfft)
 
     # PocketFFT - header only, just get the source
@@ -70,26 +71,25 @@ if(ENABLE_EXTERNAL_BENCHMARKS)
     endif()
 endif()
 
-# Find FFTW3 (system or build from source)
+# Find FFTW3 (system or build from source) - using double precision
 find_package(PkgConfig QUIET)
 if(PkgConfig_FOUND)
-    pkg_check_modules(FFTW3F fftw3f)
     pkg_check_modules(FFTW3 fftw3)
 endif()
 
-if(ENABLE_EXTERNAL_BENCHMARKS AND NOT FFTW3F_FOUND)
-    # Build FFTW3 from source using FetchContent
+if(ENABLE_EXTERNAL_BENCHMARKS AND NOT FFTW3_FOUND)
+    # Build FFTW3 from source using FetchContent (double precision)
     FetchContent_Declare(
         fftw3
         GIT_REPOSITORY https://github.com/FFTW/fftw3.git
         GIT_TAG master
     )
-    set(ENABLE_FLOAT ON CACHE BOOL "" FORCE)
+    set(ENABLE_FLOAT OFF CACHE BOOL "" FORCE)
     set(ENABLE_DOC OFF CACHE BOOL "" FORCE)
     set(ENABLE_FORTRAN OFF CACHE BOOL "" FORCE)
     set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
     FetchContent_MakeAvailable(fftw3)
-    set(FFTW3F_LIBRARIES fftw3f)
+    set(FFTW3_LIBRARIES fftw3)
 endif()
 
 # Benchmark sources
@@ -129,13 +129,10 @@ target_link_libraries(fastandfourier_benchmarks
 )
 
 if(ENABLE_EXTERNAL_BENCHMARKS)
-    target_link_libraries(fastandfourier_benchmarks kissfft::kissfft-float)
-    if(FFTW3F_FOUND)
-        target_link_libraries(fastandfourier_benchmarks ${FFTW3F_LIBRARIES})
-        target_compile_definitions(fastandfourier_benchmarks PRIVATE HAS_FFTW3=1)
-    endif()
-    if(FFTW3_LIBRARIES)
+    target_link_libraries(fastandfourier_benchmarks kissfft::kissfft)
+    if(FFTW3_FOUND)
         target_link_libraries(fastandfourier_benchmarks ${FFTW3_LIBRARIES})
+        target_compile_definitions(fastandfourier_benchmarks PRIVATE HAS_FFTW3=1)
     endif()
 endif()
 

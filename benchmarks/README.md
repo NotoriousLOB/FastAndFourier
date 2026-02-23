@@ -9,7 +9,7 @@ This directory contains comprehensive benchmarks comparing FastAndFourier agains
 | **FastAndFourier** | IR + JIT | MIT | This library |
 | **FFTW3** | Planner-based | GPL2/commercial | Industry standard |
 | **Kiss FFT** | Simple | BSD | Portable, minimal |
-| **NotoriousFFT** | Header-only | MIT | High performance (double precision) |
+| **NotoriousFFT** | Header-only | MIT | High performance (default: double) |
 | **PocketFFT** | Header-only | BSD | Modern C++ |
 | **MinFFT** | Minimalist | MIT | Single C file |
 | **muFFT** | Single-header | MIT | C99, no alloc |
@@ -98,21 +98,22 @@ Results collected on **2026-02-22** on the following system:
 - **CPU:** 16 × 2300 MHz (x86\_64, AVX2 + SSE4.2; no AVX-512)
 - **Caches:** L1 32 KiB, L2 256 KiB × 8, L3 16 MiB
 - **Build:** Release (`-O3 -march=native -ffast-math`)
-- **Libraries active:** FastAndFourier, KissFFT 131.1.0, FFTW3 3.3.10 (float)
+- **Precision:** Double (FP64) across all libraries
+- **Libraries active:** FastAndFourier, KissFFT 131.1.0, NotoriousFFT, FFTW3 3.3.10
 
 > **Note on NotoriousFFT:** Now included — bugs have been fixed in the latest version.
 
-### Single-Transform Latency (µs, complex-to-complex, 1 run)
+### Single-Transform Latency (µs, complex-to-complex, FP64, 1 run)
 
-| Size | FastAndFourier | KissFFT | NotoriousFFT (double) | FFTW3 (estimate) | FFTW3 (measure) |
-|-----:|---------------:|--------:|----------------------:|-----------------:|----------------:|
-|   16 |          1.340 |   0.070 |                 0.065 |            0.028 |           0.028 |
-|   64 |          1.950 |   0.358 |                 0.245 |            0.096 |           0.046 |
-|  256 |          4.870 |   1.750 |                 1.020 |            0.438 |           0.187 |
-| 1024 |         20.300 |   8.320 |                 4.450 |            2.280 |           0.842 |
-| 4096 |         91.000 |  38.900 |                21.000 |           11.100 |           5.020 |
-| 16384 |        430.000 | 187.000 |               105.000 |           69.200 |          35.500 |
-| 65536 |        316.000 |1000.000 |               550.000 |          391.000 |         212.000 |
+| Size | FastAndFourier | KissFFT | NotoriousFFT | FFTW3 (estimate) | FFTW3 (measure) |
+|-----:|---------------:|--------:|-------------:|-----------------:|----------------:|
+|   16 |          1.72  |   0.210 |        0.215 |            0.020 |           0.020 |
+|   64 |          4.40  |   1.11  |        1.47  |            0.165 |           0.065 |
+|  256 |         16.6   |   5.55  |        8.57  |            0.775 |           0.282 |
+| 1024 |         75.3   |  27.1   |       45.7   |            4.28  |           1.79  |
+| 4096 |        340     | 125     |      234     |           24.0   |          10.5   |
+| 16384 |       1595    | 634     |     1088     |          140     |          67.0   |
+| 65536 |        907    | 3253    |     5055     |          748     |         301     |
 
 *Lower is better. FFTW3 (measure) includes planning time amortized out; FFTW3 (estimate) skips planning.*
 
@@ -134,39 +135,38 @@ removing the VM dispatch overhead that dominates at smaller sizes.
 The ~1 µs floor in FAF latency for small N is VM interpreter overhead; the gap narrows
 quickly as N grows and arithmetic work amortizes setup cost.
 
-### Batch Throughput (100 transforms, ms — lower is better)
+### Batch Throughput (100 transforms, ms — lower is better, FP64)
 
 | Size  | FastAndFourier | FFTW3 (measure) | FAF / FFTW3 |
 |------:|---------------:|----------------:|------------:|
-|  1024 |           1.93 |           0.068 |        28×  |
-|  4096 |           8.74 |           0.308 |        28×  |
-| 16384 |          41.90 |           1.930 |        22×  |
-| 65536 |          34.40 |          11.500 |         3×  |
-|262144 |         110.00 |          52.500 |         2×  |
+|  1024 |           7.53 |            0.18 |       42×   |
+|  4096 |          34.0  |            1.05 |       32×   |
+| 16384 |         159    |            6.70 |       24×   |
+| 65536 |          90.7  |           30.1  |        3×   |
 
 FFTW3 (measure) uses an r2c plan vs. FAF's c2c, giving it an inherent ~2× throughput
 advantage on real-valued inputs. The gap narrows sharply at large sizes.
 
-### Relative Throughput (normalized to KissFFT = 1.0; higher = faster)
+### Relative Throughput (normalized to KissFFT = 1.0; higher = faster, FP64)
 
 | Library | N=64 | N=1K | N=16K | N=65K | Notes |
 |---------|-----:|-----:|------:|------:|-------|
-| FastAndFourier | 0.18× | 0.41× | 0.43× | **3.2×** | VM + JIT |
-| FFTW3 (estimate) | 3.73× | 3.65× | 2.56× | 2.56× | Lightweight plan |
-| FFTW3 (measure) | 7.78× | 9.88× | 5.27× | 4.72× | Full optimizer |
-| KissFFT | 1.00× | 1.00× | 1.00× | 1.00× | Baseline (float) |
-| NotoriousFFT | 1.46× | 1.87× | 1.78× | 1.82× | Header-only (double) |
+| FastAndFourier | 0.26× | 0.35× | 0.39× | **3.5×** | VM + JIT |
+| FFTW3 (estimate) | 6.72× | 6.22× | 4.50× | 4.19× | Lightweight plan |
+| FFTW3 (measure) | **17.2×** | **15.1×** | **9.3×** | **10.6×** | Full optimizer |
+| KissFFT | 1.00× | 1.00× | 1.00× | 1.00× | Baseline (FP64) |
+| NotoriousFFT | 0.76× | 0.59× | 0.57× | 0.64× | Header-only (FP64) |
 
-### GFLOPS Analysis (5·N·log₂N ops per FFT)
+### GFLOPS Analysis (5·N·log₂N ops per FFT, FP64)
 
-| Size | FastAndFourier | FFTW3 (measure) | KissFFT | NotoriousFFT (double) |
-|-----:|---------------:|----------------:|--------:|----------------------:|
-| 1024 |      2.5 GFLOP |      60.8 GFLOP |  6.2 GFLOP |              11.2 GFLOP |
-| 4096 |      2.7 GFLOP |      49.0 GFLOP |  6.3 GFLOP |              11.3 GFLOP |
-| 16384 |     2.7 GFLOP |      32.3 GFLOP |  5.5 GFLOP |              10.1 GFLOP |
-| 65536 |    16.6 GFLOP |      24.7 GFLOP |  5.2 GFLOP |               9.6 GFLOP |
+| Size | FastAndFourier | FFTW3 (measure) | KissFFT | NotoriousFFT |
+|-----:|---------------:|----------------:|--------:|-------------:|
+| 1024 |      1.4 GFLOP |      58.2 GFLOP |  4.1 GFLOP |      2.4 GFLOP |
+| 4096 |      1.0 GFLOP |      41.2 GFLOP |  3.4 GFLOP |      1.8 GFLOP |
+| 16384 |     0.8 GFLOP |      24.4 GFLOP |  2.6 GFLOP |      1.2 GFLOP |
+| 65536 |    10.4 GFLOP |      22.4 GFLOP |  2.1 GFLOP |      0.8 GFLOP |
 
-The N=65536 FAF spike (16.6 GFLOP) confirms JIT-generated code engaging the AVX2
+The N=65536 FAF spike (10.4 GFLOP) confirms JIT-generated code engaging the AVX2
 vectorization path for large transforms. FFTW3 benefits from decades of codelet tuning.
 
 ## Performance Summary
@@ -193,17 +193,17 @@ vectorization path for large transforms. FFTW3 benefits from decades of codelet 
 
 ## Architecture-Specific Results
 
-### x86\_64 with AVX2 (measured 2026-02-22)
+### x86\_64 with AVX2 (measured 2026-02-22, FP64)
 
 Machine: macOS Ventura, 2300 MHz, 16 logical cores, no AVX-512.
 
 | Size  | FastAndFourier | KissFFT | FFTW3 (meas) | FAF vs KissFFT | FAF vs FFTW3 |
 |------:|---------------:|--------:|-------------:|:--------------:|:------------:|
-|   256 | 4.87 µs | 1.75 µs | 0.187 µs | 0.36× | 0.038× |
-|  1024 | 20.3 µs | 8.32 µs | 0.842 µs | 0.41× | 0.041× |
-|  4096 | 91.0 µs | 38.9 µs |  5.02 µs | 0.43× | 0.055× |
-| 16384 |  430 µs |  187 µs |  35.5 µs | 0.43× | 0.083× |
-| 65536 |  316 µs | 1000 µs |   212 µs | **3.16×** | 1.49× |
+|   256 | 16.6 µs | 5.55 µs | 0.282 µs | 0.33× | 0.017× |
+|  1024 | 75.3 µs | 27.1 µs | 1.79 µs | 0.36× | 0.024× |
+|  4096 | 340 µs | 125 µs | 10.5 µs | 0.37× | 0.031× |
+| 16384 | 1595 µs | 634 µs | 67.0 µs | 0.40× | 0.042× |
+| 65536 | 907 µs | 3253 µs | 301 µs | **3.59×** | 3.01× |
 
 ## Profiling
 

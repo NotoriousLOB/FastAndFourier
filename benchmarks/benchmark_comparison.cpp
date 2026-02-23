@@ -81,26 +81,27 @@ static void generate_signal_complex(std::complex<float>* out, size_t n, int num_
 static void BM_FAF_FFT_Real(benchmark::State& state) {
     const size_t n = state.range(0);
     
-    faf_transform* t = faf_create_fft(n, false, FAF_PREC_FP32, 0);
+    // Use double precision for fair comparison
+    faf_transform* t = faf_create_fft(n, false, FAF_PREC_FP64, 0);
     if (!t) {
         state.SkipWithError("Failed to create transform");
         return;
     }
     
-    float* in = (float*)aligned_alloc(64, 2 * n * sizeof(float));
-    float* out = (float*)aligned_alloc(64, 2 * n * sizeof(float));
+    double* in = (double*)aligned_alloc(64, 2 * n * sizeof(double));
+    double* out = (double*)aligned_alloc(64, 2 * n * sizeof(double));
     for (size_t i = 0; i < n; i++) {
-        in[2*i] = sinf(2.0f * (float)M_PI * (float)i / (float)n);
-        in[2*i+1] = 0.0f;
+        in[2*i] = sin(2.0 * M_PI * (double)i / (double)n);
+        in[2*i+1] = 0.0;
     }
     
     for (auto _ : state) {
-        faf_execute_f32(t, out, in);
+        faf_execute_f64(t, out, in);
         benchmark::DoNotOptimize(out);
     }
     
     state.SetItemsProcessed(state.iterations() * n);
-    state.SetBytesProcessed(state.iterations() * n * sizeof(float) * 2);
+    state.SetBytesProcessed(state.iterations() * n * sizeof(double) * 2);
     
     free(in); free(out);
     faf_destroy_transform(t);
@@ -116,6 +117,7 @@ BENCHMARK(BM_FAF_FFT_Real)
 static void BM_KissFFT_Real(benchmark::State& state) {
     const size_t n = state.range(0);
     
+    // Use double precision (kiss_fft_scalar is double by default)
     kiss_fft_cfg cfg = kiss_fft_alloc(n, 0, NULL, NULL);
     if (!cfg) {
         state.SkipWithError("Failed to create Kiss FFT config");
@@ -125,10 +127,10 @@ static void BM_KissFFT_Real(benchmark::State& state) {
     kiss_fft_cpx* in = (kiss_fft_cpx*)aligned_alloc(64, n * sizeof(kiss_fft_cpx));
     kiss_fft_cpx* out = (kiss_fft_cpx*)aligned_alloc(64, n * sizeof(kiss_fft_cpx));
     
-    // Initialize complex input
+    // Initialize complex input (double precision)
     for (size_t i = 0; i < n; i++) {
-        in[i].r = sinf(2.0f * (float)M_PI * (float)i / (float)n);
-        in[i].i = 0.0f;
+        in[i].r = sin(2.0 * M_PI * (double)i / (double)n);
+        in[i].i = 0.0;
     }
     
     for (auto _ : state) {
@@ -175,32 +177,32 @@ BENCHMARK(BM_PocketFFT_Real)
 static void BM_FFTW3_Estimate(benchmark::State& state) {
     const size_t n = state.range(0);
     
-    // Use complex-to-complex (c2c) like other libraries for fair comparison
-    fftwf_complex* in = (fftwf_complex*)fftwf_malloc(n * sizeof(fftwf_complex));
-    fftwf_complex* out = (fftwf_complex*)fftwf_malloc(n * sizeof(fftwf_complex));
+    // Use complex-to-complex (c2c) with double precision
+    fftw_complex* in = (fftw_complex*)fftw_malloc(n * sizeof(fftw_complex));
+    fftw_complex* out = (fftw_complex*)fftw_malloc(n * sizeof(fftw_complex));
     
     for (size_t i = 0; i < n; i++) {
-        in[i][0] = sinf(2.0f * (float)M_PI * (float)i / (float)n);
-        in[i][1] = 0.0f;
+        in[i][0] = sin(2.0 * M_PI * (double)i / (double)n);
+        in[i][1] = 0.0;
     }
     
-    fftwf_plan plan = fftwf_plan_dft_1d(n, in, out, FFTW_FORWARD, FFTW_ESTIMATE);
+    fftw_plan plan = fftw_plan_dft_1d(n, in, out, FFTW_FORWARD, FFTW_ESTIMATE);
     if (!plan) {
         state.SkipWithError("Failed to create FFTW3 plan");
         return;
     }
     
     for (auto _ : state) {
-        fftwf_execute(plan);
+        fftw_execute(plan);
         benchmark::DoNotOptimize(out);
     }
     
     state.SetItemsProcessed(state.iterations() * n);
-    state.SetBytesProcessed(state.iterations() * n * sizeof(fftwf_complex) * 2);
+    state.SetBytesProcessed(state.iterations() * n * sizeof(fftw_complex) * 2);
     
-    fftwf_destroy_plan(plan);
-    fftwf_free(in);
-    fftwf_free(out);
+    fftw_destroy_plan(plan);
+    fftw_free(in);
+    fftw_free(out);
 }
 BENCHMARK(BM_FFTW3_Estimate)
     ->RangeMultiplier(4)
@@ -211,32 +213,32 @@ BENCHMARK(BM_FFTW3_Estimate)
 static void BM_FFTW3_Measure(benchmark::State& state) {
     const size_t n = state.range(0);
     
-    // Use complex-to-complex (c2c) like other libraries for fair comparison
-    fftwf_complex* in = (fftwf_complex*)fftwf_malloc(n * sizeof(fftwf_complex));
-    fftwf_complex* out = (fftwf_complex*)fftwf_malloc(n * sizeof(fftwf_complex));
+    // Use complex-to-complex (c2c) with double precision
+    fftw_complex* in = (fftw_complex*)fftw_malloc(n * sizeof(fftw_complex));
+    fftw_complex* out = (fftw_complex*)fftw_malloc(n * sizeof(fftw_complex));
     
     for (size_t i = 0; i < n; i++) {
-        in[i][0] = sinf(2.0f * (float)M_PI * (float)i / (float)n);
-        in[i][1] = 0.0f;
+        in[i][0] = sin(2.0 * M_PI * (double)i / (double)n);
+        in[i][1] = 0.0;
     }
     
-    fftwf_plan plan = fftwf_plan_dft_1d(n, in, out, FFTW_FORWARD, FFTW_MEASURE);
+    fftw_plan plan = fftw_plan_dft_1d(n, in, out, FFTW_FORWARD, FFTW_MEASURE);
     if (!plan) {
         state.SkipWithError("Failed to create FFTW3 plan");
         return;
     }
     
     for (auto _ : state) {
-        fftwf_execute(plan);
+        fftw_execute(plan);
         benchmark::DoNotOptimize(out);
     }
     
     state.SetItemsProcessed(state.iterations() * n);
-    state.SetBytesProcessed(state.iterations() * n * sizeof(fftwf_complex) * 2);
+    state.SetBytesProcessed(state.iterations() * n * sizeof(fftw_complex) * 2);
     
-    fftwf_destroy_plan(plan);
-    fftwf_free(in);
-    fftwf_free(out);
+    fftw_destroy_plan(plan);
+    fftw_free(in);
+    fftw_free(out);
 }
 BENCHMARK(BM_FFTW3_Measure)
     ->RangeMultiplier(4)
@@ -289,16 +291,16 @@ BENCHMARK(BM_NotoriousFFT_Real)
 static void BM_Latency_FAF(benchmark::State& state) {
     const size_t n = state.range(0);
     
-    faf_transform* t = faf_create_fft(n, false, FAF_PREC_FP32, 0);
-    float* in = (float*)aligned_alloc(64, 2 * n * sizeof(float));
-    float* out = (float*)aligned_alloc(64, 2 * n * sizeof(float));
+    faf_transform* t = faf_create_fft(n, false, FAF_PREC_FP64, 0);
+    double* in = (double*)aligned_alloc(64, 2 * n * sizeof(double));
+    double* out = (double*)aligned_alloc(64, 2 * n * sizeof(double));
     for (size_t i = 0; i < n; i++) {
-        in[2*i] = sinf(2.0f * (float)M_PI * (float)i / (float)n);
-        in[2*i+1] = 0.0f;
+        in[2*i] = sin(2.0 * M_PI * (double)i / (double)n);
+        in[2*i+1] = 0.0;
     }
     
     for (auto _ : state) {
-        faf_execute_f32(t, out, in);
+        faf_execute_f64(t, out, in);
         benchmark::ClobberMemory();
     }
     
@@ -319,8 +321,8 @@ static void BM_Latency_KissFFT(benchmark::State& state) {
     kiss_fft_cpx* out = (kiss_fft_cpx*)aligned_alloc(64, n * sizeof(kiss_fft_cpx));
     
     for (size_t i = 0; i < n; i++) {
-        in[i].r = sinf(2.0f * (float)M_PI * (float)i / (float)n);
-        in[i].i = 0.0f;
+        in[i].r = sin(2.0 * M_PI * (double)i / (double)n);
+        in[i].i = 0.0;
     }
     
     for (auto _ : state) {
@@ -369,23 +371,23 @@ static void BM_Throughput_FAF(benchmark::State& state) {
     const size_t n = state.range(0);
     const int batch = 100;
     
-    faf_transform* t = faf_create_fft(n, false, FAF_PREC_FP32, 0);
-    float* in = (float*)aligned_alloc(64, 2 * n * sizeof(float));
-    float* out = (float*)aligned_alloc(64, 2 * n * sizeof(float));
+    faf_transform* t = faf_create_fft(n, false, FAF_PREC_FP64, 0);
+    double* in = (double*)aligned_alloc(64, 2 * n * sizeof(double));
+    double* out = (double*)aligned_alloc(64, 2 * n * sizeof(double));
     for (size_t i = 0; i < n; i++) {
-        in[2*i] = sinf(2.0f * (float)M_PI * (float)i / (float)n);
-        in[2*i+1] = 0.0f;
+        in[2*i] = sin(2.0 * M_PI * (double)i / (double)n);
+        in[2*i+1] = 0.0;
     }
     
     for (auto _ : state) {
         for (int b = 0; b < batch; b++) {
-            faf_execute_f32(t, out, in);
+            faf_execute_f64(t, out, in);
         }
         benchmark::DoNotOptimize(out);
     }
     
     state.SetItemsProcessed(state.iterations() * batch * n);
-    state.SetBytesProcessed(state.iterations() * batch * 2 * n * sizeof(float) * 2);
+    state.SetBytesProcessed(state.iterations() * batch * 2 * n * sizeof(double) * 2);
     
     free(in); free(out);
     faf_destroy_transform(t);
@@ -401,25 +403,27 @@ static void BM_Throughput_FFTW3(benchmark::State& state) {
     const size_t n = state.range(0);
     const int batch = 100;
     
-    float* in = (float*)fftwf_malloc(n * sizeof(float));
-    fftwf_complex* out = (fftwf_complex*)fftwf_malloc(n * sizeof(fftwf_complex));
+    double* in = (double*)fftw_malloc(n * sizeof(double));
+    fftw_complex* out = (fftw_complex*)fftw_malloc(n * sizeof(fftw_complex));
     
-    generate_signal(in, n);
-    fftwf_plan plan = fftwf_plan_dft_r2c_1d(n, in, out, FFTW_MEASURE);
+    for (size_t i = 0; i < n; i++) {
+        in[i] = sin(2.0 * M_PI * (double)i / (double)n);
+    }
+    fftw_plan plan = fftw_plan_dft_r2c_1d(n, in, out, FFTW_MEASURE);
     
     for (auto _ : state) {
         for (int b = 0; b < batch; b++) {
-            fftwf_execute(plan);
+            fftw_execute(plan);
         }
         benchmark::DoNotOptimize(out);
     }
     
     state.SetItemsProcessed(state.iterations() * batch * n);
-    state.SetBytesProcessed(state.iterations() * batch * n * sizeof(float) * 2);
+    state.SetBytesProcessed(state.iterations() * batch * n * sizeof(double) * 2);
     
-    fftwf_destroy_plan(plan);
-    fftwf_free(in);
-    fftwf_free(out);
+    fftw_destroy_plan(plan);
+    fftw_free(in);
+    fftw_free(out);
 }
 BENCHMARK(BM_Throughput_FFTW3)
     ->RangeMultiplier(4)
