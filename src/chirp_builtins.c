@@ -23,7 +23,53 @@
 /* External declarations from chirp.c */
 typedef struct { char *name; void (*fn)(void); } chirp_builtin_t;
 extern chirp_builtin_t chirp_table[];
-extern int chirp_count;
+extern int g_chirp_count;
+
+/* ============================================================================
+ * ALIAS REGISTRATION
+ * ============================================================================ */
+
+/**
+ * @brief Register friendly aliases for the standard builtins.
+ *
+ * The standard registration stores functions under their full C-style names
+ * (e.g. "chirp_sin_f32"). Chirp programs are expected to refer to them by
+ * shorter names ("sin", "sin_f32", "sigmoid", "hann_window", etc.). This
+ * function walks the registry and adds those aliases.
+ */
+static void chirp_register_builtin_aliases(void) {
+    /* Only walk the original entries; aliases are appended as we go and
+     * must not be re-aliased themselves. */
+    int n = g_chirp_count;
+
+    for (int i = 0; i < n; i++) {
+        const char *name = chirp_table[i].name;
+        if (strncmp(name, "chirp_", 6) != 0) continue;
+
+        const char *stripped = name + 6;
+
+        /* Register the stripped name, e.g. "chirp_sin_f32" -> "sin_f32". */
+        chirp_register(stripped, chirp_table[i].fn);
+
+        /* For f32 variants, also register the bare name without the _f32
+         * suffix, e.g. "sin_f32" -> "sin". This matches the names used in
+         * the Chirp documentation and examples. */
+        if (strstr(stripped, "_f32")) {
+            char bare[256];
+            size_t len = strlen(stripped);
+            if (len >= sizeof(bare)) len = sizeof(bare) - 1;
+            memcpy(bare, stripped, len);
+            bare[len] = '\0';
+
+            char *suff = strstr(bare, "_f32");
+            if (suff) *suff = '\0';
+
+            if (strlen(bare) > 0) {
+                chirp_register(bare, chirp_table[i].fn);
+            }
+        }
+    }
+}
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -50,7 +96,7 @@ extern int chirp_count;
 } while(0)
 
 int chirp_register_standard_builtins(void) {
-    int start_count = chirp_count;
+    int start_count = g_chirp_count;
     
     /* Trigonometric functions */
     REGISTER_F32_F64(chirp_sin_f32, chirp_sin_f64);
@@ -141,16 +187,20 @@ int chirp_register_standard_builtins(void) {
     REGISTER_F32_F64(chirp_sign_f32, chirp_sign_f64);
     REGISTER_F32_F64(chirp_deg2rad_f32, chirp_deg2rad_f64);
     REGISTER_F32_F64(chirp_rad2deg_f32, chirp_rad2deg_f64);
-    
-    return chirp_count - start_count; /* Return number of builtins registered */
+
+    /* Add friendly aliases so Chirp programs can use short names like
+     * "sin", "sigmoid", "hann_window" instead of "chirp_sin_f32". */
+    chirp_register_builtin_aliases();
+
+    return g_chirp_count - start_count; /* Return number of builtins registered */
 }
 
 void chirp_list_builtins(void) {
-    printf("Registered Chirp builtins (%d total):\n", chirp_count);
+    printf("Registered Chirp builtins (%d total):\n", g_chirp_count);
     printf("%-30s %-10s\n", "Name", "Type");
     printf("%-30s %-10s\n", "----", "----");
     
-    for (int i = 0; i < chirp_count; i++) {
+    for (int i = 0; i < g_chirp_count; i++) {
         const char *type = "scalar";
         if (strstr(chirp_table[i].name, "_f64")) type = "f64";
         else if (strstr(chirp_table[i].name, "_f32")) type = "f32";

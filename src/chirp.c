@@ -22,7 +22,7 @@
 #include <assert.h>
 
 /* Builtin registry */
-#define CHIRP_MAX_BUILTINS 256
+#define CHIRP_MAX_BUILTINS 512
 #define CHIRP_MAX_INST 1024
 #define CHIRP_MAX_SYMBOL 128
 
@@ -32,7 +32,7 @@ typedef struct {
 } chirp_builtin;
 
 chirp_builtin chirp_table[CHIRP_MAX_BUILTINS];
-int chirp_count = 0;
+int g_chirp_count = 0;
 static int chirp_initialized = 0;
 
 /* Token types for the lexer */
@@ -102,43 +102,48 @@ static faf_inst chirp_compile_node(chirp_node *node, faf_transform *t, int *inst
 static void chirp_init_builtins(void) {
     if (chirp_initialized) return;
     memset(chirp_table, 0, sizeof(chirp_table));
-    chirp_count = 0;
+    g_chirp_count = 0;
     chirp_initialized = 1;
 }
 
 /* Public API: Free all registered builtin names and reset */
 void chirp_cleanup(void) {
-    for (int i = 0; i < chirp_count; i++) {
+    for (int i = 0; i < g_chirp_count; i++) {
         free(chirp_table[i].name);
         chirp_table[i].name = NULL;
         chirp_table[i].fn = NULL;
     }
-    chirp_count = 0;
+    g_chirp_count = 0;
     chirp_initialized = 0;
+}
+
+/* Public API: Return the number of currently registered builtins */
+int chirp_count(void) {
+    return g_chirp_count;
 }
 
 /* Public API: Register a custom function */
 int chirp_register(const char *name, void (*fn)(void)) {
     chirp_init_builtins();
-    if (chirp_count >= CHIRP_MAX_BUILTINS) return -1;
+    if (g_chirp_count >= CHIRP_MAX_BUILTINS) return -1;
     if (!name || !fn) return -1;
     
     /* Check if already registered */
-    for (int i = 0; i < chirp_count; i++) {
+    for (int i = 0; i < g_chirp_count; i++) {
         if (strcmp(chirp_table[i].name, name) == 0) {
             chirp_table[i].fn = fn;
             return i;
         }
     }
     
-    chirp_table[chirp_count].name = strdup(name);
-    chirp_table[chirp_count].fn = fn;
-    return chirp_count++;
+    chirp_table[g_chirp_count].name = strdup(name);
+    chirp_table[g_chirp_count].fn = fn;
+    return g_chirp_count++;
 }
 
 /* Look up a builtin by name */
 static int chirp_lookup_builtin(const char *name) {
-    for (int i = 0; i < chirp_count; i++) {
+    for (int i = 0; i < g_chirp_count; i++) {
         if (strcmp(chirp_table[i].name, name) == 0) {
             return i;
         }

@@ -22,6 +22,7 @@ set(TEST_SOURCES
     test_twiddles.cpp
     test_precision.cpp
     test_jit.cpp
+    test_chirp.cpp
 )
 
 # Architecture-specific tests

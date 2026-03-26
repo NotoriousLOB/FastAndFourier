@@ -14,6 +14,9 @@ int chirp_register(const char *name, void (*fn)(void));
 /* Free all registered builtin names and reset the registry */
 void chirp_cleanup(void);
 
+/* Return the number of currently registered builtins */
+int chirp_count(void);
+
 /* Compile a Chirp S-expression to a transform */
 faf_transform* chirp_compile(const char *source);
 
