@@ -185,46 +185,62 @@ void faf_gen_mdct(faf_transform *t, size_t n) {
 }
 
 /**
- * @brief Generate Haar wavelet bytecode
+ * @brief Generate a multi-level Mallat DWT / IDWT
+ *
+ * Each level is a single FAF_DWT_STAGE. Forward applies n, n/2, ... ;
+ * inverse applies the reverse order with FAF_DWT_FLAG_INVERSE.
  */
-void faf_gen_haar(faf_transform *t, size_t n, size_t levels) {
+void faf_gen_dwt(faf_transform *t, faf_wavelet_family family, size_t n,
+                 size_t levels, bool inverse) {
     t->code = calloc(MAX_INST, sizeof(faf_inst));
     if (!t->code) return;
-    
-    size_t idx = 0;
-    /* Haar operates on real data - use half the registers for complex storage */
+
+    if (n > MAX_FFT_SIZE) n = MAX_FFT_SIZE;
     size_t max_reg = (n < FAF_MAX_REGISTERS / 2) ? n : FAF_MAX_REGISTERS / 2;
-    
-    /* Load inputs - use only real part of each complex register */
+
+    size_t idx = 0;
     for (size_t i = 0; i < max_reg; i++) {
         idx = add_inst(t, idx, FAF_LOAD, i, i, 0);
     }
-    
-    /* Simple Haar transform for each level using BFLY2 on real parts only */
-    for (size_t level = 0; level < levels; level++) {
-        size_t step = 1 << level;
-        for (size_t i = 0; i < max_reg; i += 2 * step) {
-            /* Butterfly gives sum and difference */
-            if (i + step < max_reg) {
-                /* Use BFLY2 but only real parts are meaningful for Haar */
-                idx = add_inst(t, idx, FAF_BFLY2, i, i + step, 0);
-            }
+
+    uint32_t stage_flags = inverse ? FAF_DWT_FLAG_INVERSE : 0;
+    if (inverse) {
+        for (size_t lv = levels; lv-- > 0; ) {
+            size_t length = n >> lv;
+            if (length < 2) continue;
+            idx = add_inst(t, idx, FAF_DWT_STAGE, (uint32_t)family,
+                           (uint32_t)length, stage_flags);
+        }
+    } else {
+        for (size_t lv = 0; lv < levels; lv++) {
+            size_t length = n >> lv;
+            if (length < 2) break;
+            idx = add_inst(t, idx, FAF_DWT_STAGE, (uint32_t)family,
+                           (uint32_t)length, stage_flags);
         }
     }
-    
-    /* Store outputs */
+
     for (size_t i = 0; i < max_reg; i++) {
         idx = add_inst(t, idx, FAF_STORE, i, i, 0);
     }
-    
     idx = add_inst(t, idx, FAF_END, 0, 0, 0);
     t->n_inst = idx;
 }
 
-/**
- * @brief Generate Daubechies-4 wavelet bytecode
- */
+void faf_gen_haar(faf_transform *t, size_t n, size_t levels) {
+    if (levels == 0) {
+        size_t bits = 0, tmp = n;
+        while (tmp > 1) { tmp >>= 1; bits++; }
+        levels = bits;
+    }
+    faf_gen_dwt(t, FAF_WAVELET_HAAR, n, levels, false);
+}
+
 void faf_gen_daubechies4(faf_transform *t, size_t n, size_t levels) {
-    /* Simplified: use Haar for now */
-    faf_gen_haar(t, n, levels);
+    if (levels == 0) {
+        size_t bits = 0, tmp = n;
+        while (tmp > 1) { tmp >>= 1; bits++; }
+        levels = bits;
+    }
+    faf_gen_dwt(t, FAF_WAVELET_D4, n, levels, false);
 }

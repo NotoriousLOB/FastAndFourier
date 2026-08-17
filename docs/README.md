@@ -18,7 +18,7 @@ A high-performance Digital Signal Processing (DSP) library featuring Intermediat
   - DST (Discrete Sine Transform) - Types I-IV
   - STFT (Short-Time Fourier Transform)
   - MDCT (Modified Discrete Cosine Transform)
-  - Wavelet Transforms (Haar, Daubechies-4, CDF 9/7)
+  - Wavelet Transforms (Haar, Daubechies-4, CDF 5/3, CDF 9/7, Symlet-4) — forward and inverse
 
 ## Building
 
@@ -81,12 +81,13 @@ int main() {
     faf_transform* fft = faf_create_fft(n, false, FAF_PREC_FP32, 0);
     
     /* Allocate aligned buffers */
-    float* in = aligned_alloc(64, n * sizeof(float));
-    float* out = aligned_alloc(64, n * sizeof(float));
+    float* in = aligned_alloc(64, 2 * n * sizeof(float));
+    float* out = aligned_alloc(64, 2 * n * sizeof(float));
     
-    /* Initialize input (e.g., sine wave) */
+    /* Interleaved complex: real/imag pairs */
     for (size_t i = 0; i < n; i++) {
-        in[i] = sinf(2.0f * M_PI * 4.0f * i / n);
+        in[2 * i]     = sinf(2.0f * M_PI * 4.0f * i / n);
+        in[2 * i + 1] = 0.0f;
     }
     
     /* Execute FFT */

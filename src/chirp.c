@@ -15,20 +15,23 @@
  */
 
 #include "chirp.h"
+#include "faf.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
 #include <assert.h>
+#include <math.h>
 
 /* Builtin registry */
 #define CHIRP_MAX_BUILTINS 512
-#define CHIRP_MAX_INST 1024
+#define CHIRP_MAX_INST 65536
 #define CHIRP_MAX_SYMBOL 128
 
 typedef struct {
     char *name;
     void (*fn)(void);
+    int kind;
 } chirp_builtin;
 
 chirp_builtin chirp_table[CHIRP_MAX_BUILTINS];
@@ -51,7 +54,8 @@ typedef enum {
 typedef struct {
     chirp_token_type type;
     char *text;            /* Raw text */
-    int value;             /* For numbers */
+    int value;             /* For integers */
+    double fvalue;         /* For floats */
     int line;
     int col;
 } chirp_token;
@@ -74,6 +78,9 @@ typedef enum {
     CHIRP_NODE_LIFT,       /* (lift :predict X :update Y) */
     CHIRP_NODE_CUSTOM,     /* (custom name) */
     CHIRP_NODE_REDUCE,     /* reduce-sum, reduce-max, etc. */
+    CHIRP_NODE_DWT,        /* (dwt :family haar :size N :levels L) */
+    CHIRP_NODE_IDWT,       /* (idwt ...) */
+    CHIRP_NODE_THRESHOLD,  /* (threshold :mode soft :lambda x) */
     CHIRP_NODE_LITERAL,    /* number or symbol */
     CHIRP_NODE_LIST        /* generic list */
 } chirp_node_type;
@@ -82,7 +89,8 @@ typedef enum {
 typedef struct chirp_node {
     chirp_node_type type;
     char *sym;             /* Symbol name */
-    int value;             /* Numeric value */
+    int value;             /* Integer value */
+    double fvalue;         /* Floating value */
     struct chirp_node **children;
     int n_children;
     int cap_children;
@@ -122,23 +130,21 @@ int chirp_count(void) {
     return g_chirp_count;
 }
 
-/* Public API: Register a custom function */
-int chirp_register(const char *name, void (*fn)(void)) {
-    chirp_init_builtins();
-    if (g_chirp_count >= CHIRP_MAX_BUILTINS) return -1;
-    if (!name || !fn) return -1;
-    
-    /* Check if already registered */
-    for (int i = 0; i < g_chirp_count; i++) {
-        if (strcmp(chirp_table[i].name, name) == 0) {
-            chirp_table[i].fn = fn;
-            return i;
-        }
-    }
-    
-    chirp_table[g_chirp_count].name = strdup(name);
-    chirp_table[g_chirp_count].fn = fn;
-    return g_chirp_count++;
+/* Public API: Return the name of a registered builtin by index */
+const char* chirp_builtin_name(int idx) {
+    if (idx < 0 || idx >= g_chirp_count) return NULL;
+    return chirp_table[idx].name;
+}
+
+/* Public API: Return the function pointer of a registered builtin by index */
+void* chirp_builtin_fn(int idx) {
+    if (idx < 0 || idx >= g_chirp_count) return NULL;
+    return (void*)chirp_table[idx].fn;
+}
+
+/* Public API: Return the number of registered builtins (alias for chirp_count) */
+int chirp_builtin_count(void) {
+    return g_chirp_count;
 }
 
 /* Look up a builtin by name */
@@ -149,6 +155,61 @@ static int chirp_lookup_builtin(const char *name) {
         }
     }
     return -1;
+}
+
+/* Public API: Register a custom function */
+int chirp_register(const char *name, void (*fn)(void)) {
+    chirp_init_builtins();
+    if (g_chirp_count >= CHIRP_MAX_BUILTINS) return -1;
+    if (!name || !fn) return -1;
+
+    /* Check if already registered */
+    for (int i = 0; i < g_chirp_count; i++) {
+        if (strcmp(chirp_table[i].name, name) == 0) {
+            chirp_table[i].fn = fn;
+            return i;
+        }
+    }
+
+    chirp_table[g_chirp_count].name = strdup(name);
+    chirp_table[g_chirp_count].fn = fn;
+    chirp_table[g_chirp_count].kind = CHIRP_KIND_UNARY;
+    return g_chirp_count++;
+}
+
+int chirp_register_ex(const char *name, void (*fn)(void), int kind) {
+    int id = chirp_register(name, fn);
+    if (id >= 0) chirp_table[id].kind = kind;
+    return id;
+}
+
+int chirp_builtin_kind(int idx) {
+    if (idx < 0 || idx >= g_chirp_count) return CHIRP_KIND_OTHER;
+    return chirp_table[idx].kind;
+}
+
+/* Public API: Return the function pointer for a builtin, selecting the
+ * precision-appropriate variant (e.g. sin_f32 vs sin_f64) when available. */
+void* chirp_builtin_fn_for_precision(int idx, faf_precision precision) {
+    const char *name = chirp_builtin_name(idx);
+    if (!name) return NULL;
+
+    /* If the registered name already carries a precision suffix, use it. */
+    if (strstr(name, "_f32") || strstr(name, "_f64")) {
+        return chirp_builtin_fn(idx);
+    }
+
+    /* Bare alias: try to find the variant matching the transform precision. */
+    const char *suffix = (precision == FAF_PREC_FP64) ? "_f64" : "_f32";
+    char suffixed[256];
+    int n = snprintf(suffixed, sizeof(suffixed), "%s%s", name, suffix);
+    if (n > 0 && (size_t)n < sizeof(suffixed)) {
+        int new_idx = chirp_lookup_builtin(suffixed);
+        if (new_idx >= 0) return chirp_builtin_fn(new_idx);
+    }
+
+    /* Fallback: return the original registered function. */
+    return chirp_builtin_fn(idx);
 }
 
 /* Create a lexer */
@@ -223,13 +284,28 @@ static char* chirp_lexer_read_symbol(chirp_lexer *lex, int *is_keyword) {
     return sym;
 }
 
-/* Read a number */
-static int chirp_lexer_read_number(chirp_lexer *lex) {
-    int val = 0;
-    while (isdigit(chirp_lexer_peek(lex))) {
-        val = val * 10 + (chirp_lexer_advance(lex) - '0');
+/* Read a number (integer or floating). Sets *out_int and *out_dbl. */
+static void chirp_lexer_read_number(chirp_lexer *lex, int *out_int, double *out_dbl) {
+    int sign = 1;
+    if (chirp_lexer_peek(lex) == '-') {
+        sign = -1;
+        chirp_lexer_advance(lex);
     }
-    return val;
+    double val = 0.0;
+    while (isdigit(chirp_lexer_peek(lex))) {
+        val = val * 10.0 + (double)(chirp_lexer_advance(lex) - '0');
+    }
+    if (chirp_lexer_peek(lex) == '.') {
+        chirp_lexer_advance(lex);
+        double place = 0.1;
+        while (isdigit(chirp_lexer_peek(lex))) {
+            val += place * (double)(chirp_lexer_advance(lex) - '0');
+            place *= 0.1;
+        }
+    }
+    val *= (double)sign;
+    *out_dbl = val;
+    *out_int = (int)val;
 }
 
 /* Get next token */
@@ -258,11 +334,13 @@ static chirp_token chirp_lexer_next(chirp_lexer *lex) {
         tok.type = CHIRP_TOK_KEYWORD;
         int dummy;
         tok.text = chirp_lexer_read_symbol(lex, &dummy);
-    } else if (isdigit(c)) {
+    } else if (isdigit(c) || (c == '-' && lex->pos + 1 < lex->len &&
+                              (isdigit(lex->src[lex->pos + 1]) ||
+                               lex->src[lex->pos + 1] == '.'))) {
         tok.type = CHIRP_TOK_NUMBER;
-        tok.value = chirp_lexer_read_number(lex);
-        char buf[32];
-        snprintf(buf, sizeof(buf), "%d", tok.value);
+        chirp_lexer_read_number(lex, &tok.value, &tok.fvalue);
+        char buf[64];
+        snprintf(buf, sizeof(buf), "%.8g", tok.fvalue);
         tok.text = strdup(buf);
     } else if (isalpha(c) || c == '-' || c == '_' || c == '*') {
         /* Symbol */
@@ -372,6 +450,12 @@ static chirp_node* chirp_parse_expr(chirp_lexer *lex) {
                 node = chirp_node_new(CHIRP_NODE_LIFT);
             } else if (strcmp(op.text, "custom") == 0) {
                 node = chirp_node_new(CHIRP_NODE_CUSTOM);
+            } else if (strcmp(op.text, "dwt") == 0) {
+                node = chirp_node_new(CHIRP_NODE_DWT);
+            } else if (strcmp(op.text, "idwt") == 0) {
+                node = chirp_node_new(CHIRP_NODE_IDWT);
+            } else if (strcmp(op.text, "threshold") == 0) {
+                node = chirp_node_new(CHIRP_NODE_THRESHOLD);
             } else {
                 node = chirp_node_new(CHIRP_NODE_LIST);
                 node->sym = strdup(op.text);
@@ -388,6 +472,7 @@ static chirp_node* chirp_parse_expr(chirp_lexer *lex) {
                     break;
                 }
                 if (c == '\0') {
+                    faf_set_error("Chirp: unexpected EOF");
                     fprintf(stderr, "Chirp: unexpected EOF\n");
                     break;
                 }
@@ -438,6 +523,7 @@ static chirp_node* chirp_parse_expr(chirp_lexer *lex) {
         case CHIRP_TOK_NUMBER: {
             node = chirp_node_new(CHIRP_NODE_LITERAL);
             node->value = tok.value;
+            node->fvalue = tok.fvalue;
             break;
         }
         
@@ -504,6 +590,86 @@ static void chirp_emit_inst(faf_transform *t, faf_inst inst, int *inst_count) {
     (*inst_count)++;
 }
 
+static const char* chirp_node_name(chirp_node *node) {
+    if (!node) return NULL;
+    if (node->sym) return node->sym;
+    if (node->n_children > 0 && node->children[0] && node->children[0]->sym)
+        return node->children[0]->sym;
+    return NULL;
+}
+
+static int chirp_node_int(chirp_node *node, int fallback) {
+    if (!node) return fallback;
+    if (node->type == CHIRP_NODE_LITERAL) return node->value;
+    return fallback;
+}
+
+static double chirp_node_float(chirp_node *node, double fallback) {
+    if (!node) return fallback;
+    if (node->type == CHIRP_NODE_LITERAL) {
+        return (node->fvalue != 0.0 || node->value == 0) ? node->fvalue : (double)node->value;
+    }
+    return fallback;
+}
+
+static int chirp_parse_family(chirp_node *node, faf_wavelet_family *out) {
+    const char *name = chirp_node_name(node);
+    if (!name) return -1;
+    return faf_wavelet_from_name(name, out);
+}
+
+static size_t chirp_log2_size(size_t n) {
+    size_t bits = 0;
+    while (n > 1) { n >>= 1; bits++; }
+    return bits;
+}
+
+static void chirp_ensure_fft_twiddles(faf_transform *t, size_t n) {
+    if (t->twiddles[0] || n == 0) return;
+    if (t->precision == FAF_PREC_FP64) {
+        t->twiddles[0] = malloc(n * sizeof(double));
+        if (t->twiddles[0]) {
+            faf_gen_twiddles_f64((double*)t->twiddles[0], n, false);
+            t->twiddle_sizes[0] = n / 2;
+        }
+    } else {
+        t->twiddles[0] = malloc(n * sizeof(float));
+        if (t->twiddles[0]) {
+            faf_gen_twiddles_f32((float*)t->twiddles[0], n, false);
+            t->twiddle_sizes[0] = n / 2;
+        }
+    }
+}
+
+static void chirp_emit_dwt_stages(faf_transform *t, int *inst_count,
+                                  faf_wavelet_family family, size_t n,
+                                  size_t levels, int inverse) {
+    uint32_t flags = inverse ? FAF_DWT_FLAG_INVERSE : 0;
+    if (inverse) {
+        for (size_t lv = levels; lv-- > 0; ) {
+            size_t length = n >> lv;
+            if (length < 2) continue;
+            faf_inst st = {0};
+            st.packed = FAF_DWT_STAGE;
+            st.a0 = (uint32_t)family;
+            st.a1 = (uint32_t)length;
+            st.a2 = flags;
+            chirp_emit_inst(t, st, inst_count);
+        }
+    } else {
+        for (size_t lv = 0; lv < levels; lv++) {
+            size_t length = n >> lv;
+            if (length < 2) break;
+            faf_inst st = {0};
+            st.packed = FAF_DWT_STAGE;
+            st.a0 = (uint32_t)family;
+            st.a1 = (uint32_t)length;
+            st.a2 = flags;
+            chirp_emit_inst(t, st, inst_count);
+        }
+    }
+}
+
 /* Compile an AST node to IR instructions */
 static void chirp_compile_node_emit(chirp_node *node, faf_transform *t, int *inst_count);
 
@@ -522,19 +688,34 @@ static void chirp_compile_node_emit(chirp_node *node, faf_transform *t, int *ins
         }
         
         case CHIRP_NODE_FFT: {
-            inst.packed = FAF_FFT_STAGE;
-            /* Get :size keyword */
+            size_t n = 64;
             chirp_node *size_node = chirp_node_get_kwarg(node, "size");
             if (size_node && size_node->type == CHIRP_NODE_LITERAL) {
-                inst.a0 = size_node->value;
+                n = (size_t)size_node->value;
             } else if (node->n_children > 0 && node->children[0]->type == CHIRP_NODE_LITERAL) {
-                inst.a0 = node->children[0]->value;
-            } else {
-                inst.a0 = 64; /* default */
+                n = (size_t)node->children[0]->value;
             }
+            if (n == 0) n = 64;
             t->type = FAF_TRANSFORM_FFT;
-            if (inst.a0 > t->n) t->n = inst.a0;
-            break;
+            if (n > t->n) t->n = n;
+            chirp_ensure_fft_twiddles(t, t->n);
+
+            /* Bit-reversal + staged FFT, matching faf_gen_fft_radix2. */
+            faf_inst br = {0};
+            br.packed = FAF_BITREV;
+            chirp_emit_inst(t, br, inst_count);
+
+            size_t bits = chirp_log2_size(n);
+            for (size_t stage = 0; stage < bits; stage++) {
+                faf_inst st = {0};
+                size_t group_size = 2u << stage;
+                st.packed = FAF_FFT_STAGE;
+                st.a0 = (uint32_t)group_size;
+                st.a1 = 1;
+                st.a2 = (uint32_t)(n / group_size);
+                chirp_emit_inst(t, st, inst_count);
+            }
+            return;
         }
         
         case CHIRP_NODE_TWIDDLE: {
@@ -560,26 +741,100 @@ static void chirp_compile_node_emit(chirp_node *node, faf_transform *t, int *ins
         }
         
         case CHIRP_NODE_LIFT: {
-            /* Lifting scheme with :predict and :update keywords */
+            /* Known family pairs expand to a real DWT level. Custom names
+             * are not encoded as LIFT_PRED(builtin_index) — that ABI is a
+             * register+coefficient primitive, not a function call. */
             chirp_node *predict_node = chirp_node_get_kwarg(node, "predict");
             chirp_node *update_node = chirp_node_get_kwarg(node, "update");
-            
-            if (predict_node && predict_node->sym) {
-                faf_inst pred_inst = {0};
-                pred_inst.packed = FAF_LIFT_PRED;
-                pred_inst.a0 = chirp_lookup_builtin(predict_node->sym);
-                if (pred_inst.a0 < 0) pred_inst.a0 = 0;
-                chirp_emit_inst(t, pred_inst, inst_count);
+            faf_wavelet_family fam = FAF_WAVELET_HAAR;
+            int got = 0;
+            if (chirp_parse_family(predict_node, &fam) == 0) got = 1;
+            else if (chirp_parse_family(update_node, &fam) == 0) got = 1;
+            else {
+                const char *pn = chirp_node_name(predict_node);
+                const char *un = chirp_node_name(update_node);
+                if (pn && (strstr(pn, "haar") || strstr(pn, "linear") ||
+                           strstr(pn, "cubic"))) {
+                    if (strstr(pn, "cubic") || (un && strstr(un, "cubic")))
+                        fam = FAF_WAVELET_CDF97;
+                    else if (strstr(pn, "linear") || (un && strstr(un, "linear")))
+                        fam = FAF_WAVELET_CDF53;
+                    else
+                        fam = FAF_WAVELET_HAAR;
+                    got = 1;
+                }
             }
-            
-            if (update_node && update_node->sym) {
-                faf_inst upd_inst = {0};
-                upd_inst.packed = FAF_LIFT_UPD;
-                upd_inst.a0 = chirp_lookup_builtin(update_node->sym);
-                if (upd_inst.a0 < 0) upd_inst.a0 = 0;
-                chirp_emit_inst(t, upd_inst, inst_count);
+            if (!got) {
+                faf_set_error("Chirp: lift requires a known family (haar/d4/cdf53/cdf97/sym4)");
+                return;
             }
+            t->family = fam;
+            if (t->levels == 0) t->levels = 1;
+            t->type = (fam == FAF_WAVELET_HAAR) ? FAF_TRANSFORM_HAAR :
+                      (fam == FAF_WAVELET_D4) ? FAF_TRANSFORM_DAUBECHIES4 :
+                      (fam == FAF_WAVELET_CDF53) ? FAF_TRANSFORM_CDF53 :
+                      (fam == FAF_WAVELET_CDF97) ? FAF_TRANSFORM_CDF97 :
+                      FAF_TRANSFORM_SYM4;
+            size_t n = t->n ? t->n : 64;
+            chirp_emit_dwt_stages(t, inst_count, fam, n, 1, 0);
             return;
+        }
+
+        case CHIRP_NODE_DWT:
+        case CHIRP_NODE_IDWT: {
+            int inverse = (node->type == CHIRP_NODE_IDWT);
+            faf_wavelet_family fam = FAF_WAVELET_HAAR;
+            chirp_node *fam_node = chirp_node_get_kwarg(node, "family");
+            if (chirp_parse_family(fam_node, &fam) != 0 && fam_node && fam_node->sym) {
+                faf_set_error("Chirp: unknown wavelet family '%s'", fam_node->sym);
+                return;
+            }
+            size_t n = t->n ? t->n : 64;
+            chirp_node *size_node = chirp_node_get_kwarg(node, "size");
+            if (size_node) n = (size_t)chirp_node_int(size_node, (int)n);
+            if (n == 0) n = 64;
+            if (n > t->n) t->n = n;
+
+            size_t max_levels = chirp_log2_size(n);
+            size_t levels = max_levels;
+            chirp_node *lv_node = chirp_node_get_kwarg(node, "levels");
+            if (lv_node) {
+                int lv = chirp_node_int(lv_node, 0);
+                if (lv > 0) levels = (size_t)lv;
+            }
+            if (levels > max_levels) levels = max_levels;
+            if (levels == 0) levels = max_levels;
+
+            t->family = fam;
+            t->levels = levels;
+            t->type = (fam == FAF_WAVELET_HAAR) ? FAF_TRANSFORM_HAAR :
+                      (fam == FAF_WAVELET_D4) ? FAF_TRANSFORM_DAUBECHIES4 :
+                      (fam == FAF_WAVELET_CDF53) ? FAF_TRANSFORM_CDF53 :
+                      (fam == FAF_WAVELET_CDF97) ? FAF_TRANSFORM_CDF97 :
+                      FAF_TRANSFORM_SYM4;
+            if (inverse) t->flags |= FAF_FLAG_INVERSE;
+            chirp_emit_dwt_stages(t, inst_count, fam, n, levels, inverse);
+            return;
+        }
+
+        case CHIRP_NODE_THRESHOLD: {
+            uint32_t mode = FAF_THRESH_SOFT;
+            chirp_node *mode_node = chirp_node_get_kwarg(node, "mode");
+            const char *mname = chirp_node_name(mode_node);
+            if (mname && strcmp(mname, "hard") == 0) mode = FAF_THRESH_HARD;
+            double lambda = 0.1;
+            chirp_node *lam_node = chirp_node_get_kwarg(node, "lambda");
+            if (lam_node) lambda = chirp_node_float(lam_node, 0.1);
+            size_t skip = 0;
+            if (t->levels > 0 && t->n > 0)
+                skip = t->n >> t->levels;
+            union { uint32_t u; float f; } bits;
+            bits.f = (float)lambda;
+            inst.packed = FAF_THRESHOLD;
+            inst.a0 = mode;
+            inst.a1 = (uint32_t)skip;
+            inst.a2 = bits.u;
+            break;
         }
         
         case CHIRP_NODE_CUSTOM: {
@@ -590,18 +845,47 @@ static void chirp_compile_node_emit(chirp_node *node, faf_transform *t, int *ins
             } else if (node->n_children > 0 && node->children[0]->sym) {
                 fn_name = node->children[0]->sym;  /* Old syntax: (custom name) */
             }
-            
+
             if (fn_name) {
+                faf_wavelet_family fam;
+                if (faf_wavelet_from_name(fn_name, &fam) == 0) {
+                    size_t n = t->n ? t->n : 64;
+                    size_t levels = t->levels ? t->levels : 1;
+                    chirp_emit_dwt_stages(t, inst_count, fam, n, levels, 0);
+                    return;
+                }
                 inst.packed = FAF_CALL_BUILTIN;
                 inst.a0 = chirp_lookup_builtin(fn_name);
-                if (inst.a0 < 0) {
+                if ((int)inst.a0 < 0) {
+                    faf_set_error("Chirp: unknown builtin '%s'", fn_name);
                     fprintf(stderr, "Chirp: unknown builtin '%s'\n", fn_name);
                     inst.a0 = 0;
                 }
             }
             break;
         }
-        
+
+        case CHIRP_NODE_LIST: {
+            /* A parenthesized expression whose operator is a registered builtin,
+             * e.g. (sin) or (sqrt). For now we support zero-argument calls; any
+             * children are ignored for scalar builtins. */
+            if (node->sym) {
+                faf_wavelet_family fam;
+                if (faf_wavelet_from_name(node->sym, &fam) == 0) {
+                    size_t n = t->n ? t->n : 64;
+                    size_t levels = t->levels ? t->levels : 1;
+                    chirp_emit_dwt_stages(t, inst_count, fam, n, levels, 0);
+                    return;
+                }
+                int idx = chirp_lookup_builtin(node->sym);
+                if (idx >= 0) {
+                    inst.packed = FAF_CALL_BUILTIN;
+                    inst.a0 = (uint32_t)idx;
+                }
+            }
+            break;
+        }
+
         case CHIRP_NODE_REDUCE: {
             if (strcmp(node->sym, "sum") == 0) {
                 inst.packed = FAF_REDUCE_SUM;
@@ -632,6 +916,7 @@ faf_transform* chirp_compile(const char *source) {
     chirp_node *ast = chirp_parse_expr(&lex);
     
     if (!ast) {
+        faf_set_error("Chirp: failed to parse program");
         fprintf(stderr, "Chirp: failed to parse program\n");
         return NULL;
     }
@@ -639,19 +924,49 @@ faf_transform* chirp_compile(const char *source) {
     /* Create transform */
     faf_transform *t = calloc(1, sizeof(faf_transform));
     t->precision = FAF_PREC_FP32;
-    t->n = 64; /* default size */
+    t->n = 0; /* filled in by (fft/:dwt :size) or defaulted after the first pass */
     
-    /* First pass: count instructions */
-    int inst_count = 0;
-    chirp_compile_node_emit(ast, t, &inst_count);
+    /* First pass: count instructions and resolve the transform size from
+     * high-level forms like (fft :size N). */
+    int ast_inst_count = 0;
+    chirp_compile_node_emit(ast, t, &ast_inst_count);
+    if (t->n == 0) t->n = 64;
     
-    /* Allocate code array (+1 for END) */
-    t->n_inst = inst_count + 1;
+    /* Wrap the user pipeline with LOAD/STORE so it operates on real input and
+     * output data. The AST may have updated t->n based on (fft :size N). */
+    size_t io_count = t->n;
+    int total_inst = ast_inst_count + 2 * (int)io_count + 1; /* +1 for END */
+    
+    t->n_inst = total_inst;
     t->code = calloc(t->n_inst, sizeof(faf_inst));
+    if (!t->code) {
+        faf_set_error("Chirp: failed to allocate instruction array");
+        fprintf(stderr, "Chirp: failed to allocate instruction array\n");
+        chirp_node_free(ast);
+        free(t);
+        return NULL;
+    }
     
-    /* Second pass: generate instructions */
-    inst_count = 0;
+    /* Second pass: generate LOAD, user pipeline, STORE, END */
+    int inst_count = 0;
+    
+    for (size_t i = 0; i < io_count; i++) {
+        faf_inst load = {0};
+        load.packed = FAF_LOAD;
+        load.a0 = (uint32_t)i;
+        load.a1 = (uint32_t)i;
+        t->code[inst_count++] = load;
+    }
+    
     chirp_compile_node_emit(ast, t, &inst_count);
+    
+    for (size_t i = 0; i < io_count; i++) {
+        faf_inst store = {0};
+        store.packed = FAF_STORE;
+        store.a0 = (uint32_t)i;
+        store.a1 = (uint32_t)i;
+        t->code[inst_count++] = store;
+    }
     
     /* Add END opcode */
     faf_inst end_inst = {0};

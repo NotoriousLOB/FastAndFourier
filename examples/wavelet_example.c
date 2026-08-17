@@ -1,78 +1,64 @@
 /**
  * @file wavelet_example.c
- * @brief Wavelet transform example
+ * @brief Multi-family C API DWT with inverse reconstruction
  */
 
 #include <fastandfourier.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
+#include <string.h>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
 
 int main(void) {
-    printf("FastAndFourier - Wavelet Transform Example\n");
-    printf("===========================================\n\n");
-    
+    printf("FastAndFourier - Wavelet families (forward + inverse)\n\n");
     faf_init();
-    
-    /* Create a 128-point Haar wavelet with 3 decomposition levels */
+
     const size_t n = 128;
     const size_t levels = 3;
-    
-    faf_transform* haar = faf_create_haar(n, levels, FAF_PREC_FP32, 0);
-    if (!haar) {
-        fprintf(stderr, "Failed to create Haar transform: %s\n", faf_get_error());
-        return 1;
+    float *in = (float*)aligned_alloc(64, 2 * n * sizeof(float));
+    float *mid = (float*)aligned_alloc(64, 2 * n * sizeof(float));
+    float *out = (float*)aligned_alloc(64, 2 * n * sizeof(float));
+
+    for (size_t i = 0; i < n; i++) {
+        in[2 * i] = (i < n / 2) ? 0.0f : 1.0f;
+        in[2 * i + 1] = 0.0f;
     }
-    
-    float* in = (float*)aligned_alloc(64, n * sizeof(float));
-    float* out = (float*)aligned_alloc(64, n * sizeof(float));
-    
-    /* Create a signal with a discontinuity (edge) */
-    for (size_t i = 0; i < n / 2; i++) {
-        in[i] = 0.0f;
-    }
-    for (size_t i = n / 2; i < n; i++) {
-        in[i] = 1.0f;
-    }
-    
-    printf("Input: Step function (0 for first half, 1 for second half)\n\n");
-    
-    /* Execute Haar transform */
-    faf_execute_f32(haar, out, in);
-    
-    /* Display wavelet coefficients */
-    printf("Wavelet coefficients after %zu-level decomposition:\n", levels);
-    printf("Level\tApproximation\tDetail Coefficients\n");
-    printf("-----\t-------------\t-------------------\n");
-    
-    size_t offset = 0;
-    size_t current_n = n;
-    
-    for (size_t level = 0; level < levels; level++) {
-        printf("%zu\t%.4f\t\t", level + 1, out[offset]);
-        
-        /* Show first few detail coefficients */
-        printf("[");
-        for (size_t i = 0; i < 4 && i < current_n / 2; i++) {
-            printf("%.3f", out[offset + current_n / 2 + i]);
-            if (i < 3 && i < current_n / 2 - 1) printf(", ");
+
+    faf_wavelet_family fams[] = {
+        FAF_WAVELET_HAAR, FAF_WAVELET_D4, FAF_WAVELET_CDF53,
+        FAF_WAVELET_CDF97, FAF_WAVELET_SYM4
+    };
+
+    printf("%-10s  PR max|err|\n", "family");
+    int rc = 0;
+    for (size_t k = 0; k < sizeof(fams) / sizeof(fams[0]); k++) {
+        faf_transform *fwd = faf_create_dwt(fams[k], n, levels, false, FAF_PREC_FP32, 0);
+        faf_transform *inv = faf_create_dwt(fams[k], n, levels, true, FAF_PREC_FP32, 0);
+        if (!fwd || !inv) {
+            fprintf(stderr, "create failed: %s\n", faf_get_error());
+            rc = 1;
+            faf_destroy_transform(fwd);
+            faf_destroy_transform(inv);
+            continue;
         }
-        printf("...]\n");
-        
-        offset += current_n / 2;
-        current_n /= 2;
+        faf_execute_f32(fwd, mid, in);
+        faf_execute_f32(inv, out, mid);
+        float err = 0.0f;
+        for (size_t i = 0; i < n; i++) {
+            float e = fabsf(out[2 * i] - in[2 * i]);
+            if (e > err) err = e;
+        }
+        printf("%-10s  %.3e\n", faf_wavelet_name(fams[k]), err);
+        if (err > 5e-4f) rc = 1;
+        faf_destroy_transform(fwd);
+        faf_destroy_transform(inv);
     }
-    
-    printf("\nNote: Large detail coefficients indicate edges in the signal.\n");
-    
-    free(in);
-    free(out);
-    faf_destroy_transform(haar);
+
+    free(in); free(mid); free(out);
     faf_cleanup();
-    
-    return 0;
+    return rc;
 }

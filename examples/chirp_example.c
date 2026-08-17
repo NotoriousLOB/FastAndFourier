@@ -17,8 +17,12 @@
 #include <stdlib.h>
 #include <math.h>
 #include <string.h>
+#ifndef isfinite
+#define isfinite(x) ((x) == (x) && (x) != HUGE_VALF && (x) != -HUGE_VALF)
+#endif
 #include "fastandfourier.h"
 #include "chirp.h"
+#include "chirp_builtins.h"
 
 /* Example custom function implementations */
 static void my_gaussian_impl(void) {
@@ -140,8 +144,25 @@ int main(void) {
         faf_destroy_transform(t4);
     }
     
+    /* Example 5: actually execute a Haar DWT */
+    printf("\nExample 5: Execute Haar DWT\n");
+    chirp_register_standard_builtins();
+    faf_transform *t5 = chirp_compile("(dwt :family haar :size 32 :levels 3)");
+    if (t5) {
+        float in[64] = {0}, out[64] = {0};
+        for (int i = 0; i < 32; i++) in[2 * i] = (i < 16) ? 0.0f : 1.0f;
+        if (faf_execute_f32(t5, out, in) == 0) {
+            int finite = 1;
+            for (int i = 0; i < 64; i++) if (!isfinite(out[i])) finite = 0;
+            printf("Executed Haar DWT: %s  approx[0]=%.4f\n",
+                   finite ? "finite output" : "NON-FINITE", out[0]);
+        }
+        faf_destroy_transform(t5);
+    }
+
     printf("\n=== All examples completed successfully! ===\n");
     
+    chirp_cleanup();
     faf_cleanup();
     return 0;
 }

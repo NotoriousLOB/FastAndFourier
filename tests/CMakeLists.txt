@@ -23,6 +23,8 @@ set(TEST_SOURCES
     test_precision.cpp
     test_jit.cpp
     test_chirp.cpp
+    test_chirp_compositions.cpp
+    test_wavelets.cpp
 )
 
 # Architecture-specific tests

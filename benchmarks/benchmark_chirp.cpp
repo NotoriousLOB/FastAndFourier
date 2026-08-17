@@ -192,3 +192,175 @@ static void BM_Chirp_Execute_ReduceSum(benchmark::State& state) {
 BENCHMARK(BM_Chirp_Execute_ReduceSum)
     ->Range(16, 16)
     ->Unit(benchmark::kMicrosecond);
+
+static void BM_Chirp_Execute_Sin(benchmark::State& state) {
+    ensure_chirp_builtins();
+    const size_t n = state.range(0);
+
+    faf_transform* t = chirp_compile("(sin)");
+    if (!t) {
+        state.SkipWithError("Failed to compile (sin)");
+        return;
+    }
+
+    float* in = (float*)aligned_alloc(64, 2 * t->n * sizeof(float));
+    float* out = (float*)aligned_alloc(64, 2 * t->n * sizeof(float));
+
+    for (size_t i = 0; i < t->n; i++) {
+        in[2 * i] = (float)i * 0.1f;
+        in[2 * i + 1] = 0.0f;
+    }
+
+    for (auto _ : state) {
+        int result = faf_execute_f32(t, out, in);
+        benchmark::DoNotOptimize(result);
+        benchmark::DoNotOptimize(out);
+    }
+
+    state.SetItemsProcessed(state.iterations() * t->n);
+    state.SetBytesProcessed(state.iterations() * t->n * sizeof(float) * 2);
+    state.SetLabel("size=" + std::to_string(t->n));
+
+    free(in);
+    free(out);
+    faf_destroy_transform(t);
+}
+BENCHMARK(BM_Chirp_Execute_Sin)
+    ->Range(64, 4096)
+    ->Unit(benchmark::kMicrosecond);
+
+static void BM_Chirp_Execute_PipelineSinExp(benchmark::State& state) {
+    ensure_chirp_builtins();
+    const size_t n = state.range(0);
+
+    faf_transform* t = chirp_compile("(pipeline sin exp)");
+    if (!t) {
+        state.SkipWithError("Failed to compile (pipeline sin exp)");
+        return;
+    }
+
+    float* in = (float*)aligned_alloc(64, 2 * t->n * sizeof(float));
+    float* out = (float*)aligned_alloc(64, 2 * t->n * sizeof(float));
+
+    for (size_t i = 0; i < t->n; i++) {
+        in[2 * i] = (float)i * 0.05f;
+        in[2 * i + 1] = 0.0f;
+    }
+
+    for (auto _ : state) {
+        int result = faf_execute_f32(t, out, in);
+        benchmark::DoNotOptimize(result);
+        benchmark::DoNotOptimize(out);
+    }
+
+    state.SetItemsProcessed(state.iterations() * t->n);
+    state.SetBytesProcessed(state.iterations() * t->n * sizeof(float) * 2);
+    state.SetLabel("size=" + std::to_string(t->n));
+
+    free(in);
+    free(out);
+    faf_destroy_transform(t);
+}
+BENCHMARK(BM_Chirp_Execute_PipelineSinExp)
+    ->Range(64, 4096)
+    ->Unit(benchmark::kMicrosecond);
+
+static void BM_Chirp_Execute_ScalarBuiltinTour(benchmark::State& state) {
+    ensure_chirp_builtins();
+    const size_t n = state.range(0);
+
+    /* A pipeline of scalar builtins that are safe for element-wise execution.
+     * Vector builtins (sum, norm, etc.) are excluded because they require a
+     * size argument and are not supported by the current CALL_BUILTIN handler. */
+    faf_transform* t = chirp_compile(
+        "(pipeline "
+        "  sin cos"
+        "  exp log sqrt"
+        "  sigmoid relu gelu tanh"
+        "  clamp sign"
+        ")"
+    );
+    if (!t) {
+        state.SkipWithError("Failed to compile scalar builtin tour");
+        return;
+    }
+
+    float* in = (float*)aligned_alloc(64, 2 * t->n * sizeof(float));
+    float* out = (float*)aligned_alloc(64, 2 * t->n * sizeof(float));
+
+    for (size_t i = 0; i < t->n; i++) {
+        in[2 * i] = 0.5f + (float)i * 0.01f;
+        in[2 * i + 1] = 0.0f;
+    }
+
+    for (auto _ : state) {
+        int result = faf_execute_f32(t, out, in);
+        benchmark::DoNotOptimize(result);
+        benchmark::DoNotOptimize(out);
+    }
+
+    state.SetItemsProcessed(state.iterations() * t->n);
+    state.SetBytesProcessed(state.iterations() * t->n * sizeof(float) * 2);
+    state.SetLabel("size=" + std::to_string(t->n));
+
+    free(in);
+    free(out);
+    faf_destroy_transform(t);
+}
+BENCHMARK(BM_Chirp_Execute_ScalarBuiltinTour)
+    ->Range(64, 4096)
+    ->Unit(benchmark::kMicrosecond);
+
+static void BM_Chirp_Execute_DWT(benchmark::State& state) {
+    ensure_chirp_builtins();
+    const size_t n = (size_t)state.range(0);
+    const std::string src =
+        "(dwt :family cdf97 :size " + std::to_string(n) + " :levels 4)";
+    faf_transform* t = chirp_compile(src.c_str());
+    if (!t) {
+        state.SkipWithError("Failed to compile Chirp DWT");
+        return;
+    }
+    float* in = (float*)aligned_alloc(64, 2 * n * sizeof(float));
+    float* out = (float*)aligned_alloc(64, 2 * n * sizeof(float));
+    for (size_t i = 0; i < n; i++) {
+        in[2 * i] = sinf(2.0f * (float)M_PI * (float)i / (float)n);
+        in[2 * i + 1] = 0.0f;
+    }
+    for (auto _ : state) {
+        faf_execute_f32(t, out, in);
+    }
+    state.SetItemsProcessed(state.iterations() * n);
+    state.SetLabel("chirp-cdf97");
+    free(in); free(out);
+    faf_destroy_transform(t);
+}
+BENCHMARK(BM_Chirp_Execute_DWT)->Range(64, 4096)->Unit(benchmark::kMicrosecond);
+
+static void BM_Chirp_Execute_Denoise(benchmark::State& state) {
+    ensure_chirp_builtins();
+    const size_t n = 1024;
+    faf_transform* t = chirp_compile(
+        "(pipeline "
+        "  (dwt :family cdf97 :size 1024 :levels 5)"
+        "  (threshold :mode soft :lambda 0.08)"
+        "  (idwt :family cdf97 :size 1024 :levels 5))"
+    );
+    if (!t) {
+        state.SkipWithError("Failed to compile denoise pipeline");
+        return;
+    }
+    float* in = (float*)aligned_alloc(64, 2 * n * sizeof(float));
+    float* out = (float*)aligned_alloc(64, 2 * n * sizeof(float));
+    for (size_t i = 0; i < n; i++) {
+        in[2 * i] = sinf(2.0f * (float)M_PI * 3.0f * (float)i / (float)n);
+        in[2 * i + 1] = 0.0f;
+    }
+    for (auto _ : state) {
+        faf_execute_f32(t, out, in);
+    }
+    state.SetItemsProcessed(state.iterations() * n);
+    free(in); free(out);
+    faf_destroy_transform(t);
+}
+BENCHMARK(BM_Chirp_Execute_Denoise)->Unit(benchmark::kMicrosecond);

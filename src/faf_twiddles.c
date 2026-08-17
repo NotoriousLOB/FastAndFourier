@@ -222,40 +222,78 @@ void faf_gen_daubechies4_coeffs_f32(float *lo, float *hi) {
     hi[3] = -h0;
 }
 
+void faf_gen_cdf53_coeffs_f32(float *lo, float *hi) {
+    /* LeGall 5/3 analysis filters (unnormalized lifting equivalent) */
+    lo[0] = -0.125f;
+    lo[1] =  0.25f;
+    lo[2] =  0.75f;
+    lo[3] =  0.25f;
+    lo[4] = -0.125f;
+    hi[0] = -0.5f;
+    hi[1] =  1.0f;
+    hi[2] = -0.5f;
+    hi[3] =  0.0f;
+    hi[4] =  0.0f;
+}
+
+void faf_gen_sym4_coeffs_f32(float *lo, float *hi) {
+    lo[0] = -0.07576571478927333f;
+    lo[1] = -0.02963552764599851f;
+    lo[2] =  0.49761866763201545f;
+    lo[3] =  0.8037387518059161f;
+    lo[4] =  0.29785779560527736f;
+    lo[5] = -0.09921954357684722f;
+    lo[6] = -0.012603967262037833f;
+    lo[7] =  0.0322231006040427f;
+    for (int i = 0; i < 8; i++) {
+        hi[i] = ((i & 1) ? -1.0f : 1.0f) * lo[7 - i];
+    }
+}
+
 void faf_gen_cdf97_coeffs_f32(float *lo, float *hi, float *lo_r, float *hi_r) {
-    /* CDF 9/7 wavelet coefficients (used in JPEG 2000) */
-    /* Analysis low-pass */
-    lo[0] = 0.02674875741080976f;
+    /* CDF 9/7 analysis low-pass (9 taps) */
+    lo[0] =  0.02674875741080976f;
     lo[1] = -0.01686411844287495f;
     lo[2] = -0.07822326652898785f;
-    lo[3] = 0.2668641184428723f;
-    lo[4] = 0.6029490182363579f;
-    lo[5] = 0.2668641184428723f;
+    lo[3] =  0.2668641184428723f;
+    lo[4] =  0.6029490182363579f;
+    lo[5] =  0.2668641184428723f;
     lo[6] = -0.07822326652898785f;
     lo[7] = -0.01686411844287495f;
-    lo[8] = 0.02674875741080976f;
-    
-    /* Analysis high-pass */
-    hi[0] = 0.0f;
-    hi[1] = 0.09127176311424948f;
+    lo[8] =  0.02674875741080976f;
+
+    /* Analysis high-pass (7 taps, centered in 9-tap buffer) */
+    hi[0] =  0.0f;
+    hi[1] =  0.09127176311424948f;
     hi[2] = -0.05754352622849957f;
     hi[3] = -0.5912717631142470f;
-    hi[4] = 1.115087052456994f;
+    hi[4] =  1.115087052456994f;
     hi[5] = -0.5912717631142470f;
     hi[6] = -0.05754352622849957f;
-    hi[7] = 0.09127176311424948f;
-    hi[8] = 0.0f;
-    
-    /* Synthesis filters (for completeness) */
+    hi[7] =  0.09127176311424948f;
+    hi[8] =  0.0f;
+
+    /* Dual synthesis pair used by JPEG 2000 (not a time-reversal of analysis) */
     if (lo_r && hi_r) {
-        /* Synthesis low-pass (time-reversed analysis high-pass) */
-        for (int i = 0; i < 9; i++) {
-            lo_r[i] = hi[8 - i];
-        }
-        /* Synthesis high-pass (time-reversed analysis low-pass) */
-        for (int i = 0; i < 9; i++) {
-            hi_r[i] = lo[8 - i];
-        }
+        lo_r[0] = -0.09127176311424948f;
+        lo_r[1] = -0.05754352622849957f;
+        lo_r[2] =  0.5912717631142470f;
+        lo_r[3] =  1.115087052456994f;
+        lo_r[4] =  0.5912717631142470f;
+        lo_r[5] = -0.05754352622849957f;
+        lo_r[6] = -0.09127176311424948f;
+        lo_r[7] =  0.0f;
+        lo_r[8] =  0.0f;
+
+        hi_r[0] =  0.02674875741080976f;
+        hi_r[1] =  0.01686411844287495f;
+        hi_r[2] = -0.07822326652898785f;
+        hi_r[3] = -0.2668641184428723f;
+        hi_r[4] =  0.6029490182363579f;
+        hi_r[5] = -0.2668641184428723f;
+        hi_r[6] = -0.07822326652898785f;
+        hi_r[7] =  0.01686411844287495f;
+        hi_r[8] =  0.02674875741080976f;
     }
 }
 

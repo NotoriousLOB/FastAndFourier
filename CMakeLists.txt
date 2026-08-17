@@ -16,8 +16,41 @@ option(ENABLE_COVERAGE "Enable code coverage" OFF)
 option(ENABLE_CUDA "Enable CUDA support" OFF)
 option(ENABLE_FP8 "Enable FP8 precision" ON)
 option(ENABLE_FP16 "Enable FP16 precision" ON)
+option(ENABLE_ASAN "Enable AddressSanitizer" OFF)
+option(ENABLE_UBSAN "Enable UndefinedBehaviorSanitizer" OFF)
+option(ENABLE_TSAN "Enable ThreadSanitizer" OFF)
+option(ENABLE_MSAN "Enable MemorySanitizer" OFF)
+option(ENABLE_WERROR "Treat compiler warnings as errors" OFF)
 option(FASTANDFOURIER_SINGLE_HEADER "Build single-header fallback mode" OFF)
 option(FASTANDFOURIER_PRECOMPILE "Pre-generate codelets for common N" OFF)
+
+if(ENABLE_TSAN AND (ENABLE_ASAN OR ENABLE_UBSAN OR ENABLE_MSAN))
+    message(FATAL_ERROR "ENABLE_TSAN is mutually exclusive with ASan/UBSan/MSan")
+endif()
+if(ENABLE_MSAN AND (ENABLE_ASAN OR ENABLE_TSAN))
+    message(FATAL_ERROR "ENABLE_MSAN is mutually exclusive with ASan/TSan")
+endif()
+
+set(_FAF_SANITIZER_FLAGS "")
+if(ENABLE_ASAN)
+    list(APPEND _FAF_SANITIZER_FLAGS -fsanitize=address)
+endif()
+if(ENABLE_UBSAN)
+    list(APPEND _FAF_SANITIZER_FLAGS -fsanitize=undefined)
+endif()
+if(ENABLE_TSAN)
+    list(APPEND _FAF_SANITIZER_FLAGS -fsanitize=thread)
+endif()
+if(ENABLE_MSAN)
+    list(APPEND _FAF_SANITIZER_FLAGS -fsanitize=memory)
+endif()
+if(_FAF_SANITIZER_FLAGS)
+    add_compile_options(${_FAF_SANITIZER_FLAGS} -fno-omit-frame-pointer)
+    add_link_options(${_FAF_SANITIZER_FLAGS})
+endif()
+if(ENABLE_WERROR)
+    add_compile_options(-Werror)
+endif()
 
 # Include CMake modules for feature detection
 include(CheckCSourceRuns)
@@ -158,6 +191,7 @@ set(FAF_CORE_SOURCES
     src/faf_vm.c
     src/faf_transforms.c
     src/faf_twiddles.c
+    src/faf_wavelets.c
     src/chirp.c
     src/chirp_builtins.c
 )

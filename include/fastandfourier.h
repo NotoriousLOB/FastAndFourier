@@ -59,21 +59,35 @@ extern "C" {
 
 /* Architecture detection */
 #if defined(__x86_64__) || defined(_M_X64)
-    #define FAF_ARCH_X86_64
+    #ifndef FAF_ARCH_X86_64
+        #define FAF_ARCH_X86_64
+    #endif
     #if defined(__AVX512F__)
-        #define FAF_HAVE_AVX512
+        #ifndef FAF_HAVE_AVX512
+            #define FAF_HAVE_AVX512
+        #endif
     #endif
     #if defined(__AVX2__)
-        #define FAF_HAVE_AVX2
+        #ifndef FAF_HAVE_AVX2
+            #define FAF_HAVE_AVX2
+        #endif
     #endif
     #if defined(__SSE4_2__)
-        #define FAF_HAVE_SSE42
+        #ifndef FAF_HAVE_SSE42
+            #define FAF_HAVE_SSE42
+        #endif
     #endif
 #elif defined(__aarch64__) || defined(_M_ARM64)
-    #define FAF_ARCH_AARCH64
-    #define FAF_HAVE_NEON
+    #ifndef FAF_ARCH_AARCH64
+        #define FAF_ARCH_AARCH64
+    #endif
+    #ifndef FAF_HAVE_NEON
+        #define FAF_HAVE_NEON
+    #endif
     #if defined(__ARM_FEATURE_SVE)
-        #define FAF_HAVE_SVE
+        #ifndef FAF_HAVE_SVE
+            #define FAF_HAVE_SVE
+        #endif
     #endif
 #endif
 
@@ -128,9 +142,30 @@ typedef enum {
     FAF_TRANSFORM_MDCT,      /**< Modified Discrete Cosine Transform */
     FAF_TRANSFORM_IMDCT,     /**< Inverse MDCT */
     FAF_TRANSFORM_HAAR,      /**< Haar Wavelet Transform */
-    FAF_TRANSFORM_DAUBECHIES4, /**< Daubechies-4 Wavelet Transform */
+    FAF_TRANSFORM_DAUBECHIES4, /**< Daubechies-4 (D4 / db2) Wavelet Transform */
+    FAF_TRANSFORM_CDF53,     /**< CDF 5/3 (LeGall) Wavelet, JPEG 2000 lossless */
     FAF_TRANSFORM_CDF97,     /**< Cohen-Daubechies-Feauveau 9/7 Wavelet */
+    FAF_TRANSFORM_SYM4,      /**< Symlet-4 Wavelet */
 } faf_transform_type;
+
+/**
+ * @brief Named discrete wavelet families (lifting or orthonormal filter bank)
+ */
+typedef enum {
+    FAF_WAVELET_HAAR = 0,    /**< Haar / db1, orthonormal */
+    FAF_WAVELET_D4,          /**< Daubechies D4 / db2, 4-tap orthonormal */
+    FAF_WAVELET_CDF53,       /**< LeGall 5/3, JPEG 2000 lossless */
+    FAF_WAVELET_CDF97,       /**< CDF 9/7, JPEG 2000 lossy */
+    FAF_WAVELET_SYM4,        /**< Symlet 4, 8-tap orthonormal */
+    FAF_WAVELET_COUNT
+} faf_wavelet_family;
+
+/** Packed into FAF_DWT_STAGE.a2 */
+#define FAF_DWT_FLAG_INVERSE  0x1u
+
+/** FAF_THRESHOLD.a0 */
+#define FAF_THRESH_HARD  0u
+#define FAF_THRESH_SOFT  1u
 
 /**
  * @brief IR opcodes for the virtual machine
@@ -167,6 +202,9 @@ typedef enum {
     FAF_REDUCE_MAX,        /**< Horizontal max reduction */
     FAF_REDUCE_MIN,        /**< Horizontal min reduction */
     FAF_CALL_BUILTIN,      /**< Call registered built-in function (Chirp DSL) */
+    FAF_BITREV,            /**< Bit-reversal permutation of n complex samples */
+    FAF_DWT_STAGE,         /**< One Mallat DWT/IDWT level (family, length, flags) */
+    FAF_THRESHOLD,         /**< Hard/soft threshold of detail coefficients */
     FAF_END = 255          /**< Program end - high value for extensibility */
 } faf_opcode;
 
@@ -210,6 +248,8 @@ typedef struct {
     faf_jit_cache *jit_cache;  /**< Cached JIT compilation (NULL if not compiled) */
     size_t hop_length;           /**< STFT: hop between frames (0 if unused) */
     size_t win_length;           /**< STFT: window length (0 if unused) */
+    size_t levels;               /**< DWT: number of Mallat decomposition levels */
+    faf_wavelet_family family; /**< DWT: wavelet family */
 } faf_transform;
 
 /**
@@ -384,6 +424,63 @@ faf_transform* faf_create_daubechies4(size_t n,
                                            size_t levels,
                                            faf_precision precision,
                                            uint32_t flags);
+
+/**
+ * @brief Create a discrete wavelet transform
+ * @param family Wavelet family
+ * @param n Transform size (must be power of 2)
+ * @param levels Decomposition levels (0 = full log2(n))
+ * @param inverse True for inverse (IDWT)
+ * @param precision Precision level
+ * @param flags Additional flags (FAF_FLAG_INVERSE is OR'd if inverse)
+ * @return Transform object or NULL on error
+ */
+faf_transform* faf_create_dwt(faf_wavelet_family family,
+                              size_t n,
+                              size_t levels,
+                              bool inverse,
+                              faf_precision precision,
+                              uint32_t flags);
+
+/**
+ * @brief Create a CDF 5/3 (LeGall) wavelet transform
+ */
+faf_transform* faf_create_cdf53(size_t n,
+                                size_t levels,
+                                faf_precision precision,
+                                uint32_t flags);
+
+/**
+ * @brief Create a CDF 9/7 wavelet transform
+ */
+faf_transform* faf_create_cdf97(size_t n,
+                                size_t levels,
+                                faf_precision precision,
+                                uint32_t flags);
+
+/**
+ * @brief Create a Symlet-4 wavelet transform
+ */
+faf_transform* faf_create_sym4(size_t n,
+                               size_t levels,
+                               faf_precision precision,
+                               uint32_t flags);
+
+/**
+ * @brief Wavelet family name (e.g. "haar", "cdf97")
+ */
+const char* faf_wavelet_name(faf_wavelet_family family);
+
+/**
+ * @brief Analysis-filter tap count for a family (0 if lifting-only)
+ */
+int faf_wavelet_taps(faf_wavelet_family family);
+
+/**
+ * @brief Parse a family name (haar, d4, db2, daubechies4, cdf53, legall, cdf97, sym4)
+ * @return 0 on success
+ */
+int faf_wavelet_from_name(const char *name, faf_wavelet_family *out);
 
 /**
  * @brief Destroy a transform and free resources
@@ -605,6 +702,11 @@ const char* faf_get_error(void);
  * @brief Clear error state
  */
 void faf_clear_error(void);
+
+/**
+ * @brief Set the thread-local error message (printf-style)
+ */
+void faf_set_error(const char *fmt, ...);
 
 #ifdef __cplusplus
 }

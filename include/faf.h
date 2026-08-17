@@ -28,9 +28,17 @@ typedef enum {
 #define FAF_PACK_INST(op, flags, meta) \
     (FAF_PACK_OP(op) | FAF_PACK_FLAGS(flags) | FAF_PACK_META(meta))
 
+/* fastandfourier.h already provides these; keep local definitions only when
+ * the public header has not been included first. */
+#ifndef FAF_GET_OP
 #define FAF_GET_OP(packed) ((packed) & 0xFF)
+#endif
+#ifndef FAF_GET_FLAGS
 #define FAF_GET_FLAGS(packed) (((packed) >> 8) & 0xFF)
+#endif
+#ifndef FAF_GET_META
 #define FAF_GET_META(packed) (((packed) >> 16) & 0xFFFF)
+#endif
 
 /* --- INSTRUCTION FLAGS --- */
 
@@ -74,7 +82,8 @@ typedef enum {
         &&label_LIFT_SCALE, &&label_DOWN2, &&label_UP2, \
         &&label_POLY_FIR, &&label_POLY_IIR, &&label_PERMUTE, \
         &&label_SHUFFLE, &&label_BLEND, &&label_REDUCE_SUM, \
-        &&label_REDUCE_MAX, &&label_REDUCE_MIN, &&label_END
+        &&label_REDUCE_MAX, &&label_REDUCE_MIN, &&label_CALL_BUILTIN, \
+        &&label_BITREV, &&label_DWT_STAGE, &&label_THRESHOLD
     
     #define FAF_DISPATCH(op) goto *dispatch_table[op]
 #else
@@ -195,6 +204,18 @@ void faf_gen_dst_ii(faf_transform *t, size_t n);
 void faf_gen_mdct(faf_transform *t, size_t n);
 void faf_gen_haar(faf_transform *t, size_t n, size_t levels);
 void faf_gen_daubechies4(faf_transform *t, size_t n, size_t levels);
+void faf_gen_dwt(faf_transform *t, faf_wavelet_family family, size_t n,
+                 size_t levels, bool inverse);
+
+/* One Mallat level, in-place on a packed real array of length n (n even). */
+void faf_dwt_level_f32(float *x, size_t n, faf_wavelet_family family, int inverse);
+void faf_dwt_level_f64(double *x, size_t n, faf_wavelet_family family, int inverse);
+void faf_threshold_band_f32(float *x, size_t start, size_t end, int mode, float lambda);
+void faf_threshold_band_f64(double *x, size_t start, size_t end, int mode, double lambda);
+
+/* Number of FFT_STAGE ops (and optional BITREV) Chirp should emit for size n. */
+size_t faf_fft_stage_count(size_t n);
+void faf_emit_fft_stages(faf_transform *t, size_t n, size_t *idx);
 
 /* Twiddle generation */
 void faf_gen_twiddles_f32(float *tw, size_t n, bool inverse);
@@ -213,7 +234,9 @@ void faf_gen_kaiser_window_f32(float *win, size_t n, float beta);
 /* Wavelet coefficients */
 void faf_gen_haar_coeffs_f32(float *lo, float *hi);
 void faf_gen_daubechies4_coeffs_f32(float *lo, float *hi);
+void faf_gen_cdf53_coeffs_f32(float *lo, float *hi);
 void faf_gen_cdf97_coeffs_f32(float *lo, float *hi, float *lo_r, float *hi_r);
+void faf_gen_sym4_coeffs_f32(float *lo, float *hi);
 
 /* JIT compilers */
 #ifdef FAF_ARCH_X86_64

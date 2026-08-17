@@ -72,6 +72,13 @@ void faf_clear_error(void) {
     g_error_buf[0] = '\0';
 }
 
+void faf_set_error(const char *fmt, ...) {
+    va_list args;
+    va_start(args, fmt);
+    vsnprintf(g_error_buf, sizeof(g_error_buf), fmt, args);
+    va_end(args);
+}
+
 static void set_error(const char *fmt, ...) {
     va_list args;
     va_start(args, fmt);
@@ -130,7 +137,9 @@ const char* faf_transform_name(faf_transform_type type) {
         case FAF_TRANSFORM_IMDCT:        return "imdct";
         case FAF_TRANSFORM_HAAR:         return "haar";
         case FAF_TRANSFORM_DAUBECHIES4:  return "daubechies4";
+        case FAF_TRANSFORM_CDF53:        return "cdf53";
         case FAF_TRANSFORM_CDF97:        return "cdf97";
+        case FAF_TRANSFORM_SYM4:         return "sym4";
         default: return "unknown";
     }
 }
@@ -207,6 +216,9 @@ bool faf_is_size_supported(faf_transform_type type, size_t n) {
         case FAF_TRANSFORM_IFFT:
         case FAF_TRANSFORM_HAAR:
         case FAF_TRANSFORM_DAUBECHIES4:
+        case FAF_TRANSFORM_CDF53:
+        case FAF_TRANSFORM_CDF97:
+        case FAF_TRANSFORM_SYM4:
             return faf_is_power_of_2(n);
         case FAF_TRANSFORM_RFFT:
         case FAF_TRANSFORM_IRFFT:
@@ -367,48 +379,86 @@ faf_transform* faf_create_mdct(size_t n, faf_precision precision, uint32_t flags
     return t;
 }
 
-faf_transform* faf_create_haar(size_t n, size_t levels, faf_precision precision, uint32_t flags) {
-    if (!faf_is_power_of_2(n)) {
-        set_error("Haar transform size must be power of 2, got %zu", n);
+static faf_transform_type family_to_type(faf_wavelet_family family) {
+    switch (family) {
+        case FAF_WAVELET_HAAR:  return FAF_TRANSFORM_HAAR;
+        case FAF_WAVELET_D4:    return FAF_TRANSFORM_DAUBECHIES4;
+        case FAF_WAVELET_CDF53: return FAF_TRANSFORM_CDF53;
+        case FAF_WAVELET_CDF97: return FAF_TRANSFORM_CDF97;
+        case FAF_WAVELET_SYM4:  return FAF_TRANSFORM_SYM4;
+        default:                return FAF_TRANSFORM_HAAR;
+    }
+}
+
+static size_t log2_size(size_t n) {
+    size_t bits = 0;
+    while (n > 1) { n >>= 1; bits++; }
+    return bits;
+}
+
+faf_transform* faf_create_dwt(faf_wavelet_family family, size_t n, size_t levels,
+                              bool inverse, faf_precision precision, uint32_t flags) {
+    if (!faf_is_power_of_2(n) || n < 2) {
+        set_error("DWT size must be a power of 2 >= 2, got %zu", n);
         return NULL;
     }
-    
+    if (family >= FAF_WAVELET_COUNT) {
+        set_error("Unknown wavelet family %d", (int)family);
+        return NULL;
+    }
+
+    size_t max_levels = log2_size(n);
+    if (levels == 0) levels = max_levels;
+    if (levels > max_levels) {
+        set_error("DWT levels %zu exceed log2(%zu)=%zu", levels, n, max_levels);
+        return NULL;
+    }
+
     faf_transform *t = calloc(1, sizeof(faf_transform));
     if (!t) {
         set_error("Failed to allocate transform");
         return NULL;
     }
-    
+
     t->n = n;
     t->precision = precision;
-    t->type = FAF_TRANSFORM_HAAR;
-    t->flags = flags;
-    
-    faf_gen_haar(t, n, levels);
-    
+    t->type = family_to_type(family);
+    t->flags = flags | (inverse ? FAF_FLAG_INVERSE : 0);
+    t->levels = levels;
+    t->family = family;
+
+    faf_gen_dwt(t, family, n, levels, inverse);
+    if (!t->code) {
+        set_error("Failed to generate DWT bytecode");
+        free(t);
+        return NULL;
+    }
     return t;
 }
 
+faf_transform* faf_create_haar(size_t n, size_t levels, faf_precision precision, uint32_t flags) {
+    return faf_create_dwt(FAF_WAVELET_HAAR, n, levels,
+                          (flags & FAF_FLAG_INVERSE) != 0, precision, flags);
+}
+
 faf_transform* faf_create_daubechies4(size_t n, size_t levels, faf_precision precision, uint32_t flags) {
-    if (!faf_is_power_of_2(n)) {
-        set_error("Daubechies-4 transform size must be power of 2, got %zu", n);
-        return NULL;
-    }
-    
-    faf_transform *t = calloc(1, sizeof(faf_transform));
-    if (!t) {
-        set_error("Failed to allocate transform");
-        return NULL;
-    }
-    
-    t->n = n;
-    t->precision = precision;
-    t->type = FAF_TRANSFORM_DAUBECHIES4;
-    t->flags = flags;
-    
-    faf_gen_daubechies4(t, n, levels);
-    
-    return t;
+    return faf_create_dwt(FAF_WAVELET_D4, n, levels,
+                          (flags & FAF_FLAG_INVERSE) != 0, precision, flags);
+}
+
+faf_transform* faf_create_cdf53(size_t n, size_t levels, faf_precision precision, uint32_t flags) {
+    return faf_create_dwt(FAF_WAVELET_CDF53, n, levels,
+                          (flags & FAF_FLAG_INVERSE) != 0, precision, flags);
+}
+
+faf_transform* faf_create_cdf97(size_t n, size_t levels, faf_precision precision, uint32_t flags) {
+    return faf_create_dwt(FAF_WAVELET_CDF97, n, levels,
+                          (flags & FAF_FLAG_INVERSE) != 0, precision, flags);
+}
+
+faf_transform* faf_create_sym4(size_t n, size_t levels, faf_precision precision, uint32_t flags) {
+    return faf_create_dwt(FAF_WAVELET_SYM4, n, levels,
+                          (flags & FAF_FLAG_INVERSE) != 0, precision, flags);
 }
 
 faf_transform* faf_create_stft(size_t n_fft, size_t hop_length, size_t win_length,

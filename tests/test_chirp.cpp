@@ -199,15 +199,14 @@ TEST(ChirpTest, CompileReduce) {
 TEST(ChirpTest, CompileLift) {
     ChirpRegistryGuard guard;
 
-    /* Use standard builtins that are registered as predict/update targets. */
     faf_transform *t = chirp_compile(
         "(pipeline "
         "  (fft :size 64)"
-        "  (lift :predict sigmoid :update relu))"
+        "  (lift :predict haar :update haar))"
     );
     ASSERT_NE(t, nullptr);
-    EXPECT_TRUE(has_opcode(t, FAF_LIFT_PRED));
-    EXPECT_TRUE(has_opcode(t, FAF_LIFT_UPD));
+    EXPECT_TRUE(has_opcode(t, FAF_DWT_STAGE));
+    EXPECT_FALSE(has_opcode(t, FAF_LIFT_PRED));
 
     faf_destroy_transform(t);
 }
@@ -240,7 +239,7 @@ TEST(ChirpTest, PipelineSequencing) {
         "  reduce-sum)"
     );
     ASSERT_NE(t, nullptr);
-    EXPECT_EQ(count_opcodes(t, FAF_FFT_STAGE), 1u);
+    EXPECT_EQ(count_opcodes(t, FAF_FFT_STAGE), 6u); /* log2(64) staged FFT */
     EXPECT_EQ(count_opcodes(t, FAF_TWIDDLE_MUL), 1u);
     EXPECT_EQ(count_opcodes(t, FAF_BFLY4), 1u);
     EXPECT_EQ(count_opcodes(t, FAF_BFLY2), 1u);
@@ -411,9 +410,6 @@ TEST(ChirpTest, WaveletBuiltinsCompile) {
     ChirpRegistryGuard guard;
 
     const char *programs[] = {
-        "(pipeline (fft :size 64) haar)",
-        "(pipeline (fft :size 64) haar_inverse)",
-        "(pipeline (fft :size 64) daubechies4)",
         "(pipeline (fft :size 64) morlet)",
         "(pipeline (fft :size 64) mexican_hat)",
     };
@@ -424,6 +420,16 @@ TEST(ChirpTest, WaveletBuiltinsCompile) {
         EXPECT_TRUE(has_opcode(t, FAF_CALL_BUILTIN)) << src;
         faf_destroy_transform(t);
     }
+
+    faf_transform *th = chirp_compile("(pipeline (dwt :family haar :size 64 :levels 3))");
+    ASSERT_NE(th, nullptr);
+    EXPECT_TRUE(has_opcode(th, FAF_DWT_STAGE));
+    faf_destroy_transform(th);
+
+    faf_transform *td = chirp_compile("(pipeline (dwt :family d4 :size 64 :levels 2))");
+    ASSERT_NE(td, nullptr);
+    EXPECT_TRUE(has_opcode(td, FAF_DWT_STAGE));
+    faf_destroy_transform(td);
 }
 
 TEST(ChirpTest, UtilityBuiltinsCompile) {
@@ -461,7 +467,7 @@ TEST(ChirpTest, ComplexPipelineCompiles) {
         "  (bfly 2)"
         "  sigmoid"
         "  gelu"
-        "  (lift :predict gaussian_pdf :update laplace_pdf)"
+        "  (lift :predict cdf97 :update cdf97)"
         "  reduce-sum)"
     );
     ASSERT_NE(t, nullptr);
@@ -470,8 +476,7 @@ TEST(ChirpTest, ComplexPipelineCompiles) {
     EXPECT_TRUE(has_opcode(t, FAF_TWIDDLE_MUL));
     EXPECT_TRUE(has_opcode(t, FAF_BFLY4));
     EXPECT_TRUE(has_opcode(t, FAF_BFLY2));
-    EXPECT_TRUE(has_opcode(t, FAF_LIFT_PRED));
-    EXPECT_TRUE(has_opcode(t, FAF_LIFT_UPD));
+    EXPECT_TRUE(has_opcode(t, FAF_DWT_STAGE));
     EXPECT_TRUE(has_opcode(t, FAF_REDUCE_SUM));
     EXPECT_GE(count_opcodes(t, FAF_CALL_BUILTIN), 3u);
 
@@ -485,9 +490,7 @@ TEST(ChirpTest, ComplexPipelineCompiles) {
 TEST(ChirpTest, ExecuteFFTPipelineDoesNotCrash) {
     ChirpRegistryGuard guard;
 
-    /* The Chirp (fft :size N) form emits a single FAF_FFT_STAGE instruction.
-     * It is a high-level construct and does not expand to a complete FFT
-     * bytecode; we only verify here that executing it does not crash. */
+    /* Chirp (fft :size N) now emits BITREV + log2(N) FFT_STAGE ops. */
     faf_transform *t = chirp_compile("(fft :size 64)");
     ASSERT_NE(t, nullptr);
 
@@ -510,21 +513,12 @@ TEST(ChirpTest, ExecuteFFTPipelineDoesNotCrash) {
 TEST(ChirpTest, ChirpFFTInstructionMatchesRequestedSize) {
     ChirpRegistryGuard guard;
 
-    /* Verify that the high-level FFT form encodes the requested size in the
-     * emitted FAF_FFT_STAGE instruction. */
+    /* Verify that the high-level FFT form emits a staged transform of size N. */
     faf_transform *t = chirp_compile("(fft :size 128)");
     ASSERT_NE(t, nullptr);
     EXPECT_EQ(t->n, 128u);
-
-    bool found = false;
-    for (size_t i = 0; i < t->n_inst; i++) {
-        if (FAF_GET_OP(t->code[i].packed) == FAF_FFT_STAGE) {
-            EXPECT_EQ(t->code[i].a0, 128u);
-            found = true;
-            break;
-        }
-    }
-    EXPECT_TRUE(found);
+    EXPECT_EQ(count_opcodes(t, FAF_FFT_STAGE), 7u);
+    EXPECT_TRUE(has_opcode(t, FAF_BITREV));
 
     faf_destroy_transform(t);
 }

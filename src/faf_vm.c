@@ -8,9 +8,11 @@
  */
 
 #include "faf.h"
+#include "chirp.h"
 #include <string.h>
 #include <stdlib.h>
 #include <stdint.h>
+#include <math.h>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -44,7 +46,9 @@ static size_t compute_max_registers(const faf_transform *t) {
          * For FFT_STAGE/DCT_STAGE/DST_STAGE: a0=radix, a1=stride, a2=tw_step —
          * none are register indices.  These opcodes touch every element 0..n-1,
          * so account for them by tracking t->n-1 instead of a0. */
-        if (op == FAF_FFT_STAGE || op == FAF_DCT_STAGE || op == FAF_DST_STAGE) {
+        if (op == FAF_FFT_STAGE || op == FAF_DCT_STAGE || op == FAF_DST_STAGE ||
+            op == FAF_DWT_STAGE || op == FAF_BITREV || op == FAF_THRESHOLD ||
+            op == FAF_CALL_BUILTIN) {
             if (t->n > 0 && (t->n - 1) > max_reg) max_reg = t->n - 1;
             continue;
         }
@@ -94,6 +98,88 @@ static inline void free_regs(void* ptr) {
     free(ptr);
 }
 
+static void apply_dwt_interleaved_f32(float *regs, size_t n, size_t length,
+                                      faf_wavelet_family fam, int inv) {
+    if (length < 2 || length > n) return;
+    float *tmp = (float*)alloc_regs(length * sizeof(float));
+    if (!tmp) return;
+    for (size_t i = 0; i < length; i++) tmp[i] = regs[i * 2];
+    faf_dwt_level_f32(tmp, length, fam, inv);
+    for (size_t i = 0; i < length; i++) regs[i * 2] = tmp[i];
+    free_regs(tmp);
+}
+
+static void apply_dwt_interleaved_f64(double *regs, size_t n, size_t length,
+                                      faf_wavelet_family fam, int inv) {
+    if (length < 2 || length > n) return;
+    double *tmp = (double*)alloc_regs(length * sizeof(double));
+    if (!tmp) return;
+    for (size_t i = 0; i < length; i++) tmp[i] = regs[i * 2];
+    faf_dwt_level_f64(tmp, length, fam, inv);
+    for (size_t i = 0; i < length; i++) regs[i * 2] = tmp[i];
+    free_regs(tmp);
+}
+
+static void bitrev_interleaved_f32(float *regs, size_t n) {
+    size_t bits = 0;
+    for (size_t tmp = n; tmp > 1; tmp >>= 1) bits++;
+    for (size_t i = 0; i < n; i++) {
+        size_t j = 0, x = i;
+        for (size_t b = 0; b < bits; b++) { j = (j << 1) | (x & 1); x >>= 1; }
+        if (j > i) {
+            float tr = regs[2 * i], ti = regs[2 * i + 1];
+            regs[2 * i]     = regs[2 * j];
+            regs[2 * i + 1] = regs[2 * j + 1];
+            regs[2 * j]     = tr;
+            regs[2 * j + 1] = ti;
+        }
+    }
+}
+
+static void bitrev_interleaved_f64(double *regs, size_t n) {
+    size_t bits = 0;
+    for (size_t tmp = n; tmp > 1; tmp >>= 1) bits++;
+    for (size_t i = 0; i < n; i++) {
+        size_t j = 0, x = i;
+        for (size_t b = 0; b < bits; b++) { j = (j << 1) | (x & 1); x >>= 1; }
+        if (j > i) {
+            double tr = regs[2 * i], ti = regs[2 * i + 1];
+            regs[2 * i]     = regs[2 * j];
+            regs[2 * i + 1] = regs[2 * j + 1];
+            regs[2 * j]     = tr;
+            regs[2 * j + 1] = ti;
+        }
+    }
+}
+
+static void bitrev_split_f32(float *re, float *im, size_t n) {
+    size_t bits = 0;
+    for (size_t tmp = n; tmp > 1; tmp >>= 1) bits++;
+    for (size_t i = 0; i < n; i++) {
+        size_t j = 0, x = i;
+        for (size_t b = 0; b < bits; b++) { j = (j << 1) | (x & 1); x >>= 1; }
+        if (j > i) {
+            float tr = re[i], ti = im[i];
+            re[i] = re[j]; im[i] = im[j];
+            re[j] = tr;    im[j] = ti;
+        }
+    }
+}
+
+static void bitrev_split_f64(double *re, double *im, size_t n) {
+    size_t bits = 0;
+    for (size_t tmp = n; tmp > 1; tmp >>= 1) bits++;
+    for (size_t i = 0; i < n; i++) {
+        size_t j = 0, x = i;
+        for (size_t b = 0; b < bits; b++) { j = (j << 1) | (x & 1); x >>= 1; }
+        if (j > i) {
+            double tr = re[i], ti = im[i];
+            re[i] = re[j]; im[i] = im[j];
+            re[j] = tr;    im[j] = ti;
+        }
+    }
+}
+
 /**
  * @brief Execute transform using direct-threaded VM (FP32)
  * 
@@ -125,9 +211,16 @@ int faf_vm_execute_f32(const faf_transform *t,
         &&label_LIFT_SCALE, &&label_DOWN2, &&label_UP2,
         &&label_POLY_FIR, &&label_POLY_IIR, &&label_PERMUTE,
         &&label_SHUFFLE, &&label_BLEND, &&label_REDUCE_SUM,
-        &&label_REDUCE_MAX, &&label_REDUCE_MIN, &&label_END,
-        /* 31-254: Unused opcodes -> END handler */
-        DT_END_224,
+        &&label_REDUCE_MAX, &&label_REDUCE_MIN, &&label_CALL_BUILTIN,
+        &&label_BITREV, &&label_DWT_STAGE, &&label_THRESHOLD,
+        /* 34-254: Unused opcodes -> END handler (221 entries) */
+        DT_END_128, DT_END_32, DT_END_32,
+        &&label_END, &&label_END, &&label_END, &&label_END, &&label_END,
+        &&label_END, &&label_END, &&label_END, &&label_END, &&label_END,
+        &&label_END, &&label_END, &&label_END, &&label_END, &&label_END,
+        &&label_END, &&label_END, &&label_END, &&label_END, &&label_END,
+        &&label_END, &&label_END, &&label_END, &&label_END, &&label_END,
+        &&label_END, &&label_END, &&label_END, &&label_END,
         /* 255: FAF_END */
         &&label_END
     };
@@ -765,6 +858,67 @@ label_REDUCE_MIN:
         DISPATCH();
 
 #ifdef FAF_USE_DIRECT_THREADED
+label_CALL_BUILTIN:
+#else
+    case FAF_CALL_BUILTIN:
+#endif
+        {
+            /* Apply a scalar unary builtin element-wise to the real plane. */
+            int idx = (int)inst->a0;
+            if (chirp_builtin_kind(idx) == CHIRP_KIND_UNARY) {
+                void *fn = chirp_builtin_fn_for_precision(idx, t->precision);
+                if (fn) {
+                    for (size_t i = 0; i < t->n; i++) {
+                        size_t r = i * 2;
+                        if (r + 1 < num_regs) {
+                            regs[r] = ((float (*)(float))fn)(regs[r]);
+                        }
+                    }
+                }
+            }
+        }
+        DISPATCH();
+
+#ifdef FAF_USE_DIRECT_THREADED
+label_BITREV:
+#else
+    case FAF_BITREV:
+#endif
+        bitrev_interleaved_f32(regs, t->n);
+        DISPATCH();
+
+#ifdef FAF_USE_DIRECT_THREADED
+label_DWT_STAGE:
+#else
+    case FAF_DWT_STAGE:
+#endif
+        apply_dwt_interleaved_f32(regs, t->n, inst->a1,
+                                  (faf_wavelet_family)inst->a0,
+                                  (int)(inst->a2 & FAF_DWT_FLAG_INVERSE));
+        DISPATCH();
+
+#ifdef FAF_USE_DIRECT_THREADED
+label_THRESHOLD:
+#else
+    case FAF_THRESHOLD:
+#endif
+        {
+            union { uint32_t u; float f; } lam;
+            lam.u = inst->a2;
+            size_t start = inst->a1;
+            if (start < t->n) {
+                float *band = (float*)alloc_regs((t->n - start) * sizeof(float));
+                if (band) {
+                    for (size_t i = start; i < t->n; i++) band[i - start] = regs[i * 2];
+                    faf_threshold_band_f32(band, 0, t->n - start, (int)inst->a0, lam.f);
+                    for (size_t i = start; i < t->n; i++) regs[i * 2] = band[i - start];
+                    free_regs(band);
+                }
+            }
+        }
+        DISPATCH();
+
+#ifdef FAF_USE_DIRECT_THREADED
 label_END:
 #else
     case FAF_END:
@@ -1015,6 +1169,43 @@ int faf_vm_execute_f64(const faf_transform *t,
                             regs[idx2 * 2]     = ar - br; regs[idx2 * 2 + 1] = ai - bi;
                         }
                     }
+                }
+                break;
+            }
+            case FAF_CALL_BUILTIN: {
+                int idx = (int)inst->a0;
+                if (chirp_builtin_kind(idx) == CHIRP_KIND_UNARY) {
+                    void *fn = chirp_builtin_fn_for_precision(idx, t->precision);
+                    if (fn) {
+                        for (size_t i = 0; i < t->n; i++) {
+                            size_t r = i * 2;
+                            if (r + 1 < num_regs) {
+                                regs[r] = ((double (*)(double))fn)(regs[r]);
+                            }
+                        }
+                    }
+                }
+                break;
+            }
+            case FAF_BITREV:
+                bitrev_interleaved_f64(regs, t->n);
+                break;
+            case FAF_DWT_STAGE:
+                apply_dwt_interleaved_f64(regs, t->n, inst->a1,
+                                          (faf_wavelet_family)inst->a0,
+                                          (int)(inst->a2 & FAF_DWT_FLAG_INVERSE));
+                break;
+            case FAF_THRESHOLD: {
+                union { uint32_t u; float f; } lam;
+                lam.u = inst->a2;
+                size_t start = inst->a1;
+                for (size_t i = start; i < t->n; i++) {
+                    double v = regs[i * 2];
+                    double av = v < 0.0 ? -v : v;
+                    double th = fabs((double)lam.f);
+                    if (av <= th) regs[i * 2] = 0.0;
+                    else if (inst->a0 == FAF_THRESH_SOFT)
+                        regs[i * 2] = (v > 0.0) ? (v - th) : (v + th);
                 }
                 break;
             }
@@ -1318,6 +1509,35 @@ int faf_execute_split_f32(const faf_transform *t,
                 }
                 break;
             }
+            case FAF_CALL_BUILTIN: {
+                int idx = (int)inst->a0;
+                if (chirp_builtin_kind(idx) == CHIRP_KIND_UNARY) {
+                    void *fn = chirp_builtin_fn_for_precision(idx, t->precision);
+                    if (fn) {
+                        for (size_t i = 0; i < t->n; i++) {
+                            regs_re[i] = ((float (*)(float))fn)(regs_re[i]);
+                        }
+                    }
+                }
+                break;
+            }
+            case FAF_BITREV:
+                bitrev_split_f32(regs_re, regs_im, t->n);
+                break;
+            case FAF_DWT_STAGE: {
+                size_t length = inst->a1;
+                if (length >= 2 && length <= t->n) {
+                    faf_dwt_level_f32(regs_re, length, (faf_wavelet_family)inst->a0,
+                                      (int)(inst->a2 & FAF_DWT_FLAG_INVERSE));
+                }
+                break;
+            }
+            case FAF_THRESHOLD: {
+                union { uint32_t u; float f; } lam;
+                lam.u = inst->a2;
+                faf_threshold_band_f32(regs_re, inst->a1, t->n, (int)inst->a0, lam.f);
+                break;
+            }
             case FAF_END:
                 goto done_split;
             default:
@@ -1578,6 +1798,35 @@ int faf_execute_split_f64(const faf_transform *t,
                     cv.u = inst->a2;
                     regs_re[inst->a0] *= (double)cv.f;
                 }
+                break;
+            }
+            case FAF_CALL_BUILTIN: {
+                int idx = (int)inst->a0;
+                if (chirp_builtin_kind(idx) == CHIRP_KIND_UNARY) {
+                    void *fn = chirp_builtin_fn_for_precision(idx, t->precision);
+                    if (fn) {
+                        for (size_t i = 0; i < t->n; i++) {
+                            regs_re[i] = ((double (*)(double))fn)(regs_re[i]);
+                        }
+                    }
+                }
+                break;
+            }
+            case FAF_BITREV:
+                bitrev_split_f64(regs_re, regs_im, t->n);
+                break;
+            case FAF_DWT_STAGE: {
+                size_t length = inst->a1;
+                if (length >= 2 && length <= t->n) {
+                    faf_dwt_level_f64(regs_re, length, (faf_wavelet_family)inst->a0,
+                                      (int)(inst->a2 & FAF_DWT_FLAG_INVERSE));
+                }
+                break;
+            }
+            case FAF_THRESHOLD: {
+                union { uint32_t u; float f; } lam;
+                lam.u = inst->a2;
+                faf_threshold_band_f64(regs_re, inst->a1, t->n, (int)inst->a0, (double)lam.f);
                 break;
             }
             case FAF_END:

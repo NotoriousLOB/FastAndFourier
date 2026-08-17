@@ -12,6 +12,7 @@
 #endif
 
 #include "faf.h"
+#include "chirp.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -378,7 +379,110 @@ static void faf_jit_generate_c_ex(faf_transform *t,
     fprintf(f, "#include <stddef.h>\n");
     fprintf(f, "#include <stdint.h>\n");
     fprintf(f, "#include <stdlib.h>\n");
+    fprintf(f, "#include <string.h>\n");
     fprintf(f, "#include <math.h>\n\n");
+
+    /* Self-contained DWT kernels so the .so does not depend on host symbols. */
+    {
+        int needs_dwt = 0;
+        for (size_t i = 0; i < t->n_inst; i++) {
+            if (FAF_GET_OP(t->code[i].packed) == FAF_DWT_STAGE) { needs_dwt = 1; break; }
+        }
+        if (needs_dwt) {
+            fprintf(f,
+"static size_t _faf_wrap(ptrdiff_t i, size_t n) {\n"
+"    ptrdiff_t m = (ptrdiff_t)n; ptrdiff_t r = i %% m; if (r < 0) r += m; return (size_t)r;\n"
+"}\n"
+"static void _faf_dwt_level(float *x, size_t n, unsigned family, int inv) {\n"
+"    if (!x || n < 2 || (n & 1u)) return;\n"
+"    size_t half = n / 2;\n"
+"    float *tmp = (float*)malloc(n * sizeof(float));\n"
+"    if (!tmp) return;\n"
+"    if (family == 0) { /* Haar */\n"
+"        const float s = 0.7071067811865476f;\n"
+"        if (!inv) {\n"
+"            for (size_t i = 0; i < half; i++) {\n"
+"                float a = x[2*i], b = x[2*i+1];\n"
+"                tmp[i] = (a+b)*s; tmp[half+i] = (a-b)*s;\n"
+"            }\n"
+"        } else {\n"
+"            for (size_t i = 0; i < half; i++) {\n"
+"                float a = x[i], d = x[half+i];\n"
+"                tmp[2*i] = (a+d)*s; tmp[2*i+1] = (a-d)*s;\n"
+"            }\n"
+"        }\n"
+"        memcpy(x, tmp, n*sizeof(float)); free(tmp); return;\n"
+"    }\n"
+"    if (family == 2) { /* CDF 5/3 */\n"
+"        float *s = tmp, *d = tmp + half;\n"
+"        if (!inv) {\n"
+"            for (size_t i = 0; i < half; i++) { s[i] = x[2*i]; d[i] = x[2*i+1]; }\n"
+"            for (size_t i = 0; i < half; i++) d[i] -= 0.5f*(s[i] + s[(i+1)%%half]);\n"
+"            for (size_t i = 0; i < half; i++) s[i] += 0.25f*(d[_faf_wrap((ptrdiff_t)i-1,half)] + d[i]);\n"
+"            memcpy(x, tmp, n*sizeof(float));\n"
+"        } else {\n"
+"            memcpy(tmp, x, n*sizeof(float));\n"
+"            for (size_t i = 0; i < half; i++) s[i] -= 0.25f*(d[_faf_wrap((ptrdiff_t)i-1,half)] + d[i]);\n"
+"            for (size_t i = 0; i < half; i++) d[i] += 0.5f*(s[i] + s[(i+1)%%half]);\n"
+"            for (size_t i = 0; i < half; i++) { x[2*i] = s[i]; x[2*i+1] = d[i]; }\n"
+"        }\n"
+"        free(tmp); return;\n"
+"    }\n"
+"    if (family == 3) { /* CDF 9/7 */\n"
+"        const float A=-1.586134342059924f,B=-0.052980118572961f;\n"
+"        const float G=0.882911075530934f,D=0.443506852043971f,K=1.149604398860241f;\n"
+"        float *s = tmp, *d = tmp + half;\n"
+"        if (!inv) {\n"
+"            for (size_t i = 0; i < half; i++) { s[i] = x[2*i]; d[i] = x[2*i+1]; }\n"
+"            for (size_t i = 0; i < half; i++) d[i] += A*(s[i]+s[(i+1)%%half]);\n"
+"            for (size_t i = 0; i < half; i++) s[i] += B*(d[i]+d[_faf_wrap((ptrdiff_t)i-1,half)]);\n"
+"            for (size_t i = 0; i < half; i++) d[i] += G*(s[i]+s[(i+1)%%half]);\n"
+"            for (size_t i = 0; i < half; i++) s[i] += D*(d[i]+d[_faf_wrap((ptrdiff_t)i-1,half)]);\n"
+"            for (size_t i = 0; i < half; i++) { s[i] *= K; d[i] /= K; }\n"
+"            memcpy(x, tmp, n*sizeof(float));\n"
+"        } else {\n"
+"            memcpy(tmp, x, n*sizeof(float));\n"
+"            for (size_t i = 0; i < half; i++) { s[i] /= K; d[i] *= K; }\n"
+"            for (size_t i = 0; i < half; i++) s[i] -= D*(d[i]+d[_faf_wrap((ptrdiff_t)i-1,half)]);\n"
+"            for (size_t i = 0; i < half; i++) d[i] -= G*(s[i]+s[(i+1)%%half]);\n"
+"            for (size_t i = 0; i < half; i++) s[i] -= B*(d[i]+d[_faf_wrap((ptrdiff_t)i-1,half)]);\n"
+"            for (size_t i = 0; i < half; i++) d[i] -= A*(s[i]+s[(i+1)%%half]);\n"
+"            for (size_t i = 0; i < half; i++) { x[2*i] = s[i]; x[2*i+1] = d[i]; }\n"
+"        }\n"
+"        free(tmp); return;\n"
+"    }\n"
+"    { /* D4 / Sym4 filter bank */\n"
+"        const float d4[4] = {0.4829629131445341f,0.8365163037378079f,0.2241438680420134f,-0.1294095225512604f};\n"
+"        const float sy[8] = {-0.07576571478927333f,-0.02963552764599851f,0.49761866763201545f,0.8037387518059161f,0.29785779560527736f,-0.09921954357684722f,-0.012603967262037833f,0.0322231006040427f};\n"
+"        const float *h = (family == 4) ? sy : d4;\n"
+"        int taps = (family == 4) ? 8 : 4;\n"
+"        if (!inv) {\n"
+"            for (size_t k = 0; k < half; k++) {\n"
+"                float a=0.f, dd=0.f;\n"
+"                for (int i = 0; i < taps; i++) {\n"
+"                    float sm = x[(2*k+(size_t)i)%%n];\n"
+"                    float g = ((i&1)?-1.f:1.f)*h[taps-1-i];\n"
+"                    a += h[i]*sm; dd += g*sm;\n"
+"                }\n"
+"                tmp[k]=a; tmp[half+k]=dd;\n"
+"            }\n"
+"            memcpy(x,tmp,n*sizeof(float));\n"
+"        } else {\n"
+"            memset(tmp,0,n*sizeof(float));\n"
+"            for (size_t k = 0; k < half; k++) {\n"
+"                float a=x[k], dd=x[half+k];\n"
+"                for (int i = 0; i < taps; i++) {\n"
+"                    float g = ((i&1)?-1.f:1.f)*h[taps-1-i];\n"
+"                    tmp[(2*k+(size_t)i)%%n] += h[i]*a + g*dd;\n"
+"                }\n"
+"            }\n"
+"            memcpy(x,tmp,n*sizeof(float));\n"
+"        }\n"
+"        free(tmp);\n"
+"    }\n"
+"}\n\n");
+        }
+    }
     
     /* Architecture-specific includes */
     if (use_simd) {
@@ -403,7 +507,9 @@ static void faf_jit_generate_c_ex(faf_transform *t,
         if (op == FAF_NOP || op == FAF_END) continue;
         /* FFT_STAGE/DCT_STAGE/DST_STAGE: a0=group_size, a1=stride, a2=tw_step
          * None are register indices; the loop accesses regs 0..t->n-1 */
-        if (op == FAF_FFT_STAGE || op == FAF_DCT_STAGE || op == FAF_DST_STAGE) {
+        if (op == FAF_FFT_STAGE || op == FAF_DCT_STAGE || op == FAF_DST_STAGE ||
+            op == FAF_DWT_STAGE || op == FAF_BITREV || op == FAF_THRESHOLD ||
+            op == FAF_CALL_BUILTIN) {
             if (t->n > 0 && t->n - 1 > max_reg_idx) max_reg_idx = t->n - 1;
             continue;
         }
@@ -449,7 +555,8 @@ static void faf_jit_generate_c_ex(faf_transform *t,
     int load_is_bitrev = 1;    /* Whether LOADs form a bit-reversal pattern */
     size_t load_bits = 0;      /* Number of bits for bit-reversal */
 
-    /* Detect leading LOAD run */
+    /* Detect leading LOAD run. FFT generators emit dest=i, src=bitrev(i).
+     * DWT generators emit dest=i, src=i — that must NOT be treated as bitrev. */
     {
         size_t run = 0;
         while (run < t->n_inst && FAF_GET_OP(t->code[run].packed) == FAF_LOAD) {
@@ -458,11 +565,26 @@ static void faf_jit_generate_c_ex(faf_transform *t,
         }
         if (run >= 2) {
             load_run_end = run;
-            /* Compute bits for bit-reversal */
             size_t tmp = run;
             while (tmp > 1) { tmp >>= 1; load_bits++; }
-            /* Verify it's actually a power of 2 */
             if ((1UL << load_bits) != run) load_is_bitrev = 0;
+            if (load_is_bitrev) {
+                int really_bitrev = 0;
+                for (size_t i = 0; i < run; i++) {
+                    size_t j = 0, x = i;
+                    for (size_t b = 0; b < load_bits; b++) {
+                        j = (j << 1) | (x & 1);
+                        x >>= 1;
+                    }
+                    if (t->code[i].a1 != j) {
+                        load_is_bitrev = 0;
+                        break;
+                    }
+                    if (j != i) really_bitrev = 1;
+                }
+                /* Sequential identity loads (DWT) look like bitrev of n=1; reject. */
+                if (!really_bitrev) load_is_bitrev = 0;
+            }
         }
     }
 
@@ -496,7 +618,7 @@ static void faf_jit_generate_c_ex(faf_transform *t,
         const faf_inst *inst = &t->code[i];
         uint8_t op = FAF_GET_OP(inst->packed);
 
-        /* Emit looped LOAD for bit-reversal pattern */
+        /* Emit looped LOAD for bit-reversal or sequential identity. */
         if (i == 0 && load_run_end > 0 && load_is_bitrev) {
             fprintf(f, "    /* Bit-reversal load: %zu points, %zu bits */\n", load_run_end, load_bits);
             fprintf(f, "    for (size_t _i = 0; _i < %zu; _i++) {\n", load_run_end);
@@ -507,6 +629,21 @@ static void faf_jit_generate_c_ex(faf_transform *t,
             fprintf(f, "    }\n");
             i = load_run_end - 1;  /* Skip individual LOADs */
             continue;
+        }
+        if (i == 0 && load_run_end > 0 && !load_is_bitrev) {
+            int sequential = 1;
+            for (size_t j = 0; j < load_run_end; j++) {
+                if (t->code[j].a0 != j || t->code[j].a1 != j) { sequential = 0; break; }
+            }
+            if (sequential) {
+                fprintf(f, "    /* Sequential load: %zu points */\n", load_run_end);
+                fprintf(f, "    for (size_t _i = 0; _i < %zu; _i++) {\n", load_run_end);
+                fprintf(f, "        regs_re[_i] = in_f[_i * 2];\n");
+                fprintf(f, "        regs_im[_i] = in_f[_i * 2 + 1];\n");
+                fprintf(f, "    }\n");
+                i = load_run_end - 1;
+                continue;
+            }
         }
 
         /* Emit looped STORE for sequential pattern */
@@ -618,6 +755,46 @@ static void faf_jit_generate_c_ex(faf_transform *t,
                 fprintf(f, "    }\n");
                 break;
                 
+            case FAF_BITREV: {
+                size_t bits = 0, tmpn = t->n;
+                while (tmpn > 1) { tmpn >>= 1; bits++; }
+                fprintf(f, "    {\n");
+                fprintf(f, "        for (size_t _i = 0; _i < %zu; _i++) {\n", t->n);
+                fprintf(f, "            size_t _j = 0, _x = _i;\n");
+                fprintf(f, "            for (int _b = 0; _b < %zu; _b++) { _j = (_j << 1) | (_x & 1); _x >>= 1; }\n", bits);
+                fprintf(f, "            if (_j > _i) {\n");
+                fprintf(f, "                float tr = regs_re[_i], ti = regs_im[_i];\n");
+                fprintf(f, "                regs_re[_i] = regs_re[_j]; regs_im[_i] = regs_im[_j];\n");
+                fprintf(f, "                regs_re[_j] = tr; regs_im[_j] = ti;\n");
+                fprintf(f, "            }\n");
+                fprintf(f, "        }\n");
+                fprintf(f, "    }\n");
+                break;
+            }
+
+            case FAF_DWT_STAGE:
+                fprintf(f, "    if (%u >= 2 && %u <= %zu) {\n", inst->a1, inst->a1, t->n);
+                fprintf(f, "        _faf_dwt_level(regs_re, %u, %u, %u);\n",
+                        inst->a1, inst->a0, inst->a2 & FAF_DWT_FLAG_INVERSE);
+                fprintf(f, "    }\n");
+                break;
+
+            case FAF_THRESHOLD: {
+                union { uint32_t u; float f; } lam;
+                lam.u = inst->a2;
+                fprintf(f, "    {\n");
+                fprintf(f, "        const float _lam = %.9ef;\n", lam.f);
+                fprintf(f, "        const int _soft = %u;\n", inst->a0);
+                fprintf(f, "        for (size_t _i = %u; _i < %zu; _i++) {\n", inst->a1, t->n);
+                fprintf(f, "            float v = regs_re[_i];\n");
+                fprintf(f, "            float av = v < 0.0f ? -v : v;\n");
+                fprintf(f, "            if (av <= _lam) regs_re[_i] = 0.0f;\n");
+                fprintf(f, "            else if (_soft) regs_re[_i] = v > 0.0f ? v - _lam : v + _lam;\n");
+                fprintf(f, "        }\n");
+                fprintf(f, "    }\n");
+                break;
+            }
+
             case FAF_LIFT_PRED:
                 if (inplace) {
                     fprintf(f, "    {\n");
@@ -761,9 +938,24 @@ static int faf_jit_compile_c(faf_jit_ctx *ctx, const char *c_path,
 /**
  * @brief Compile a transform to native code with flags
  */
+/* Temporary helper: reject transforms that use runtime builtins until the JIT
+ * gains full CALL_BUILTIN code generation. */
+static int jit_has_call_builtin(const faf_transform *t) {
+    for (size_t i = 0; i < t->n_inst; i++) {
+        if (FAF_GET_OP(t->code[i].packed) == FAF_CALL_BUILTIN)
+            return 1;
+    }
+    return 0;
+}
+
 int faf_jit_compile_ex(faf_jit_ctx *ctx, faf_transform *t, uint32_t flags) {
     if (!ctx || !t) return -1;
-    
+
+    if (jit_has_call_builtin(t)) {
+        fprintf(stderr, "[JIT] CALL_BUILTIN not yet supported in JIT; falling back to VM\n");
+        return -1;
+    }
+
     ctx->from_cache = 0;
     
     /* Try to load from persistent cache first */

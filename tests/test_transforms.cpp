@@ -144,27 +144,30 @@ TEST(TransformTest, DCTEnergy) {
 TEST(TransformTest, WaveletPerfectReconstruction) {
     const size_t n = 64;
     
-    faf_transform* t = faf_create_haar(n, 3, FAF_PREC_FP32, 0);
-    ASSERT_NE(t, nullptr);
+    faf_transform* fwd = faf_create_haar(n, 3, FAF_PREC_FP32, 0);
+    faf_transform* inv = faf_create_dwt(FAF_WAVELET_HAAR, n, 3, true, FAF_PREC_FP32, 0);
+    ASSERT_NE(fwd, nullptr);
+    ASSERT_NE(inv, nullptr);
     
     float *original = (float*)aligned_alloc(64, 2 * n * sizeof(float));
     float *transformed = (float*)aligned_alloc(64, 2 * n * sizeof(float));
     float *reconstructed = (float*)aligned_alloc(64, 2 * n * sizeof(float));
     
-    /* Original signal */
     for (size_t i = 0; i < n; i++) {
         original[2*i] = sinf(2.0f * (float)M_PI * 4.0f * (float)i / (float)n);
         original[2*i + 1] = 0.0f;
     }
     
-    /* Forward transform */
-    faf_execute_f32(t, transformed, original);
+    ASSERT_EQ(faf_execute_f32(fwd, transformed, original), 0);
+    ASSERT_EQ(faf_execute_f32(inv, reconstructed, transformed), 0);
     
-    /* Note: Inverse transform not yet implemented */
-    /* For now, just verify forward transform executes */
+    for (size_t i = 0; i < n; i++) {
+        EXPECT_NEAR(reconstructed[2 * i], original[2 * i], 1e-5f) << "sample " << i;
+    }
     
     free(original); free(transformed); free(reconstructed);
-    faf_destroy_transform(t);
+    faf_destroy_transform(fwd);
+    faf_destroy_transform(inv);
 }
 
 /* Test all DCT types */

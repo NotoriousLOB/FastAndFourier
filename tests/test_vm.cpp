@@ -163,16 +163,14 @@ TEST(VMTest, HaarWavelet) {
     int result = faf_execute_f32(t, out, in);
     EXPECT_EQ(result, 0);
     
-    /* After Haar transform on constant input:
-     * BFLY2 does (a+b, a-b), so for input (1,1): sum=2, diff=0
-     * - All sums should be 2.0 (since input is constant 1.0)
-     * - All differences should be 0 (since no variation)
-     */
-    for (size_t i = 0; i < n / 2; i += 2) {
-        /* Even indices: sums (a+b) */
-        EXPECT_NEAR(out[2*i], 2.0f, 0.1f) << "Sum at i=" << i;
-        /* Odd indices: differences (a-b) */
-        EXPECT_NEAR(out[2*(i+1)], 0.0f, 0.1f) << "Diff at i=" << i+1;
+    /* Orthonormal Haar on a constant of 1: approx = √2, details = 0.
+     * Packed Mallat layout: first n/2 samples are approximation. */
+    const float expected_approx = 1.414213562f;
+    for (size_t i = 0; i < n / 2; i++) {
+        EXPECT_NEAR(out[2 * i], expected_approx, 1e-5f) << "approx " << i;
+    }
+    for (size_t i = n / 2; i < n; i++) {
+        EXPECT_NEAR(out[2 * i], 0.0f, 1e-5f) << "detail " << i;
     }
     
     free(in);

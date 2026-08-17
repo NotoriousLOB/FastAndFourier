@@ -43,32 +43,28 @@ Chirp is the scripting language built into FastAndFourier. Include `<chirp.h>` a
 #include <chirp.h>
 #include <fastandfourier.h>
 
-// Plug in your own C functions — CUDA kernels, custom filters, anything
-chirp_register("gaussian", (void(*)(void))my_gaussian_impl);
-chirp_register("softmax",  (void(*)(void))my_softmax_impl);
+chirp_register_standard_builtins();
 
-// Describe the pipeline; get back a compiled transform
-faf_transform *t = chirp_compile(
+/* Denoise with a real wavelet family */
+faf_transform *dwt = chirp_compile(
     "(pipeline "
-    "  (fft :size 1024) "
-    "  twiddle "
-    "  (bfly 4) "
-    "  (lift :predict gaussian :update softmax) "
-    "  (custom softmax) "
-    "  reduce-sum)"
+    "  (dwt :family cdf97 :size 1024 :levels 5)"
+    "  (threshold :mode soft :lambda 0.08)"
+    "  (idwt :family cdf97 :size 1024 :levels 5))"
 );
-
-faf_execute_jit(t, out, in);
-faf_destroy_transform(t);
+faf_execute_f32(dwt, out, in);
+faf_destroy_transform(dwt);
 ```
 
 **Chirp syntax at a glance:**
 
 | Expression | What it does |
 |---|---|
-| `(fft :size N)` | FFT of size N (Smalltalk-style keyword arg) |
-| `(bfly N)` | Radix-N butterfly (2, 4, or 8) |
-| `(lift :predict fn :update fn)` | Lifting-scheme wavelet step |
+| `(fft :size N)` | Full staged FFT of size N |
+| `(dwt :family haar :size N :levels L)` | Forward DWT (haar, d4, cdf53, cdf97, sym4) |
+| `(idwt :family … :size N :levels L)` | Inverse DWT |
+| `(threshold :mode soft :lambda λ)` | Soft/hard threshold of detail bands |
+| `(lift :predict haar :update haar)` | Named-family lifting → real `DWT_STAGE` |
 | `(custom name)` | Call a registered C function |
 | `reduce-sum` / `reduce-max` / `reduce-min` | Reduction operations |
 | `(pipeline ...)` | Sequence multiple operations |
@@ -86,9 +82,11 @@ The full language reference — including 140+ built-in operations — lives in 
 | DST | Yes | Yes | Types I, II, III, IV |
 | STFT | Yes | Yes | Overlapping windows |
 | MDCT | Yes | Yes | Used in AAC, Opus |
-| Haar Wavelet | Yes | Yes | Lifting scheme |
-| Daubechies-4 | Yes | Yes | D4 wavelet |
-| CDF 9/7 | Yes | Yes | JPEG 2000 wavelet |
+| Haar Wavelet | Yes | Yes | Orthonormal lifting / Mallat |
+| Daubechies-4 (D4 / db2) | Yes | Yes | 4-tap orthonormal filter bank |
+| CDF 5/3 (LeGall) | Yes | Yes | JPEG 2000 lossless |
+| CDF 9/7 | Yes | Yes | JPEG 2000 lossy |
+| Symlet-4 | Yes | Yes | 8-tap orthonormal |
 
 ---
 
@@ -162,6 +160,9 @@ gcc -O3 -o fft_example example.c -lfastandfourier -lm -ldl
 | `faf_create_dct(n, type, precision, flags)` | Create DCT transform (type 1-4) |
 | `faf_create_dst(n, type, precision, flags)` | Create DST transform (type 1-4) |
 | `faf_create_haar(n, levels, precision, flags)` | Create Haar wavelet |
+| `faf_create_daubechies4(n, levels, precision, flags)` | Create Daubechies-4 / D4 |
+| `faf_create_cdf53` / `faf_create_cdf97` / `faf_create_sym4` | JPEG 2000 and Symlet families |
+| `faf_create_dwt(family, n, levels, inverse, prec, flags)` | Generic DWT / IDWT |
 | `faf_create_mdct(n, precision, flags)` | Create MDCT transform |
 | `faf_destroy_transform(t)` | Free transform and associated memory |
 

@@ -20,8 +20,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* External declarations from chirp.c */
-typedef struct { char *name; void (*fn)(void); } chirp_builtin_t;
+/* External declarations from chirp.c — must match chirp_builtin layout */
+typedef struct { char *name; void (*fn)(void); int kind; } chirp_builtin_t;
 extern chirp_builtin_t chirp_table[];
 extern int g_chirp_count;
 
@@ -49,7 +49,7 @@ static void chirp_register_builtin_aliases(void) {
         const char *stripped = name + 6;
 
         /* Register the stripped name, e.g. "chirp_sin_f32" -> "sin_f32". */
-        chirp_register(stripped, chirp_table[i].fn);
+        chirp_register_ex(stripped, chirp_table[i].fn, chirp_table[i].kind);
 
         /* For f32 variants, also register the bare name without the _f32
          * suffix, e.g. "sin_f32" -> "sin". This matches the names used in
@@ -65,7 +65,7 @@ static void chirp_register_builtin_aliases(void) {
             if (suff) *suff = '\0';
 
             if (strlen(bare) > 0) {
-                chirp_register(bare, chirp_table[i].fn);
+                chirp_register_ex(bare, chirp_table[i].fn, chirp_table[i].kind);
             }
         }
     }
@@ -91,8 +91,13 @@ static void chirp_register_builtin_aliases(void) {
 
 /* Register vector functions with size parameter */
 #define REGISTER_VEC(name) do { \
-    chirp_register(#name "_f32", (void(*)(void))name##_f32); \
-    chirp_register(#name "_f64", (void(*)(void))name##_f64); \
+    chirp_register_ex(#name "_f32", (void(*)(void))name##_f32, CHIRP_KIND_OTHER); \
+    chirp_register_ex(#name "_f64", (void(*)(void))name##_f64, CHIRP_KIND_OTHER); \
+} while(0)
+
+#define REGISTER_OTHER_F32_F64(name_f32, name_f64) do { \
+    chirp_register_ex(#name_f32, (void(*)(void))name_f32, CHIRP_KIND_OTHER); \
+    chirp_register_ex(#name_f64, (void(*)(void))name_f64, CHIRP_KIND_OTHER); \
 } while(0)
 
 int chirp_register_standard_builtins(void) {
@@ -130,16 +135,16 @@ int chirp_register_standard_builtins(void) {
     REGISTER_F32_F64(chirp_y0_f32, chirp_y0_f64);
     REGISTER_F32_F64(chirp_y1_f32, chirp_y1_f64);
     
-    /* Distributions */
-    REGISTER_F32_F64(chirp_gaussian_pdf_f32, chirp_gaussian_pdf_f64);
-    REGISTER_F32_F64(chirp_cauchy_pdf_f32, chirp_cauchy_pdf_f64);
-    REGISTER_F32_F64(chirp_exponential_pdf_f32, chirp_exponential_pdf_f64);
-    REGISTER_F32_F64(chirp_lognormal_pdf_f32, chirp_lognormal_pdf_f64);
-    REGISTER_F32_F64(chirp_laplace_pdf_f32, chirp_laplace_pdf_f64);
-    REGISTER_F32_F64(chirp_beta_pdf_f32, chirp_beta_pdf_f64);
-    REGISTER_F32_F64(chirp_gamma_pdf_f32, chirp_gamma_pdf_f64);
-    REGISTER_F32_F64(chirp_weibull_pdf_f32, chirp_weibull_pdf_f64);
-    REGISTER_F32_F64(chirp_uniform_pdf_f32, chirp_uniform_pdf_f64);
+    /* Distributions (extra parameters — not unary) */
+    REGISTER_OTHER_F32_F64(chirp_gaussian_pdf_f32, chirp_gaussian_pdf_f64);
+    REGISTER_OTHER_F32_F64(chirp_cauchy_pdf_f32, chirp_cauchy_pdf_f64);
+    REGISTER_OTHER_F32_F64(chirp_exponential_pdf_f32, chirp_exponential_pdf_f64);
+    REGISTER_OTHER_F32_F64(chirp_lognormal_pdf_f32, chirp_lognormal_pdf_f64);
+    REGISTER_OTHER_F32_F64(chirp_laplace_pdf_f32, chirp_laplace_pdf_f64);
+    REGISTER_OTHER_F32_F64(chirp_beta_pdf_f32, chirp_beta_pdf_f64);
+    REGISTER_OTHER_F32_F64(chirp_gamma_pdf_f32, chirp_gamma_pdf_f64);
+    REGISTER_OTHER_F32_F64(chirp_weibull_pdf_f32, chirp_weibull_pdf_f64);
+    REGISTER_OTHER_F32_F64(chirp_uniform_pdf_f32, chirp_uniform_pdf_f64);
     
     /* Activation functions */
     REGISTER_F32_F64(chirp_sigmoid_f32, chirp_sigmoid_f64);
@@ -175,14 +180,14 @@ int chirp_register_standard_builtins(void) {
     REGISTER_VEC(chirp_haar);
     REGISTER_VEC(chirp_haar_inverse);
     REGISTER_VEC(chirp_daubechies4);
-    REGISTER_F32_F64(chirp_morlet_f32, chirp_morlet_f64);
-    REGISTER_F32_F64(chirp_mexican_hat_f32, chirp_mexican_hat_f64);
+    REGISTER_OTHER_F32_F64(chirp_morlet_f32, chirp_morlet_f64);
+    REGISTER_OTHER_F32_F64(chirp_mexican_hat_f32, chirp_mexican_hat_f64);
     
-    /* Utilities */
-    REGISTER_F32_F64(chirp_clamp_f32, chirp_clamp_f64);
-    REGISTER_F32_F64(chirp_lerp_f32, chirp_lerp_f64);
-    REGISTER_F32_F64(chirp_smoothstep_f32, chirp_smoothstep_f64);
-    REGISTER_F32_F64(chirp_smootherstep_f32, chirp_smootherstep_f64);
+    /* Utilities (clamp/lerp/smoothstep take extra args) */
+    REGISTER_OTHER_F32_F64(chirp_clamp_f32, chirp_clamp_f64);
+    REGISTER_OTHER_F32_F64(chirp_lerp_f32, chirp_lerp_f64);
+    REGISTER_OTHER_F32_F64(chirp_smoothstep_f32, chirp_smoothstep_f64);
+    REGISTER_OTHER_F32_F64(chirp_smootherstep_f32, chirp_smootherstep_f64);
     REGISTER_F32_F64(chirp_step_f32, chirp_step_f64);
     REGISTER_F32_F64(chirp_sign_f32, chirp_sign_f64);
     REGISTER_F32_F64(chirp_deg2rad_f32, chirp_deg2rad_f64);
@@ -719,59 +724,84 @@ void chirp_flattop_window_f64(double *out, size_t n) {
 
 void chirp_haar_f32(const float *in, float *approx, float *detail, size_t n) {
     size_t half = n / 2;
+    const float s = 0.7071067811865476f;
     for (size_t i = 0; i < half; i++) {
         float a = in[2*i];
         float b = in[2*i + 1];
-        approx[i] = (a + b) * 0.5f;
-        detail[i] = (a - b) * 0.5f;
+        approx[i] = (a + b) * s;
+        detail[i] = (a - b) * s;
     }
 }
 
 void chirp_haar_f64(const double *in, double *approx, double *detail, size_t n) {
     size_t half = n / 2;
+    const double s = 0.70710678118654752440;
     for (size_t i = 0; i < half; i++) {
         double a = in[2*i];
         double b = in[2*i + 1];
-        approx[i] = (a + b) * 0.5;
-        detail[i] = (a - b) * 0.5;
+        approx[i] = (a + b) * s;
+        detail[i] = (a - b) * s;
     }
 }
 
 void chirp_haar_inverse_f32(const float *approx, const float *detail, float *out, size_t n) {
     size_t half = n / 2;
+    const float s = 0.7071067811865476f;
     for (size_t i = 0; i < half; i++) {
         float a = approx[i];
         float d = detail[i];
-        out[2*i] = a + d;
-        out[2*i + 1] = a - d;
+        out[2*i] = (a + d) * s;
+        out[2*i + 1] = (a - d) * s;
     }
 }
 
 void chirp_haar_inverse_f64(const double *approx, const double *detail, double *out, size_t n) {
     size_t half = n / 2;
+    const double s = 0.70710678118654752440;
     for (size_t i = 0; i < half; i++) {
         double a = approx[i];
         double d = detail[i];
-        out[2*i] = a + d;
-        out[2*i + 1] = a - d;
+        out[2*i] = (a + d) * s;
+        out[2*i + 1] = (a - d) * s;
     }
 }
 
-/* Daubechies-4 wavelet coefficients */
-static const float DB4_COEFFS[8] = {
-    0.4829629131445341f, 0.8365163037378077f,
-    0.2241438680420134f, -0.1294095225512603f,
-    -0.1294095225512603f, 0.2241438680420134f,
-    0.8365163037378077f, 0.4829629131445341f
-};
-
 void chirp_daubechies4_f32(const float *in, float *approx, float *detail, size_t n) {
-    /* Simplified implementation - just use Haar for now */
-    chirp_haar_f32(in, approx, detail, n);
+    const float h[4] = {
+        0.4829629131445341f, 0.8365163037378079f,
+        0.2241438680420134f, -0.1294095225512604f
+    };
+    size_t half = n / 2;
+    for (size_t k = 0; k < half; k++) {
+        float a = 0.0f, d = 0.0f;
+        for (int i = 0; i < 4; i++) {
+            float s = in[(2 * k + (size_t)i) % n];
+            float g = ((i & 1) ? -1.0f : 1.0f) * h[3 - i];
+            a += h[i] * s;
+            d += g * s;
+        }
+        approx[k] = a;
+        detail[k] = d;
+    }
 }
 
 void chirp_daubechies4_f64(const double *in, double *approx, double *detail, size_t n) {
-    chirp_haar_f64(in, approx, detail, n);
+    const double h[4] = {
+        0.4829629131445341, 0.8365163037378079,
+        0.2241438680420134, -0.1294095225512604
+    };
+    size_t half = n / 2;
+    for (size_t k = 0; k < half; k++) {
+        double a = 0.0, d = 0.0;
+        for (int i = 0; i < 4; i++) {
+            double s = in[(2 * k + (size_t)i) % n];
+            double g = ((i & 1) ? -1.0 : 1.0) * h[3 - i];
+            a += h[i] * s;
+            d += g * s;
+        }
+        approx[k] = a;
+        detail[k] = d;
+    }
 }
 
 float chirp_morlet_f32(float t, float omega0) {

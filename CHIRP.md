@@ -92,13 +92,37 @@ Sequences multiple operations. Returns a transform that executes each expression
 
 #### `(fft :size N)`
 
-Fast Fourier Transform.
+Full staged Fast Fourier Transform (bit-reversal + `log2(N)` `FFT_STAGE` ops).
 
 - `:size N` - Transform size (must be power of 2)
 
 ```scheme
 (fft :size 256)      ; 256-point FFT
 (fft :size 4096)     ; 4096-point FFT
+```
+
+#### `(dwt :family name :size N :levels L)` / `(idwt …)`
+
+Discrete wavelet transform. Families: `haar`, `d4` / `daubechies4` / `db2`, `cdf53` / `legall`, `cdf97`, `sym4`.
+
+- `:size N` — power of 2
+- `:levels L` — Mallat levels (`0` or omitted = full `log2(N)`)
+- Periodic boundaries, real-valued (imaginary plane left untouched)
+
+```scheme
+(dwt :family cdf97 :size 1024 :levels 5)
+(idwt :family cdf97 :size 1024 :levels 5)
+```
+
+#### `(threshold :mode soft|hard :lambda λ)`
+
+Apply a hard or soft threshold to **detail** coefficients (everything after the coarsest `N / 2^L` approximation).
+
+```scheme
+(pipeline
+  (dwt :family haar :size 512 :levels 4)
+  (threshold :mode soft :lambda 0.15)
+  (idwt :family haar :size 512 :levels 4))
 ```
 
 #### `(bfly N)`
@@ -115,14 +139,14 @@ Radix-N butterfly operation.
 
 #### `(lift :predict fn :update fn)`
 
-Lifting scheme step for wavelet transforms.
-
-- `:predict fn` - Prediction function (registered builtin)
-- `:update fn` - Update function (registered builtin)
+If `fn` names a known family (`haar`, `d4`, `cdf53`, `cdf97`, `sym4`, or the
+legacy aliases `haar_predict` / `predict_linear` / `predict_cubic`), Chirp
+emits a real `DWT_STAGE`. It does **not** stuff a builtin index into the
+coefficient-based `LIFT_PRED` opcode.
 
 ```scheme
-(lift :predict haar_predict :update haar_update)
-(lift :predict gaussian_pdf :update laplace_pdf)
+(lift :predict haar :update haar)
+(lift :predict cdf97 :update cdf97)
 ```
 
 #### `(custom name)` *(legacy syntax)*
@@ -293,29 +317,22 @@ chirp_haar_f32(signal, approx, detail, 1024);
 
 | Function | Description |
 |----------|-------------|
-| `haar` | Haar wavelet transform |
-| `haar_inverse` | Inverse Haar transform |
-| `daubechies4` | Daubechies-4 wavelet |
-| `morlet` | Morlet wavelet (complex) |
+| `haar` | Compiles to a Haar `DWT_STAGE` |
+| `d4` / `daubechies4` | Daubechies D4 (db2) |
+| `cdf53` / `cdf97` / `sym4` | JPEG 2000 and Symlet families |
+| `morlet` | Morlet wavelet (CWT kernel, not a DWT) |
 | `mexican_hat` | Mexican hat (Ricker) wavelet |
-| `meyer_scaling` | Meyer scaling function |
-| `shannon_wavelet` | Shannon wavelet (sinc-based) |
+
+C helpers `chirp_haar_f32` / `chirp_daubechies4_f32` implement one-level
+orthonormal analysis (Haar uses `1/√2`; D4 uses the 4-tap QMF).
 
 #### Wavelet Composition via Lifting
 
-Wavelets can be composed using the lifting scheme:
-
 ```scheme
-; Haar via lifting
 (pipeline
-  (lift :predict haar_predict :update haar_update)
-  scale_sqrt2)
-
-; Custom wavelet
-(pipeline
-  (lift :predict my_predict :update my_update)
-  sigmoid
-  scale_sqrt2)
+  (lift :predict haar :update haar)
+  (threshold :mode soft :lambda 0.1)
+  (idwt :family haar :size 256 :levels 1))
 ```
 
 ### Utility Functions
