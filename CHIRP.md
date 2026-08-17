@@ -18,25 +18,29 @@ Chirp is a Scheme-like domain-specific language (DSL) with Smalltalk-style keywo
 
 ## Quick Start
 
+The canonical first program is [`examples/que_onda_mundo.c`](examples/que_onda_mundo.c)
+(*¿Qué onda mundo?* — Chirp does not say hello, it asks what's up).
+
 ```c
 #include <chirp.h>
 #include <chirp_builtins.h>
 
-// Register all 140+ standard builtins
 chirp_register_standard_builtins();
 
-// Compile a Chirp program
-faf_transform *t = chirp_compile(
-    "(pipeline "
-    "  (fft :size 1024) "
-    "  hann_window "
-    "  sigmoid "
-    "  reduce-sum)"
-);
-
-// Execute
-faf_execute_jit(t, output, input);
+faf_transform *t = chirp_compile("(fft :size 8)");
+faf_execute_f32(t, out, in);   /* impulse in → flat spectrum out */
 faf_destroy_transform(t);
+```
+
+From there you can grow a pipeline:
+
+```c
+faf_transform *dwt = chirp_compile(
+    "(pipeline "
+    "  (dwt :family cdf97 :size 1024 :levels 5)"
+    "  (threshold :mode soft :lambda 0.08)"
+    "  (idwt :family cdf97 :size 1024 :levels 5))"
+);
 ```
 
 ---

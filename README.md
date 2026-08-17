@@ -39,6 +39,8 @@ That's [Chirp](#chirp-dsl). It compiles directly to a `faf_transform *` you exec
 
 Chirp is the scripting language built into FastAndFourier. Include `<chirp.h>` and you get a compiler that turns S-expressions into native transform objects. The syntax is Scheme-flavored, the keyword arguments are Smalltalk-style, and the output is a pointer you hand directly to `faf_execute_jit`.
 
+Hello world lives in [`examples/que_onda_mundo.c`](examples/que_onda_mundo.c) — yes, that is the canonical name.
+
 ```c
 #include <chirp.h>
 #include <fastandfourier.h>

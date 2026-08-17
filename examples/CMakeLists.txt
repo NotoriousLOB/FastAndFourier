@@ -1,6 +1,7 @@
 # Examples CMakeLists.txt
 
 set(EXAMPLES
+    que_onda_mundo
     simple_fft
     dct_example
     wavelet_example
