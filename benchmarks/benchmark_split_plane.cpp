@@ -16,7 +16,7 @@
 static void BM_SplitPlane_FP32(benchmark::State& state) {
     const size_t n = state.range(0);
     
-    faf_transform* t = faf_create_fft(n, false, FAF_PREC_FP32, 0);
+    faf_transform* t = bench_fft(n, FAF_PREC_FP32);
     if (!t) {
         state.SkipWithError("Failed to create transform");
         return;
@@ -59,7 +59,7 @@ static void BM_SplitPlane_FP32(benchmark::State& state) {
 static void BM_Standard_FP32(benchmark::State& state) {
     const size_t n = state.range(0);
     
-    faf_transform* t = faf_create_fft(n, false, FAF_PREC_FP32, 0);
+    faf_transform* t = bench_fft(n, FAF_PREC_FP32);
     if (!t) {
         state.SkipWithError("Failed to create transform");
         return;
@@ -97,7 +97,7 @@ static void BM_Standard_FP32(benchmark::State& state) {
 static void BM_SplitPlane_FP64(benchmark::State& state) {
     const size_t n = state.range(0);
     
-    faf_transform* t = faf_create_fft(n, false, FAF_PREC_FP64, 0);
+    faf_transform* t = bench_fft(n, FAF_PREC_FP64);
     if (!t) {
         state.SkipWithError("Failed to create transform");
         return;
@@ -140,7 +140,7 @@ static void BM_SplitPlane_FP64(benchmark::State& state) {
 static void BM_Standard_FP64(benchmark::State& state) {
     const size_t n = state.range(0);
     
-    faf_transform* t = faf_create_fft(n, false, FAF_PREC_FP64, 0);
+    faf_transform* t = bench_fft(n, FAF_PREC_FP64);
     if (!t) {
         state.SkipWithError("Failed to create transform");
         return;

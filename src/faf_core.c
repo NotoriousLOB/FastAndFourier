@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <stdarg.h>
 #include <stdbool.h>
+#include <math.h>
 #include <dlfcn.h>
 #include <unistd.h>
 
@@ -116,6 +117,36 @@ const char* faf_precision_name(faf_precision prec) {
         case FAF_PREC_INT32: return "int32";
         default: return "unknown";
     }
+}
+
+const char* faf_layout_name(faf_layout layout) {
+    switch (layout) {
+        case FAF_LAYOUT_DEFAULT:     return "default";
+        case FAF_LAYOUT_SPLIT:       return "split";
+        case FAF_LAYOUT_HERMITIAN:   return "hermitian";
+        case FAF_LAYOUT_REAL:        return "real";
+        case FAF_LAYOUT_INTERLEAVED: return "interleaved";
+        default: return "unknown";
+    }
+}
+
+const char* faf_norm_name(faf_norm norm) {
+    switch (norm) {
+        case FAF_NORM_DEFAULT:  return "default";
+        case FAF_NORM_NONE:     return "none";
+        case FAF_NORM_ORTHO:    return "ortho";
+        case FAF_NORM_FORWARD:  return "forward";
+        case FAF_NORM_LAZY:     return "lazy";
+        case FAF_NORM_JPEG2000: return "jpeg2000";
+        default: return "unknown";
+    }
+}
+
+size_t faf_spectrum_len(const faf_transform *t) {
+    if (!t) return 0;
+    if (t->type == FAF_TRANSFORM_RFFT || t->type == FAF_TRANSFORM_IRFFT)
+        return t->n / 2 + 1;
+    return t->n;
 }
 
 const char* faf_transform_name(faf_transform_type type) {
@@ -253,129 +284,187 @@ size_t faf_get_recommended_size(faf_transform_type type, size_t min_size) {
     return n;
 }
 
-/* Transform creation functions */
-faf_transform* faf_create_fft(size_t n, bool inverse, faf_precision precision, uint32_t flags) {
-    if (!faf_is_power_of_2(n)) {
-        set_error("FFT size must be power of 2, got %zu", n);
-        return NULL;
+static int alloc_scratch(faf_transform *t, size_t bytes) {
+    if (bytes == 0) return 0;
+    bytes = (bytes + 63u) & ~(size_t)63u;
+    t->scratch = aligned_alloc(64, bytes);
+    if (!t->scratch) {
+        set_error("Failed to allocate transform scratch");
+        return -1;
     }
-    
+    t->scratch_size = bytes;
+    memset(t->scratch, 0, bytes);
+    return 0;
+}
+
+static void apply_resolved_config(faf_transform *t, faf_config c) {
+    t->cfg = c;
+    t->n = c.n;
+    t->precision = c.precision;
+    t->flags = c.flags;
+    if (c.dir == FAF_DIR_INVERSE)
+        t->flags |= FAF_FLAG_INVERSE;
+    t->family = c.family;
+    t->levels = c.levels;
+    t->hop_length = c.hop_length;
+    t->win_length = c.win_length;
+}
+
+static faf_transform* alloc_transform(void) {
     faf_transform *t = calloc(1, sizeof(faf_transform));
-    if (!t) {
+    if (!t)
         set_error("Failed to allocate transform");
-        return NULL;
-    }
-    
-    t->n = n;
-    t->precision = precision;
-    t->type = inverse ? FAF_TRANSFORM_IFFT : FAF_TRANSFORM_FFT;
-    t->flags = flags | (inverse ? FAF_FLAG_INVERSE : 0);
-    
-    /* Choose optimal radix based on size */
-    if (n <= 16) {
-        faf_gen_fft_radix2(t, n, inverse);
-    } else if ((n & (n - 1)) == 0 && n >= 64) {
-        faf_gen_fft_radix4(t, n, inverse);
-    } else {
-        faf_gen_fft_mixed(t, n, inverse);
-    }
-    
     return t;
 }
 
-faf_transform* faf_create_dct(size_t n, int type, faf_precision precision, uint32_t flags) {
-    if (n == 0) {
+/* Transform creation functions */
+faf_transform* faf_create_fft(const faf_config *cfg) {
+    if (!cfg) {
+        set_error("faf_create_fft: cfg is NULL");
+        return NULL;
+    }
+    faf_config c = *cfg;
+    if (!faf_is_power_of_2(c.n)) {
+        set_error("FFT size must be power of 2, got %zu", c.n);
+        return NULL;
+    }
+    if (c.layout == FAF_LAYOUT_DEFAULT)
+        c.layout = FAF_LAYOUT_SPLIT;
+    if (c.norm == FAF_NORM_DEFAULT)
+        c.norm = FAF_NORM_NONE;
+    if (c.layout == FAF_LAYOUT_REAL || c.layout == FAF_LAYOUT_HERMITIAN) {
+        set_error("FFT C2C does not support layout '%s'", faf_layout_name(c.layout));
+        return NULL;
+    }
+    if (c.norm == FAF_NORM_LAZY || c.norm == FAF_NORM_JPEG2000) {
+        set_error("FFT does not support norm '%s'", faf_norm_name(c.norm));
+        return NULL;
+    }
+
+    faf_transform *t = alloc_transform();
+    if (!t) return NULL;
+
+    bool inverse = (c.dir == FAF_DIR_INVERSE);
+    t->type = inverse ? FAF_TRANSFORM_IFFT : FAF_TRANSFORM_FFT;
+    apply_resolved_config(t, c);
+
+    if (c.n <= 16) {
+        faf_gen_fft_radix2(t, c.n, inverse);
+    } else if ((c.n & (c.n - 1)) == 0 && c.n >= 64) {
+        faf_gen_fft_radix4(t, c.n, inverse);
+    } else {
+        faf_gen_fft_mixed(t, c.n, inverse);
+    }
+    if (!t->code) {
+        set_error("Failed to generate FFT bytecode");
+        faf_destroy_transform(t);
+        return NULL;
+    }
+    return t;
+}
+
+faf_transform* faf_create_dct(const faf_config *cfg) {
+    if (!cfg) {
+        set_error("faf_create_dct: cfg is NULL");
+        return NULL;
+    }
+    faf_config c = *cfg;
+    if (c.n == 0) {
         set_error("DCT size must be > 0");
         return NULL;
     }
+    int type = c.dct_type ? c.dct_type : 2;
     if (type < 1 || type > 4) {
         set_error("DCT type must be 1-4, got %d", type);
         return NULL;
     }
-    
-    faf_transform *t = calloc(1, sizeof(faf_transform));
-    if (!t) {
-        set_error("Failed to allocate transform");
-        return NULL;
-    }
-    
-    t->n = n;
-    t->precision = precision;
+    c.dct_type = type;
+    if (c.layout == FAF_LAYOUT_DEFAULT)
+        c.layout = FAF_LAYOUT_REAL;
+    if (c.norm == FAF_NORM_DEFAULT)
+        c.norm = FAF_NORM_NONE;
+
+    faf_transform *t = alloc_transform();
+    if (!t) return NULL;
+
     switch (type) {
         case 1: t->type = FAF_TRANSFORM_DCT_I; break;
         case 2: t->type = FAF_TRANSFORM_DCT_II; break;
         case 3: t->type = FAF_TRANSFORM_DCT_III; break;
         case 4: t->type = FAF_TRANSFORM_DCT_IV; break;
     }
-    t->flags = flags;
-    
-    /* Generate appropriate DCT bytecode */
+    apply_resolved_config(t, c);
+
     switch (type) {
         case 2:
-            faf_gen_dct_ii(t, n);
+            faf_gen_dct_ii(t, c.n);
             break;
         case 4:
-            faf_gen_dct_iv(t, n);
+            faf_gen_dct_iv(t, c.n);
             break;
         default:
-            /* Fall back to general DCT via FFT for other types */
-            faf_gen_dct_ii(t, n);
+            faf_gen_dct_ii(t, c.n);
             break;
     }
-    
     return t;
 }
 
-faf_transform* faf_create_dst(size_t n, int type, faf_precision precision, uint32_t flags) {
-    if (n == 0) {
+faf_transform* faf_create_dst(const faf_config *cfg) {
+    if (!cfg) {
+        set_error("faf_create_dst: cfg is NULL");
+        return NULL;
+    }
+    faf_config c = *cfg;
+    if (c.n == 0) {
         set_error("DST size must be > 0");
         return NULL;
     }
+    int type = c.dct_type ? c.dct_type : 2;
     if (type < 1 || type > 4) {
         set_error("DST type must be 1-4, got %d", type);
         return NULL;
     }
-    
-    faf_transform *t = calloc(1, sizeof(faf_transform));
-    if (!t) {
-        set_error("Failed to allocate transform");
-        return NULL;
-    }
-    
-    t->n = n;
-    t->precision = precision;
+    c.dct_type = type;
+    if (c.layout == FAF_LAYOUT_DEFAULT)
+        c.layout = FAF_LAYOUT_REAL;
+    if (c.norm == FAF_NORM_DEFAULT)
+        c.norm = FAF_NORM_NONE;
+
+    faf_transform *t = alloc_transform();
+    if (!t) return NULL;
+
     switch (type) {
         case 1: t->type = FAF_TRANSFORM_DST_I; break;
         case 2: t->type = FAF_TRANSFORM_DST_II; break;
         case 3: t->type = FAF_TRANSFORM_DST_III; break;
         case 4: t->type = FAF_TRANSFORM_DST_IV; break;
     }
-    t->flags = flags;
-    
-    faf_gen_dst_ii(t, n);
-    
+    apply_resolved_config(t, c);
+    faf_gen_dst_ii(t, c.n);
     return t;
 }
 
-faf_transform* faf_create_mdct(size_t n, faf_precision precision, uint32_t flags) {
-    if (n % 2 != 0) {
-        set_error("MDCT size must be even, got %zu", n);
+faf_transform* faf_create_mdct(const faf_config *cfg) {
+    if (!cfg) {
+        set_error("faf_create_mdct: cfg is NULL");
         return NULL;
     }
-    
-    faf_transform *t = calloc(1, sizeof(faf_transform));
-    if (!t) {
-        set_error("Failed to allocate transform");
+    faf_config c = *cfg;
+    if (c.n % 2 != 0) {
+        set_error("MDCT size must be even, got %zu", c.n);
         return NULL;
     }
-    
-    t->n = n;
-    t->precision = precision;
-    t->type = FAF_TRANSFORM_MDCT;
-    t->flags = flags;
-    
-    faf_gen_mdct(t, n);
-    
+    if (c.layout == FAF_LAYOUT_DEFAULT)
+        c.layout = FAF_LAYOUT_REAL;
+    if (c.norm == FAF_NORM_DEFAULT)
+        c.norm = FAF_NORM_NONE;
+
+    faf_transform *t = alloc_transform();
+    if (!t) return NULL;
+
+    t->type = (c.dir == FAF_DIR_INVERSE) ? FAF_TRANSFORM_IMDCT : FAF_TRANSFORM_MDCT;
+    apply_resolved_config(t, c);
+    faf_gen_mdct(t, c.n);
     return t;
 }
 
@@ -396,103 +485,244 @@ static size_t log2_size(size_t n) {
     return bits;
 }
 
-faf_transform* faf_create_dwt(faf_wavelet_family family, size_t n, size_t levels,
-                              bool inverse, faf_precision precision, uint32_t flags) {
-    if (!faf_is_power_of_2(n) || n < 2) {
-        set_error("DWT size must be a power of 2 >= 2, got %zu", n);
+faf_transform* faf_create_dwt(const faf_config *cfg) {
+    if (!cfg) {
+        set_error("faf_create_dwt: cfg is NULL");
         return NULL;
     }
-    if (family >= FAF_WAVELET_COUNT) {
-        set_error("Unknown wavelet family %d", (int)family);
+    faf_config c = *cfg;
+    if (!faf_is_power_of_2(c.n) || c.n < 2) {
+        set_error("DWT size must be a power of 2 >= 2, got %zu", c.n);
+        return NULL;
+    }
+    if (c.family >= FAF_WAVELET_COUNT) {
+        set_error("Unknown wavelet family %d", (int)c.family);
+        return NULL;
+    }
+    if (c.layout == FAF_LAYOUT_DEFAULT)
+        c.layout = FAF_LAYOUT_REAL;
+    if (c.norm == FAF_NORM_DEFAULT) {
+        if (c.family == FAF_WAVELET_CDF53 || c.family == FAF_WAVELET_CDF97)
+            c.norm = FAF_NORM_JPEG2000;
+        else
+            c.norm = FAF_NORM_ORTHO;
+    }
+
+    size_t max_levels = log2_size(c.n);
+    if (c.levels == 0) c.levels = max_levels;
+    if (c.levels > max_levels) {
+        set_error("DWT levels %zu exceed log2(%zu)=%zu", c.levels, c.n, max_levels);
         return NULL;
     }
 
-    size_t max_levels = log2_size(n);
-    if (levels == 0) levels = max_levels;
-    if (levels > max_levels) {
-        set_error("DWT levels %zu exceed log2(%zu)=%zu", levels, n, max_levels);
+    faf_transform *t = alloc_transform();
+    if (!t) return NULL;
+
+    t->type = family_to_type(c.family);
+    apply_resolved_config(t, c);
+
+    size_t elem = (c.precision == FAF_PREC_FP64) ? sizeof(double) : sizeof(float);
+    if (alloc_scratch(t, c.n * elem) != 0) {
+        faf_destroy_transform(t);
         return NULL;
     }
 
-    faf_transform *t = calloc(1, sizeof(faf_transform));
-    if (!t) {
-        set_error("Failed to allocate transform");
-        return NULL;
-    }
-
-    t->n = n;
-    t->precision = precision;
-    t->type = family_to_type(family);
-    t->flags = flags | (inverse ? FAF_FLAG_INVERSE : 0);
-    t->levels = levels;
-    t->family = family;
-
-    faf_gen_dwt(t, family, n, levels, inverse);
+    bool inverse = (c.dir == FAF_DIR_INVERSE);
+    faf_gen_dwt(t, c.family, c.n, c.levels, inverse);
     if (!t->code) {
         set_error("Failed to generate DWT bytecode");
-        free(t);
+        faf_destroy_transform(t);
         return NULL;
     }
     return t;
 }
 
-faf_transform* faf_create_haar(size_t n, size_t levels, faf_precision precision, uint32_t flags) {
-    return faf_create_dwt(FAF_WAVELET_HAAR, n, levels,
-                          (flags & FAF_FLAG_INVERSE) != 0, precision, flags);
+faf_transform* faf_create_haar(const faf_config *cfg) {
+    if (!cfg) {
+        set_error("faf_create_haar: cfg is NULL");
+        return NULL;
+    }
+    faf_config c = *cfg;
+    c.family = FAF_WAVELET_HAAR;
+    return faf_create_dwt(&c);
 }
 
-faf_transform* faf_create_daubechies4(size_t n, size_t levels, faf_precision precision, uint32_t flags) {
-    return faf_create_dwt(FAF_WAVELET_D4, n, levels,
-                          (flags & FAF_FLAG_INVERSE) != 0, precision, flags);
+faf_transform* faf_create_daubechies4(const faf_config *cfg) {
+    if (!cfg) {
+        set_error("faf_create_daubechies4: cfg is NULL");
+        return NULL;
+    }
+    faf_config c = *cfg;
+    c.family = FAF_WAVELET_D4;
+    return faf_create_dwt(&c);
 }
 
-faf_transform* faf_create_cdf53(size_t n, size_t levels, faf_precision precision, uint32_t flags) {
-    return faf_create_dwt(FAF_WAVELET_CDF53, n, levels,
-                          (flags & FAF_FLAG_INVERSE) != 0, precision, flags);
+faf_transform* faf_create_cdf53(const faf_config *cfg) {
+    if (!cfg) {
+        set_error("faf_create_cdf53: cfg is NULL");
+        return NULL;
+    }
+    faf_config c = *cfg;
+    c.family = FAF_WAVELET_CDF53;
+    return faf_create_dwt(&c);
 }
 
-faf_transform* faf_create_cdf97(size_t n, size_t levels, faf_precision precision, uint32_t flags) {
-    return faf_create_dwt(FAF_WAVELET_CDF97, n, levels,
-                          (flags & FAF_FLAG_INVERSE) != 0, precision, flags);
+faf_transform* faf_create_cdf97(const faf_config *cfg) {
+    if (!cfg) {
+        set_error("faf_create_cdf97: cfg is NULL");
+        return NULL;
+    }
+    faf_config c = *cfg;
+    c.family = FAF_WAVELET_CDF97;
+    return faf_create_dwt(&c);
 }
 
-faf_transform* faf_create_sym4(size_t n, size_t levels, faf_precision precision, uint32_t flags) {
-    return faf_create_dwt(FAF_WAVELET_SYM4, n, levels,
-                          (flags & FAF_FLAG_INVERSE) != 0, precision, flags);
+faf_transform* faf_create_sym4(const faf_config *cfg) {
+    if (!cfg) {
+        set_error("faf_create_sym4: cfg is NULL");
+        return NULL;
+    }
+    faf_config c = *cfg;
+    c.family = FAF_WAVELET_SYM4;
+    return faf_create_dwt(&c);
 }
 
-faf_transform* faf_create_stft(size_t n_fft, size_t hop_length, size_t win_length,
-                                    faf_precision precision, uint32_t flags) {
-    if (win_length == 0) win_length = n_fft;
-    if (hop_length == 0) hop_length = win_length / 4;
-    if (win_length > n_fft) {
-        set_error("STFT window length %zu exceeds FFT size %zu", win_length, n_fft);
+faf_transform* faf_create_stft(const faf_config *cfg) {
+    if (!cfg) {
+        set_error("faf_create_stft: cfg is NULL");
+        return NULL;
+    }
+    faf_config c = *cfg;
+    if (c.win_length == 0) c.win_length = c.n;
+    if (c.hop_length == 0) c.hop_length = c.win_length / 4;
+    if (c.win_length > c.n) {
+        set_error("STFT window length %zu exceeds FFT size %zu", c.win_length, c.n);
         return NULL;
     }
 
-    /* Create the underlying FFT transform */
-    faf_transform *t = faf_create_fft(n_fft, false, precision, flags);
+    faf_config fft_cfg = c;
+    fft_cfg.dir = FAF_DIR_FORWARD;
+    faf_transform *t = faf_create_fft(&fft_cfg);
     if (!t) return NULL;
 
     t->type = FAF_TRANSFORM_STFT;
-    t->hop_length = hop_length;
-    t->win_length = win_length;
+    t->hop_length = c.hop_length;
+    t->win_length = c.win_length;
+    t->cfg.hop_length = c.hop_length;
+    t->cfg.win_length = c.win_length;
 
     /* Store Hann window in twiddles[1] */
-    float *win = (float*)malloc(n_fft * sizeof(float));
+    float *win = (float*)malloc(c.n * sizeof(float));
     if (!win) {
         faf_destroy_transform(t);
         return NULL;
     }
-    faf_gen_hann_window_f32(win, win_length);
-    /* Zero-pad if win_length < n_fft */
-    for (size_t i = win_length; i < n_fft; i++) {
+    faf_gen_hann_window_f32(win, c.win_length);
+    for (size_t i = c.win_length; i < c.n; i++) {
         win[i] = 0.0f;
     }
     t->twiddles[1] = win;
-    t->twiddle_sizes[1] = n_fft;
+    t->twiddle_sizes[1] = c.n;
 
     return t;
+}
+
+faf_transform* faf_create(faf_transform_type type, const faf_config *cfg) {
+    if (!cfg) {
+        set_error("faf_create: cfg is NULL");
+        return NULL;
+    }
+    faf_config c = *cfg;
+    switch (type) {
+        case FAF_TRANSFORM_IFFT:
+            c.dir = FAF_DIR_INVERSE;
+            return faf_create_fft(&c);
+        case FAF_TRANSFORM_FFT:
+            return faf_create_fft(&c);
+        case FAF_TRANSFORM_DCT_I:
+            c.dct_type = 1; return faf_create_dct(&c);
+        case FAF_TRANSFORM_DCT_II:
+            c.dct_type = 2; return faf_create_dct(&c);
+        case FAF_TRANSFORM_DCT_III:
+            c.dct_type = 3; return faf_create_dct(&c);
+        case FAF_TRANSFORM_DCT_IV:
+            c.dct_type = 4; return faf_create_dct(&c);
+        case FAF_TRANSFORM_DST_I:
+            c.dct_type = 1; return faf_create_dst(&c);
+        case FAF_TRANSFORM_DST_II:
+            c.dct_type = 2; return faf_create_dst(&c);
+        case FAF_TRANSFORM_DST_III:
+            c.dct_type = 3; return faf_create_dst(&c);
+        case FAF_TRANSFORM_DST_IV:
+            c.dct_type = 4; return faf_create_dst(&c);
+        case FAF_TRANSFORM_STFT:
+            return faf_create_stft(&c);
+        case FAF_TRANSFORM_IMDCT:
+            c.dir = FAF_DIR_INVERSE;
+            /* fall through */
+        case FAF_TRANSFORM_MDCT:
+            return faf_create_mdct(&c);
+        case FAF_TRANSFORM_HAAR:
+            c.family = FAF_WAVELET_HAAR; return faf_create_dwt(&c);
+        case FAF_TRANSFORM_DAUBECHIES4:
+            c.family = FAF_WAVELET_D4; return faf_create_dwt(&c);
+        case FAF_TRANSFORM_CDF53:
+            c.family = FAF_WAVELET_CDF53; return faf_create_dwt(&c);
+        case FAF_TRANSFORM_CDF97:
+            c.family = FAF_WAVELET_CDF97; return faf_create_dwt(&c);
+        case FAF_TRANSFORM_SYM4:
+            c.family = FAF_WAVELET_SYM4; return faf_create_dwt(&c);
+        case FAF_TRANSFORM_RFFT:
+        case FAF_TRANSFORM_IRFFT:
+            set_error("R2C is not implemented yet");
+            return NULL;
+        default:
+            set_error("Unknown transform type %d", (int)type);
+            return NULL;
+    }
+}
+
+faf_transform* faf_create_inverse(const faf_transform *fwd) {
+    if (!fwd) {
+        set_error("faf_create_inverse: transform is NULL");
+        return NULL;
+    }
+    faf_config c = faf_config_inverse(fwd->cfg);
+    switch (fwd->type) {
+        case FAF_TRANSFORM_FFT:
+        case FAF_TRANSFORM_IFFT:
+            return faf_create_fft(&c);
+        case FAF_TRANSFORM_DCT_I:
+        case FAF_TRANSFORM_DCT_II:
+        case FAF_TRANSFORM_DCT_III:
+        case FAF_TRANSFORM_DCT_IV:
+            /* II <-> III; I and IV are involutions up to scale */
+            if (fwd->type == FAF_TRANSFORM_DCT_II) c.dct_type = 3;
+            else if (fwd->type == FAF_TRANSFORM_DCT_III) c.dct_type = 2;
+            return faf_create_dct(&c);
+        case FAF_TRANSFORM_DST_I:
+        case FAF_TRANSFORM_DST_II:
+        case FAF_TRANSFORM_DST_III:
+        case FAF_TRANSFORM_DST_IV:
+            if (fwd->type == FAF_TRANSFORM_DST_II) c.dct_type = 3;
+            else if (fwd->type == FAF_TRANSFORM_DST_III) c.dct_type = 2;
+            return faf_create_dst(&c);
+        case FAF_TRANSFORM_MDCT:
+        case FAF_TRANSFORM_IMDCT:
+            return faf_create_mdct(&c);
+        case FAF_TRANSFORM_STFT:
+            return faf_create_stft(&c);
+        case FAF_TRANSFORM_HAAR:
+        case FAF_TRANSFORM_DAUBECHIES4:
+        case FAF_TRANSFORM_CDF53:
+        case FAF_TRANSFORM_CDF97:
+        case FAF_TRANSFORM_SYM4:
+            return faf_create_dwt(&c);
+        default:
+            set_error("faf_create_inverse: unsupported type %s",
+                      faf_transform_name(fwd->type));
+            return NULL;
+    }
 }
 
 void faf_destroy_transform(faf_transform *t) {
@@ -526,22 +756,140 @@ void faf_destroy_transform(faf_transform *t) {
             free(t->twiddles[i]);
         }
     }
-    
+
+    if (t->scratch) {
+        free(t->scratch);
+        t->scratch = NULL;
+    }
+
     free(t);
 }
 
-/* Execution dispatch */
-int faf_execute(const faf_transform *t, void *restrict out, const void *restrict in) {
-    if (!t || !out || !in) return -1;
+static int scale_buffer_f32(faf_buffer *out, float s) {
+    if (!out || !out->re || s == 1.0f) return 0;
+    size_t n = out->n;
+    float *re = (float *)out->re;
+    if (out->layout == FAF_LAYOUT_INTERLEAVED) {
+        for (size_t i = 0; i < 2 * n; i++) re[i] *= s;
+        return 0;
+    }
+    for (size_t i = 0; i < n; i++) re[i] *= s;
+    if (out->im) {
+        float *im = (float *)out->im;
+        for (size_t i = 0; i < n; i++) im[i] *= s;
+    }
+    return 0;
+}
 
-    /* Auto-select: try cached JIT for FP32 transforms at or above the threshold */
-    if (t->precision == FAF_PREC_FP32 && t->n >= FAF_JIT_AUTO_THRESHOLD) {
-        int ret = faf_execute_jit_cached(t, (void*)out, (const void*)in);
+static int scale_buffer_f64(faf_buffer *out, double s) {
+    if (!out || !out->re || s == 1.0) return 0;
+    size_t n = out->n;
+    double *re = (double *)out->re;
+    if (out->layout == FAF_LAYOUT_INTERLEAVED) {
+        for (size_t i = 0; i < 2 * n; i++) re[i] *= s;
+        return 0;
+    }
+    for (size_t i = 0; i < n; i++) re[i] *= s;
+    if (out->im) {
+        double *im = (double *)out->im;
+        for (size_t i = 0; i < n; i++) im[i] *= s;
+    }
+    return 0;
+}
+
+static int apply_fft_norm(const faf_transform *t, faf_buffer *out) {
+    if (!t || !out) return 0;
+    if (t->type != FAF_TRANSFORM_FFT && t->type != FAF_TRANSFORM_IFFT &&
+        t->type != FAF_TRANSFORM_RFFT && t->type != FAF_TRANSFORM_IRFFT)
+        return 0;
+    if (t->n == 0) return 0;
+    int inverse = (t->cfg.dir == FAF_DIR_INVERSE) ||
+                  (t->type == FAF_TRANSFORM_IFFT) ||
+                  (t->type == FAF_TRANSFORM_IRFFT);
+    double scale = 1.0;
+    switch (t->cfg.norm) {
+        case FAF_NORM_NONE:
+            if (!inverse) return 0;
+            scale = 1.0 / (double)t->n;
+            break;
+        case FAF_NORM_ORTHO:
+            scale = 1.0 / sqrt((double)t->n);
+            break;
+        case FAF_NORM_FORWARD:
+            if (inverse) return 0;
+            scale = 1.0 / (double)t->n;
+            break;
+        default:
+            return 0;
+    }
+    if (t->precision == FAF_PREC_FP64)
+        return scale_buffer_f64(out, scale);
+    return scale_buffer_f32(out, (float)scale);
+}
+
+static int execute_untyped(const faf_transform *t, void *out, const void *in) {
+    if (t->cfg.backend != FAF_BACKEND_VM &&
+        t->precision == FAF_PREC_FP32 && t->n >= FAF_JIT_AUTO_THRESHOLD) {
+        int ret = faf_execute_jit_cached(t, out, in);
         if (ret == 0) return 0;
-        /* JIT unavailable or failed — fall back to VM */
+    }
+    if (t->cfg.backend == FAF_BACKEND_JIT) {
+        int ret = faf_execute_jit_cached(t, out, in);
+        if (ret == 0) return 0;
+        if (t->cfg.backend == FAF_BACKEND_JIT && t->cfg.backend != FAF_BACKEND_AUTO) {
+            /* fall through to VM if JIT failed */
+        }
+    }
+    return faf_execute_vm(t, out, in);
+}
+
+int faf_execute(const faf_transform *t, faf_buffer *out, const faf_buffer *in) {
+    if (!t || !out || !in) return -1;
+    if (in->layout != t->cfg.layout || out->layout != t->cfg.layout) {
+        set_error("buffer layout (%s/%s) does not match transform (%s)",
+                  faf_layout_name(in->layout), faf_layout_name(out->layout),
+                  faf_layout_name(t->cfg.layout));
+        return -1;
+    }
+    if (!in->re || !out->re) {
+        set_error("execute buffers must provide re");
+        return -1;
     }
 
-    return faf_execute_vm(t, out, in);
+    int ret = -1;
+    switch (t->cfg.layout) {
+        case FAF_LAYOUT_SPLIT:
+        case FAF_LAYOUT_HERMITIAN:
+            if (!in->im || !out->im) {
+                set_error("split/hermitian layout requires im planes");
+                return -1;
+            }
+            if (t->precision == FAF_PREC_FP64) {
+                ret = faf_execute_split_f64(t,
+                    (double *)out->re, (double *)out->im,
+                    (const double *)in->re, (const double *)in->im);
+            } else {
+                ret = faf_execute_split_f32(t,
+                    (float *)out->re, (float *)out->im,
+                    (const float *)in->re, (const float *)in->im);
+            }
+            break;
+        case FAF_LAYOUT_INTERLEAVED:
+            ret = execute_untyped(t, out->re, in->re);
+            break;
+        case FAF_LAYOUT_REAL:
+            if (t->precision == FAF_PREC_FP64) {
+                ret = faf_execute_f64(t, (double *)out->re, (const double *)in->re);
+            } else {
+                ret = faf_execute_f32(t, (float *)out->re, (const float *)in->re);
+            }
+            break;
+        default:
+            set_error("unsupported layout");
+            return -1;
+    }
+    if (ret != 0) return ret;
+    return apply_fft_norm(t, out);
 }
 
 int faf_execute_vm(const faf_transform *t, void *restrict out, const void *restrict in) {

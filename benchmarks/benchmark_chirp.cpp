@@ -11,6 +11,7 @@
 
 #include <benchmark/benchmark.h>
 #include "fastandfourier.h"
+#include "bench_util.h"
 #include "chirp.h"
 #include "chirp_builtins.h"
 

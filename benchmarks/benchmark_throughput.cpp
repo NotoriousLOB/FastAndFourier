@@ -5,6 +5,7 @@
 
 #include <benchmark/benchmark.h>
 #include "fastandfourier.h"
+#include "bench_util.h"
 #include <cmath>
 
 #ifndef M_PI
@@ -16,7 +17,7 @@ static void BM_Throughput_SmallFFTs(benchmark::State& state) {
     const size_t n = 64;
     const size_t batch = 1000;
     
-    faf_transform* t = faf_create_fft(n, false, FAF_PREC_FP32, 0);
+    faf_transform* t = bench_fft(n, FAF_PREC_FP32);
     if (!t) {
         state.SkipWithError("Failed to create transform");
         return;
@@ -50,7 +51,7 @@ BENCHMARK(BM_Throughput_SmallFFTs)
 static void BM_Scaling_FFT(benchmark::State& state) {
     const size_t n = state.range(0);
     
-    faf_transform* t = faf_create_fft(n, false, FAF_PREC_FP32, 0);
+    faf_transform* t = bench_fft(n, FAF_PREC_FP32);
     if (!t) {
         state.SkipWithError("Failed to create transform");
         return;
@@ -89,7 +90,7 @@ BENCHMARK(BM_Scaling_FFT)
 static void BM_MemoryBandwidth(benchmark::State& state) {
     const size_t n = state.range(0);
     
-    faf_transform* t = faf_create_fft(n, false, FAF_PREC_FP32, 0);
+    faf_transform* t = bench_fft(n, FAF_PREC_FP32);
     if (!t) {
         state.SkipWithError("Failed to create transform");
         return;
@@ -123,7 +124,7 @@ BENCHMARK(BM_MemoryBandwidth)
 static void BM_Latency_FFT(benchmark::State& state) {
     const size_t n = state.range(0);
     
-    faf_transform* t = faf_create_fft(n, false, FAF_PREC_FP32, 0);
+    faf_transform* t = bench_fft(n, FAF_PREC_FP32);
     if (!t) {
         state.SkipWithError("Failed to create transform");
         return;

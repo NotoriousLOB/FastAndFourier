@@ -261,25 +261,26 @@ TEST_F(ChirpCompositionTest, ExecuteCustomBuiltin) {
 }
 
 /* ============================================================================
- * JIT fallback for CALL_BUILTIN
+ * JIT unary CALL_BUILTIN
  * ============================================================================ */
 
-TEST_F(ChirpCompositionTest, JITRejectsBuiltinTransformAndFallsBack) {
+TEST_F(ChirpCompositionTest, JITCompilesUnaryBuiltin) {
     faf_transform *t = chirp_compile("(sin)");
     ASSERT_NE(t, nullptr);
 
     faf_jit_ctx *ctx = faf_jit_create();
     ASSERT_NE(ctx, nullptr);
-
-    /* The JIT currently does not generate code for FAF_CALL_BUILTIN, so
-     * compilation should fail and the executor should fall back to the VM. */
-    EXPECT_NE(faf_jit_compile(ctx, t), 0);
+    EXPECT_EQ(faf_jit_compile(ctx, t), 0);
 
     float *in = (float*)ALIGNED_ALLOC64(2 * t->n * sizeof(float));
     float *out = (float*)ALIGNED_ALLOC64(2 * t->n * sizeof(float));
     fill_interleaved_f32(in, t->n, [](size_t i) { return (float)i * 0.1f; });
 
     EXPECT_EQ(faf_execute_f32(t, out, in), 0);
+    for (size_t i = 0; i < t->n; i++) {
+        EXPECT_NEAR(out[2 * i], std::sin((float)i * 0.1f), 1e-5f)
+            << "JIT sin mismatch at sample " << i;
+    }
 
     faf_jit_destroy(ctx);
     faf_destroy_transform(t);

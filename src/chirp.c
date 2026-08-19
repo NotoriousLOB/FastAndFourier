@@ -442,8 +442,10 @@ static chirp_node* chirp_parse_expr(chirp_lexer *lex) {
             /* Determine node type from operator */
             if (strcmp(op.text, "pipeline") == 0) {
                 node = chirp_node_new(CHIRP_NODE_PIPELINE);
-            } else if (strcmp(op.text, "fft") == 0) {
+            } else if (strcmp(op.text, "fft") == 0 || strcmp(op.text, "ifft") == 0) {
                 node = chirp_node_new(CHIRP_NODE_FFT);
+                if (strcmp(op.text, "ifft") == 0)
+                    node->value = 1; /* inverse */
             } else if (strcmp(op.text, "bfly") == 0) {
                 node = chirp_node_new(CHIRP_NODE_BFLY);
             } else if (strcmp(op.text, "lift") == 0) {
@@ -624,18 +626,18 @@ static size_t chirp_log2_size(size_t n) {
     return bits;
 }
 
-static void chirp_ensure_fft_twiddles(faf_transform *t, size_t n) {
+static void chirp_ensure_fft_twiddles(faf_transform *t, size_t n, int inverse) {
     if (t->twiddles[0] || n == 0) return;
     if (t->precision == FAF_PREC_FP64) {
         t->twiddles[0] = malloc(n * sizeof(double));
         if (t->twiddles[0]) {
-            faf_gen_twiddles_f64((double*)t->twiddles[0], n, false);
+            faf_gen_twiddles_f64((double*)t->twiddles[0], n, inverse);
             t->twiddle_sizes[0] = n / 2;
         }
     } else {
         t->twiddles[0] = malloc(n * sizeof(float));
         if (t->twiddles[0]) {
-            faf_gen_twiddles_f32((float*)t->twiddles[0], n, false);
+            faf_gen_twiddles_f32((float*)t->twiddles[0], n, inverse);
             t->twiddle_sizes[0] = n / 2;
         }
     }
@@ -696,9 +698,11 @@ static void chirp_compile_node_emit(chirp_node *node, faf_transform *t, int *ins
                 n = (size_t)node->children[0]->value;
             }
             if (n == 0) n = 64;
-            t->type = FAF_TRANSFORM_FFT;
+            int inverse = (node->value != 0);
+            t->type = inverse ? FAF_TRANSFORM_IFFT : FAF_TRANSFORM_FFT;
+            if (inverse) t->flags |= FAF_FLAG_INVERSE;
             if (n > t->n) t->n = n;
-            chirp_ensure_fft_twiddles(t, t->n);
+            chirp_ensure_fft_twiddles(t, t->n, inverse);
 
             /* Bit-reversal + staged FFT, matching faf_gen_fft_radix2. */
             faf_inst br = {0};
@@ -975,6 +979,18 @@ faf_transform* chirp_compile(const char *source) {
     
     /* Cleanup AST */
     chirp_node_free(ast);
-    
+
+    /* Resolved config so faf_execute / create_inverse work on Chirp programs.
+     * Layout is interleaved: Chirp execute helpers and examples still pass
+     * float[2n] through faf_execute_f32. */
+    t->cfg = faf_config_init(t->n);
+    t->cfg.precision = t->precision;
+    t->cfg.layout = FAF_LAYOUT_INTERLEAVED;
+    t->cfg.norm = FAF_NORM_NONE;
+    if (t->flags & FAF_FLAG_INVERSE)
+        t->cfg.dir = FAF_DIR_INVERSE;
+    t->cfg.family = t->family;
+    t->cfg.levels = t->levels;
+
     return t;
 }

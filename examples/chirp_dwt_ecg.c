@@ -36,8 +36,8 @@ int main(void) {
         noisy[2 * i] = beat + wander + emg;
     }
 
-    faf_transform *fwd = faf_create_cdf97(n, levels, FAF_PREC_FP32, 0);
-    faf_transform *inv = faf_create_dwt(FAF_WAVELET_CDF97, n, levels, true, FAF_PREC_FP32, 0);
+    faf_transform *fwd = dwt_make(FAF_WAVELET_CDF97, n, levels, 0);
+    faf_transform *inv = dwt_make(FAF_WAVELET_CDF97, n, levels, 1);
     if (!fwd || !inv) return 1;
 
     float *coef = dwt_alloc(n);

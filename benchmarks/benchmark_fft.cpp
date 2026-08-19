@@ -5,6 +5,7 @@
 
 #include <benchmark/benchmark.h>
 #include "fastandfourier.h"
+#include "bench_util.h"
 #include <cmath>
 #include <cstring>
 
@@ -16,7 +17,7 @@
 static void BM_FFT_Vm_Small(benchmark::State& state) {
     const size_t n = state.range(0);
     
-    faf_transform* t = faf_create_fft(n, false, FAF_PREC_FP32, 0);
+    faf_transform* t = bench_fft(n, FAF_PREC_FP32);
     if (!t) {
         state.SkipWithError("Failed to create transform");
         return;
@@ -51,7 +52,7 @@ BENCHMARK(BM_FFT_Vm_Small)
 static void BM_FFT_Double(benchmark::State& state) {
     const size_t n = state.range(0);
     
-    faf_transform* t = faf_create_fft(n, false, FAF_PREC_FP64, 0);
+    faf_transform* t = bench_fft(n, FAF_PREC_FP64);
     if (!t) {
         state.SkipWithError("Failed to create transform");
         return;
@@ -85,7 +86,7 @@ BENCHMARK(BM_FFT_Double)
 static void BM_DCT(benchmark::State& state) {
     const size_t n = state.range(0);
     
-    faf_transform* t = faf_create_dct(n, 2, FAF_PREC_FP32, 0);
+    faf_transform* t = bench_dct(n, 2);
     if (!t) {
         state.SkipWithError("Failed to create transform");
         return;
@@ -119,7 +120,7 @@ BENCHMARK(BM_DCT)
 static void BM_Haar(benchmark::State& state) {
     const size_t n = state.range(0);
     
-    faf_transform* t = faf_create_haar(n, 3, FAF_PREC_FP32, 0);
+    faf_transform* t = bench_haar(n, 3);
     if (!t) {
         state.SkipWithError("Failed to create transform");
         return;
@@ -153,7 +154,7 @@ BENCHMARK(BM_Haar)
 static void BM_MDCT(benchmark::State& state) {
     const size_t n = state.range(0);
     
-    faf_transform* t = faf_create_mdct(n, FAF_PREC_FP32, 0);
+    faf_transform* t = bench_mdct(n);
     if (!t) {
         state.SkipWithError("Failed to create transform");
         return;
@@ -187,7 +188,7 @@ BENCHMARK(BM_MDCT)
 static void BM_FFT_JIT(benchmark::State& state) {
     const size_t n = state.range(0);
     
-    faf_transform* t = faf_create_fft(n, false, FAF_PREC_FP32, 0);
+    faf_transform* t = bench_fft(n, FAF_PREC_FP32);
     if (!t) {
         state.SkipWithError("Failed to create transform");
         return;

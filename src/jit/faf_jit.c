@@ -857,6 +857,25 @@ static void faf_jit_generate_c_ex(faf_transform *t,
                 fprintf(f, "    goto cleanup;\n");
                 break;
                 
+            case FAF_CALL_BUILTIN: {
+                int idx = (int)inst->a0;
+                void *fn = NULL;
+                if (chirp_builtin_kind(idx) == CHIRP_KIND_UNARY)
+                    fn = chirp_builtin_fn_for_precision(idx, t->precision);
+                fprintf(f, "    { /* CALL_BUILTIN %d */\n", idx);
+                if (fn) {
+                    fprintf(f,
+                        "        float (*_fn)(float) = (float (*)(float))(uintptr_t)%lluULL;\n"
+                        "        for (size_t _i = 0; _i < %zu; _i++)\n"
+                        "            regs_re[_i] = _fn(regs_re[_i]);\n",
+                        (unsigned long long)(uintptr_t)fn, t->n);
+                } else {
+                    fprintf(f, "        /* non-unary or missing builtin; skipped */\n");
+                }
+                fprintf(f, "    }\n");
+                break;
+            }
+
             default:
                 fprintf(f, "    /* Unknown opcode %d */\n", op);
                 break;
@@ -938,23 +957,8 @@ static int faf_jit_compile_c(faf_jit_ctx *ctx, const char *c_path,
 /**
  * @brief Compile a transform to native code with flags
  */
-/* Temporary helper: reject transforms that use runtime builtins until the JIT
- * gains full CALL_BUILTIN code generation. */
-static int jit_has_call_builtin(const faf_transform *t) {
-    for (size_t i = 0; i < t->n_inst; i++) {
-        if (FAF_GET_OP(t->code[i].packed) == FAF_CALL_BUILTIN)
-            return 1;
-    }
-    return 0;
-}
-
 int faf_jit_compile_ex(faf_jit_ctx *ctx, faf_transform *t, uint32_t flags) {
     if (!ctx || !t) return -1;
-
-    if (jit_has_call_builtin(t)) {
-        fprintf(stderr, "[JIT] CALL_BUILTIN not yet supported in JIT; falling back to VM\n");
-        return -1;
-    }
 
     ctx->from_cache = 0;
     

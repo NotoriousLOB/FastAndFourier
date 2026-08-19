@@ -20,7 +20,10 @@ int main(void) {
     
     /* Create a 64-point DCT-II */
     const size_t n = 64;
-    faf_transform* dct = faf_create_dct(n, 2, FAF_PREC_FP32, 0);
+    faf_config cfg = faf_config_init(n);
+    cfg.dct_type = 2;
+    cfg.layout = FAF_LAYOUT_INTERLEAVED;
+    faf_transform* dct = faf_create_dct(&cfg);
     if (!dct) {
         fprintf(stderr, "Failed to create DCT: %s\n", faf_get_error());
         return 1;

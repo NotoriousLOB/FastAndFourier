@@ -5,6 +5,7 @@
 
 #include <gtest/gtest.h>
 #include "fastandfourier.h"
+#include "faf_test_util.h"
 #include <cmath>
 #include <cstring>
 
@@ -16,7 +17,7 @@
 TEST(TransformTest, FFTLinearity) {
     const size_t n = 64;
     
-    faf_transform* t = faf_create_fft(n, false, FAF_PREC_FP32, 0);
+    faf_transform* t = test_fft_n(n);
     ASSERT_NE(t, nullptr);
     
     /* Complex format: 2*n floats for n complex samples */
@@ -71,7 +72,7 @@ TEST(TransformTest, FFTLinearity) {
 TEST(TransformTest, FFTShift) {
     const size_t n = 64;
     
-    faf_transform* t = faf_create_fft(n, false, FAF_PREC_FP32, 0);
+    faf_transform* t = test_fft_n(n);
     ASSERT_NE(t, nullptr);
     
     float *in = (float*)aligned_alloc(64, 2 * n * sizeof(float));
@@ -106,7 +107,7 @@ TEST(TransformTest, FFTShift) {
 TEST(TransformTest, DCTEnergy) {
     const size_t n = 64;
     
-    faf_transform* t = faf_create_dct(n, 2, FAF_PREC_FP32, 0);
+    faf_transform* t = test_dct(n, 2);
     ASSERT_NE(t, nullptr);
     
     float *in = (float*)aligned_alloc(64, 2 * n * sizeof(float));
@@ -144,8 +145,8 @@ TEST(TransformTest, DCTEnergy) {
 TEST(TransformTest, WaveletPerfectReconstruction) {
     const size_t n = 64;
     
-    faf_transform* fwd = faf_create_haar(n, 3, FAF_PREC_FP32, 0);
-    faf_transform* inv = faf_create_dwt(FAF_WAVELET_HAAR, n, 3, true, FAF_PREC_FP32, 0);
+    faf_transform* fwd = test_haar(n, 3);
+    faf_transform* inv = test_dwt(FAF_WAVELET_HAAR, n, 3, true, FAF_PREC_FP32);
     ASSERT_NE(fwd, nullptr);
     ASSERT_NE(inv, nullptr);
     
@@ -175,7 +176,7 @@ TEST(TransformTest, AllDCTTypes) {
     const size_t n = 64;
     
     for (int type = 1; type <= 4; type++) {
-        faf_transform* t = faf_create_dct(n, type, FAF_PREC_FP32, 0);
+        faf_transform* t = test_dct(n, type);
         ASSERT_NE(t, nullptr) << "Failed to create DCT type " << type;
         
         float *in = (float*)aligned_alloc(64, 2 * n * sizeof(float));
@@ -199,7 +200,7 @@ TEST(TransformTest, AllDSTTypes) {
     const size_t n = 64;
     
     for (int type = 1; type <= 4; type++) {
-        faf_transform* t = faf_create_dst(n, type, FAF_PREC_FP32, 0);
+        faf_transform* t = test_dst(n, type);
         ASSERT_NE(t, nullptr) << "Failed to create DST type " << type;
         
         float *in = (float*)aligned_alloc(64, 2 * n * sizeof(float));
@@ -223,7 +224,7 @@ TEST(TransformTest, MultiLevelWavelet) {
     const size_t n = 64;
     
     for (size_t levels = 1; levels <= 4; levels++) {
-        faf_transform* t = faf_create_haar(n, levels, FAF_PREC_FP32, 0);
+        faf_transform* t = test_haar(n, levels);
         ASSERT_NE(t, nullptr) << "Failed to create Haar with " << levels << " levels";
         
         float *in = (float*)aligned_alloc(64, 2 * n * sizeof(float));
@@ -246,7 +247,7 @@ TEST(TransformTest, MultiLevelWavelet) {
 TEST(TransformTest, Daubechies4Wavelet) {
     const size_t n = 64;
     
-    faf_transform* t = faf_create_daubechies4(n, 3, FAF_PREC_FP32, 0);
+    faf_transform* t = test_d4(n, 3);
     ASSERT_NE(t, nullptr);
     
     float *in = (float*)aligned_alloc(64, 2 * n * sizeof(float));

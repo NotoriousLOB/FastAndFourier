@@ -5,6 +5,7 @@
 
 #include <gtest/gtest.h>
 #include "fastandfourier.h"
+#include "faf_test_util.h"
 #include <cmath>
 
 #ifndef M_PI
@@ -26,7 +27,7 @@ TEST(JITTest, CompileFFT) {
     const size_t n = 64;
     
     /* Create transform */
-    faf_transform* t = faf_create_fft(n, false, FAF_PREC_FP32, 0);
+    faf_transform* t = test_fft_n(n);
     ASSERT_NE(t, nullptr);
     
     /* Create JIT context */
@@ -52,7 +53,7 @@ TEST(JITTest, CompileFFT) {
 TEST(JITTest, ExecuteJIT) {
     const size_t n = 64;
     
-    faf_transform* t = faf_create_fft(n, false, FAF_PREC_FP32, 0);
+    faf_transform* t = test_fft_n(n);
     ASSERT_NE(t, nullptr);
     
     /* Complex data format: 2*n floats */
@@ -88,7 +89,7 @@ TEST(JITTest, ExecuteJIT) {
 TEST(JITTest, CompileDCT) {
     const size_t n = 64;
     
-    faf_transform* t = faf_create_dct(n, 2, FAF_PREC_FP32, 0);
+    faf_transform* t = test_dct(n, 2);
     ASSERT_NE(t, nullptr);
     
     faf_jit_ctx* ctx = faf_jit_create();
@@ -105,7 +106,7 @@ TEST(JITTest, CompileDCT) {
 TEST(JITTest, CompileWavelet) {
     const size_t n = 64;
     
-    faf_transform* t = faf_create_haar(n, 3, FAF_PREC_FP32, 0);
+    faf_transform* t = test_haar(n, 3);
     ASSERT_NE(t, nullptr);
     
     faf_jit_ctx* ctx = faf_jit_create();
@@ -123,7 +124,7 @@ TEST(JITTest, VariousSizes) {
     size_t sizes[] = {16, 32, 64, 128, 256};
     
     for (size_t n : sizes) {
-        faf_transform* t = faf_create_fft(n, false, FAF_PREC_FP32, 0);
+        faf_transform* t = test_fft_n(n);
         ASSERT_NE(t, nullptr) << "Failed to create FFT of size " << n;
         
         faf_jit_ctx* ctx = faf_jit_create();
@@ -142,7 +143,7 @@ TEST(JITTest, VariousSizes) {
 TEST(JITTest, DoublePrecisionJIT) {
     const size_t n = 64;
     
-    faf_transform* t = faf_create_fft(n, false, FAF_PREC_FP64, 0);
+    faf_transform* t = test_fft(n, false, FAF_PREC_FP64);
     ASSERT_NE(t, nullptr);
     
     faf_jit_ctx* ctx = faf_jit_create();
@@ -159,7 +160,7 @@ TEST(JITTest, DoublePrecisionJIT) {
 TEST(JITTest, SIMDCompilation) {
     const size_t n = 64;
     
-    faf_transform* t = faf_create_fft(n, false, FAF_PREC_FP32, 0);
+    faf_transform* t = test_fft_n(n);
     ASSERT_NE(t, nullptr);
     
     faf_jit_ctx* ctx = faf_jit_create();
@@ -177,7 +178,7 @@ TEST(JITTest, SIMDCompilation) {
 TEST(JITTest, InPlaceExecution) {
     const size_t n = 64;
     
-    faf_transform* t = faf_create_fft(n, false, FAF_PREC_FP32, 0);
+    faf_transform* t = test_fft_n(n);
     ASSERT_NE(t, nullptr);
     
     /* Complex data format: 2*n floats */
@@ -220,7 +221,7 @@ TEST(JITTest, InPlaceExecution) {
 TEST(JITTest, SIMDInPlaceCombined) {
     const size_t n = 64;
     
-    faf_transform* t = faf_create_fft(n, false, FAF_PREC_FP32, 0);
+    faf_transform* t = test_fft_n(n);
     ASSERT_NE(t, nullptr);
     
     float *data = (float*)aligned_alloc(64, 2 * n * sizeof(float));

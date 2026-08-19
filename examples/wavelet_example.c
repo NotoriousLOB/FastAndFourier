@@ -4,6 +4,7 @@
  */
 
 #include <fastandfourier.h>
+#include "dwt_common.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
@@ -36,8 +37,8 @@ int main(void) {
     printf("%-10s  PR max|err|\n", "family");
     int rc = 0;
     for (size_t k = 0; k < sizeof(fams) / sizeof(fams[0]); k++) {
-        faf_transform *fwd = faf_create_dwt(fams[k], n, levels, false, FAF_PREC_FP32, 0);
-        faf_transform *inv = faf_create_dwt(fams[k], n, levels, true, FAF_PREC_FP32, 0);
+        faf_transform *fwd = dwt_make(fams[k], n, levels, 0);
+        faf_transform *inv = dwt_make(fams[k], n, levels, 1);
         if (!fwd || !inv) {
             fprintf(stderr, "create failed: %s\n", faf_get_error());
             rc = 1;

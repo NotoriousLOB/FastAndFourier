@@ -5,6 +5,7 @@
 
 #include <benchmark/benchmark.h>
 #include "fastandfourier.h"
+#include "bench_util.h"
 #include <cmath>
 #include <string>
 
@@ -16,7 +17,7 @@
 static void BM_Compare_FFT(benchmark::State& state) {
     const size_t n = state.range(0);
     
-    faf_transform* t = faf_create_fft(n, false, FAF_PREC_FP32, 0);
+    faf_transform* t = bench_fft(n, FAF_PREC_FP32);
     if (!t) {
         state.SkipWithError("Failed to create transform");
         return;
@@ -44,7 +45,7 @@ static void BM_Compare_FFT(benchmark::State& state) {
 static void BM_Compare_DCT(benchmark::State& state) {
     const size_t n = state.range(0);
     
-    faf_transform* t = faf_create_dct(n, 2, FAF_PREC_FP32, 0);
+    faf_transform* t = bench_dct(n, 2);
     if (!t) {
         state.SkipWithError("Failed to create transform");
         return;
@@ -73,7 +74,7 @@ static void BM_Compare_DCT(benchmark::State& state) {
 static void BM_Compare_DST(benchmark::State& state) {
     const size_t n = state.range(0);
     
-    faf_transform* t = faf_create_dst(n, 2, FAF_PREC_FP32, 0);
+    faf_transform* t = bench_dst(n, 2);
     if (!t) {
         state.SkipWithError("Failed to create transform");
         return;
@@ -107,7 +108,7 @@ BENCHMARK(BM_Compare_DST)->Range(64, 1024);
 static void BM_Compare_Haar(benchmark::State& state) {
     const size_t n = state.range(0);
     
-    faf_transform* t = faf_create_haar(n, 3, FAF_PREC_FP32, 0);
+    faf_transform* t = bench_haar(n, 3);
     if (!t) {
         state.SkipWithError("Failed to create transform");
         return;
@@ -136,7 +137,7 @@ static void BM_Compare_Haar(benchmark::State& state) {
 static void BM_Compare_Daubechies4(benchmark::State& state) {
     const size_t n = state.range(0);
     
-    faf_transform* t = faf_create_daubechies4(n, 3, FAF_PREC_FP32, 0);
+    faf_transform* t = bench_d4(n, 3);
     if (!t) {
         state.SkipWithError("Failed to create transform");
         return;
@@ -172,7 +173,7 @@ static void BM_DWT_Family(benchmark::State& state) {
     auto fam = (faf_wavelet_family)fam_i;
     const bool inverse = state.range(3) != 0;
 
-    faf_transform* t = faf_create_dwt(fam, n, levels, inverse, FAF_PREC_FP32, 0);
+    faf_transform* t = bench_dwt(fam, n, levels, inverse);
     if (!t) {
         state.SkipWithError("Failed to create DWT");
         return;

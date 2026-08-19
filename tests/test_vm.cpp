@@ -5,6 +5,7 @@
 
 #include <gtest/gtest.h>
 #include "fastandfourier.h"
+#include "faf_test_util.h"
 #include <cmath>
 #include <cstring>
 
@@ -23,7 +24,7 @@ static bool near_equal(float a, float b, float tol = 1e-4f) {
 /* Test simple FFT execution */
 TEST(VMTest, FFTExecute) {
     const size_t n = 64;
-    faf_transform* t = faf_create_fft(n, false, FAF_PREC_FP32, 0);
+    faf_transform* t = test_fft_n(n);
     ASSERT_NE(t, nullptr);
     
     /* Create complex input: impulse at position 0 (real=1, imag=0) */
@@ -53,7 +54,7 @@ TEST(VMTest, FFTExecute) {
 /* Test FFT of constant signal */
 TEST(VMTest, FFTConstant) {
     const size_t n = 64;
-    faf_transform* t = faf_create_fft(n, false, FAF_PREC_FP32, 0);
+    faf_transform* t = test_fft_n(n);
     ASSERT_NE(t, nullptr);
     
     float *in = (float*)ALIGNED_ALLOC64(2 * n * sizeof(float));
@@ -83,7 +84,7 @@ TEST(VMTest, FFTConstant) {
 /* Test FFT of sine wave */
 TEST(VMTest, FFTSineWave) {
     const size_t n = 64;
-    faf_transform* t = faf_create_fft(n, false, FAF_PREC_FP32, 0);
+    faf_transform* t = test_fft_n(n);
     ASSERT_NE(t, nullptr);
     
     float *in = (float*)ALIGNED_ALLOC64(2 * n * sizeof(float));
@@ -120,7 +121,7 @@ TEST(VMTest, FFTSineWave) {
 /* Test DCT-II execution - DCT uses real input */
 TEST(VMTest, DCTExecute) {
     const size_t n = 64;
-    faf_transform* t = faf_create_dct(n, 2, FAF_PREC_FP32, 0);
+    faf_transform* t = test_dct(n, 2);
     ASSERT_NE(t, nullptr);
     
     /* DCT operates on real data, but our VM expects complex */
@@ -147,7 +148,7 @@ TEST(VMTest, DCTExecute) {
 /* Test Haar wavelet */
 TEST(VMTest, HaarWavelet) {
     const size_t n = 64;
-    faf_transform* t = faf_create_haar(n, 1, FAF_PREC_FP32, 0);
+    faf_transform* t = test_haar(n, 1);
     ASSERT_NE(t, nullptr);
     
     /* Haar operates on real data */
@@ -181,7 +182,7 @@ TEST(VMTest, HaarWavelet) {
 /* Test double precision execution */
 TEST(VMTest, DoublePrecision) {
     const size_t n = 64;
-    faf_transform* t = faf_create_fft(n, false, FAF_PREC_FP64, 0);
+    faf_transform* t = test_fft(n, false, FAF_PREC_FP64);
     ASSERT_NE(t, nullptr);
     
     double *in = (double*)ALIGNED_ALLOC64(2 * n * sizeof(double));
@@ -211,7 +212,7 @@ TEST(VMTest, VariousSizes) {
     size_t sizes[] = {2, 4, 8, 16, 32, 64, 128, 256, 512, 1024};
     
     for (size_t n : sizes) {
-        faf_transform* t = faf_create_fft(n, false, FAF_PREC_FP32, 0);
+        faf_transform* t = test_fft_n(n);
         ASSERT_NE(t, nullptr) << "Failed to create FFT of size " << n;
         
         /* aligned_alloc requires size to be a multiple of alignment */
@@ -237,7 +238,7 @@ TEST(VMTest, VariousSizes) {
 /* Test MDCT execution */
 TEST(VMTest, MDCTExecute) {
     const size_t n = 64;
-    faf_transform* t = faf_create_mdct(n, FAF_PREC_FP32, 0);
+    faf_transform* t = test_mdct(n);
     ASSERT_NE(t, nullptr);
     
     /* MDCT input is real, but our VM expects complex format */

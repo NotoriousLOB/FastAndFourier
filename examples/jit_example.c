@@ -71,7 +71,9 @@ int main(void) {
     printf("  Data format: Complex-interleaved (2*%zu floats)\n\n", n);
     
     /* Create transform */
-    faf_transform* fft = faf_create_fft(n, false, FAF_PREC_FP32, 0);
+    faf_config cfg = faf_config_init(n);
+    cfg.layout = FAF_LAYOUT_INTERLEAVED;
+    faf_transform* fft = faf_create_fft(&cfg);
     if (!fft) {
         fprintf(stderr, "Failed to create FFT: %s\n", faf_get_error());
         return 1;
@@ -188,7 +190,9 @@ int main(void) {
             size_t sizes[] = {16, 32, 64, 128, 256};
             for (size_t i = 0; i < sizeof(sizes)/sizeof(sizes[0]); i++) {
                 size_t test_n = sizes[i];
-                faf_transform* test_fft = faf_create_fft(test_n, false, FAF_PREC_FP32, 0);
+                faf_config tcfg = faf_config_init(test_n);
+                tcfg.layout = FAF_LAYOUT_INTERLEAVED;
+                faf_transform* test_fft = faf_create_fft(&tcfg);
                 if (!test_fft) continue;
                 
                 float* test_in = (float*)aligned_alloc(64, 2 * test_n * sizeof(float));

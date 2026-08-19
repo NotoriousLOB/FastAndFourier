@@ -108,9 +108,13 @@ int faf_wavelet_from_name(const char *name, faf_wavelet_family *out) {
         return 0;
     }
     if (name_eq(name, "d4") || name_eq(name, "db2") ||
-        name_eq(name, "daubechies4") || name_eq(name, "db4")) {
+        name_eq(name, "daubechies4")) {
         *out = FAF_WAVELET_D4;
         return 0;
+    }
+    if (name_eq(name, "db4")) {
+        /* dbN has 2N taps: db4 is 8-tap, not the 4-tap D4/db2 family. */
+        return -1;
     }
     if (name_eq(name, "cdf53") || name_eq(name, "legall")) {
         *out = FAF_WAVELET_CDF53;

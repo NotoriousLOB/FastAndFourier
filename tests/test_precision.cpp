@@ -5,6 +5,7 @@
 
 #include <gtest/gtest.h>
 #include "fastandfourier.h"
+#include "faf_test_util.h"
 #include <cmath>
 
 #ifndef M_PI
@@ -14,7 +15,7 @@
 /* Test FP32 precision */
 TEST(PrecisionTest, FP32Accuracy) {
     const size_t n = 256;
-    faf_transform* t = faf_create_fft(n, false, FAF_PREC_FP32, 0);
+    faf_transform* t = test_fft_n(n);
     ASSERT_NE(t, nullptr);
     
     float *in = (float*)aligned_alloc(64, 2 * n * sizeof(float));
@@ -49,7 +50,7 @@ TEST(PrecisionTest, FP32Accuracy) {
 /* Test FP64 precision (higher accuracy) */
 TEST(PrecisionTest, FP64Accuracy) {
     const size_t n = 256;
-    faf_transform* t = faf_create_fft(n, false, FAF_PREC_FP64, 0);
+    faf_transform* t = test_fft(n, false, FAF_PREC_FP64);
     ASSERT_NE(t, nullptr);
     
     double *in = (double*)aligned_alloc(64, 2 * n * sizeof(double));
@@ -85,8 +86,8 @@ TEST(PrecisionTest, FP64Accuracy) {
 TEST(PrecisionTest, FP32vsFP64) {
     const size_t n = 256;
     
-    faf_transform* t32 = faf_create_fft(n, false, FAF_PREC_FP32, 0);
-    faf_transform* t64 = faf_create_fft(n, false, FAF_PREC_FP64, 0);
+    faf_transform* t32 = test_fft_n(n);
+    faf_transform* t64 = test_fft(n, false, FAF_PREC_FP64);
     ASSERT_NE(t32, nullptr);
     ASSERT_NE(t64, nullptr);
     
@@ -131,7 +132,7 @@ TEST(PrecisionTest, FP32vsFP64) {
 /* Test numerical stability with large transforms */
 TEST(PrecisionTest, LargeTransformStability) {
     const size_t n = 4096;
-    faf_transform* t = faf_create_fft(n, false, FAF_PREC_FP32, 0);
+    faf_transform* t = test_fft_n(n);
     ASSERT_NE(t, nullptr);
     
     float *in = (float*)aligned_alloc(64, 2 * n * sizeof(float));
@@ -164,7 +165,7 @@ TEST(PrecisionTest, DCTPrecision) {
     const size_t n = 128;
     
     /* FP32 DCT */
-    faf_transform* t32 = faf_create_dct(n, 2, FAF_PREC_FP32, 0);
+    faf_transform* t32 = test_dct(n, 2);
     ASSERT_NE(t32, nullptr);
     
     float *in32 = (float*)aligned_alloc(64, 2 * n * sizeof(float));

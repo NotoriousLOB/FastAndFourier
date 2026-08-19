@@ -26,7 +26,7 @@ int main(void) {
         FAF_WAVELET_HAAR, FAF_WAVELET_D4, FAF_WAVELET_CDF97
     };
     for (int k = 0; k < 3; k++) {
-        faf_transform *t = faf_create_dwt(fams[k], n, levels, false, FAF_PREC_FP32, 0);
+        faf_transform *t = dwt_make(fams[k], n, levels, 0);
         if (!t) return 1;
         faf_execute_f32(t, coef, in);
         size_t fine0 = n / 2;

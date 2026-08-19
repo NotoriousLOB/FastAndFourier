@@ -5,6 +5,7 @@
 
 #include <gtest/gtest.h>
 #include "fastandfourier.h"
+#include "faf_test_util.h"
 #include "chirp.h"
 #include "chirp_builtins.h"
 
@@ -91,6 +92,9 @@ TEST_F(WaveletTest, FamilyNamesAndTaps) {
     EXPECT_EQ(f, FAF_WAVELET_D4);
     EXPECT_EQ(faf_wavelet_from_name("legall", &f), 0);
     EXPECT_EQ(f, FAF_WAVELET_CDF53);
+    EXPECT_EQ(faf_wavelet_from_name("db2", &f), 0);
+    EXPECT_EQ(f, FAF_WAVELET_D4);
+    EXPECT_NE(faf_wavelet_from_name("db4", &f), 0);
     EXPECT_NE(faf_wavelet_from_name("nope", &f), 0);
 }
 
@@ -101,9 +105,9 @@ TEST_F(WaveletTest, PerfectReconstructionF32) {
     for (faf_wavelet_family fam : kFamilies) {
         for (size_t n : sizes) {
             for (size_t lv : level_choices) {
-                faf_transform *fwd = faf_create_dwt(fam, n, lv, false, FAF_PREC_FP32, 0);
+                faf_transform *fwd = test_dwt(fam, n, lv, false, FAF_PREC_FP32);
                 ASSERT_NE(fwd, nullptr) << faf_wavelet_name(fam) << " n=" << n;
-                faf_transform *inv = faf_create_dwt(fam, n, fwd->levels, true, FAF_PREC_FP32, 0);
+                faf_transform *inv = test_dwt(fam, n, fwd->levels, true, FAF_PREC_FP32);
                 ASSERT_NE(inv, nullptr);
 
                 float *in = (float*)ALIGNED_ALLOC64(2 * n * sizeof(float));
@@ -134,8 +138,8 @@ TEST_F(WaveletTest, PerfectReconstructionF32) {
 TEST_F(WaveletTest, PerfectReconstructionF64) {
     const size_t n = 128;
     for (faf_wavelet_family fam : kFamilies) {
-        faf_transform *fwd = faf_create_dwt(fam, n, 4, false, FAF_PREC_FP64, 0);
-        faf_transform *inv = faf_create_dwt(fam, n, 4, true, FAF_PREC_FP64, 0);
+        faf_transform *fwd = test_dwt(fam, n, 4, false, FAF_PREC_FP64);
+        faf_transform *inv = test_dwt(fam, n, 4, true, FAF_PREC_FP64);
         ASSERT_NE(fwd, nullptr);
         ASSERT_NE(inv, nullptr);
 
@@ -157,7 +161,7 @@ TEST_F(WaveletTest, PerfectReconstructionF64) {
 
 TEST_F(WaveletTest, HaarConstantVanishesInDetails) {
     const size_t n = 64;
-    faf_transform *t = faf_create_dwt(FAF_WAVELET_HAAR, n, 3, false, FAF_PREC_FP32, 0);
+    faf_transform *t = test_dwt(FAF_WAVELET_HAAR, n, 3, false, FAF_PREC_FP32);
     ASSERT_NE(t, nullptr);
     float *in = (float*)ALIGNED_ALLOC64(2 * n * sizeof(float));
     float *out = (float*)ALIGNED_ALLOC64(2 * n * sizeof(float));
@@ -170,7 +174,7 @@ TEST_F(WaveletTest, HaarConstantVanishesInDetails) {
 
 TEST_F(WaveletTest, Cdf53ConstantVanishesInDetails) {
     const size_t n = 64;
-    faf_transform *t = faf_create_dwt(FAF_WAVELET_CDF53, n, 2, false, FAF_PREC_FP32, 0);
+    faf_transform *t = test_dwt(FAF_WAVELET_CDF53, n, 2, false, FAF_PREC_FP32);
     ASSERT_NE(t, nullptr);
     float *in = (float*)ALIGNED_ALLOC64(2 * n * sizeof(float));
     float *out = (float*)ALIGNED_ALLOC64(2 * n * sizeof(float));
@@ -183,8 +187,8 @@ TEST_F(WaveletTest, Cdf53ConstantVanishesInDetails) {
 
 TEST_F(WaveletTest, Daubechies4IsNotHaar) {
     const size_t n = 64;
-    faf_transform *haar = faf_create_haar(n, 2, FAF_PREC_FP32, 0);
-    faf_transform *d4 = faf_create_daubechies4(n, 2, FAF_PREC_FP32, 0);
+    faf_transform *haar = test_haar(n, 2);
+    faf_transform *d4 = test_d4(n, 2);
     ASSERT_NE(haar, nullptr);
     ASSERT_NE(d4, nullptr);
 
@@ -206,18 +210,18 @@ TEST_F(WaveletTest, Daubechies4IsNotHaar) {
 
 TEST_F(WaveletTest, RejectsBadArgs) {
     faf_clear_error();
-    EXPECT_EQ(faf_create_dwt(FAF_WAVELET_HAAR, 7, 1, false, FAF_PREC_FP32, 0), nullptr);
+    EXPECT_EQ(test_dwt(FAF_WAVELET_HAAR, 7, 1, false, FAF_PREC_FP32), nullptr);
     EXPECT_STRNE(faf_get_error(), "");
 
     faf_clear_error();
-    EXPECT_EQ(faf_create_dwt(FAF_WAVELET_HAAR, 64, 20, false, FAF_PREC_FP32, 0), nullptr);
+    EXPECT_EQ(test_dwt(FAF_WAVELET_HAAR, 64, 20, false, FAF_PREC_FP32), nullptr);
     EXPECT_STRNE(faf_get_error(), "");
 }
 
 TEST_F(WaveletTest, ChirpDwtMatchesCApi) {
     chirp_register_standard_builtins();
     const size_t n = 64;
-    faf_transform *capi = faf_create_dwt(FAF_WAVELET_HAAR, n, 3, false, FAF_PREC_FP32, 0);
+    faf_transform *capi = test_dwt(FAF_WAVELET_HAAR, n, 3, false, FAF_PREC_FP32);
     faf_transform *chirp = chirp_compile("(dwt :family haar :size 64 :levels 3)");
     ASSERT_NE(capi, nullptr);
     ASSERT_NE(chirp, nullptr);
@@ -281,7 +285,7 @@ TEST_F(WaveletTest, ChirpDenoiseImprovesSnr) {
 
 TEST_F(WaveletTest, JitAgreesWithVmHaar) {
     const size_t n = 256;
-    faf_transform *t = faf_create_dwt(FAF_WAVELET_HAAR, n, 4, false, FAF_PREC_FP32, 0);
+    faf_transform *t = test_dwt(FAF_WAVELET_HAAR, n, 4, false, FAF_PREC_FP32);
     ASSERT_NE(t, nullptr);
 
     float *in = (float*)ALIGNED_ALLOC64(2 * n * sizeof(float));

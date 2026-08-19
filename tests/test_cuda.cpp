@@ -5,6 +5,7 @@
 
 #include <gtest/gtest.h>
 #include "fastandfourier.h"
+#include "faf_test_util.h"
 
 #ifdef FAF_HAVE_CUDA
 
@@ -51,7 +52,7 @@ TEST(CUDATest, MemoryOperations) {
 TEST(CUDATest, FFTExecute) {
     const size_t n = 64;
     
-    faf_transform* t = faf_create_fft(n, false, FAF_PREC_FP32, 0);
+    faf_transform* t = test_fft_n(n);
     ASSERT_NE(t, nullptr);
     
     float *in = (float*)aligned_alloc(64, n * sizeof(float));
@@ -79,7 +80,7 @@ TEST(CUDATest, VariousSizes) {
     size_t sizes[] = {64, 128, 256, 512, 1024, 2048, 4096};
     
     for (size_t n : sizes) {
-        faf_transform* t = faf_create_fft(n, false, FAF_PREC_FP32, 0);
+        faf_transform* t = test_fft_n(n);
         ASSERT_NE(t, nullptr) << "Failed to create FFT of size " << n;
         
         float *in = (float*)aligned_alloc(64, n * sizeof(float));

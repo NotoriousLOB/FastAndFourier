@@ -12,6 +12,7 @@
 
 #include <benchmark/benchmark.h>
 #include "fastandfourier.h"
+#include "bench_util.h"
 #include <cmath>
 #include <cstring>
 #include <complex>
@@ -82,7 +83,7 @@ static void BM_FAF_FFT_Real(benchmark::State& state) {
     const size_t n = state.range(0);
     
     // Use double precision for fair comparison
-    faf_transform* t = faf_create_fft(n, false, FAF_PREC_FP64, 0);
+    faf_transform* t = bench_fft(n, FAF_PREC_FP64);
     if (!t) {
         state.SkipWithError("Failed to create transform");
         return;
@@ -291,7 +292,7 @@ BENCHMARK(BM_NotoriousFFT_Real)
 static void BM_Latency_FAF(benchmark::State& state) {
     const size_t n = state.range(0);
     
-    faf_transform* t = faf_create_fft(n, false, FAF_PREC_FP64, 0);
+    faf_transform* t = bench_fft(n, FAF_PREC_FP64);
     double* in = (double*)aligned_alloc(64, 2 * n * sizeof(double));
     double* out = (double*)aligned_alloc(64, 2 * n * sizeof(double));
     for (size_t i = 0; i < n; i++) {
@@ -371,7 +372,7 @@ static void BM_Throughput_FAF(benchmark::State& state) {
     const size_t n = state.range(0);
     const int batch = 100;
     
-    faf_transform* t = faf_create_fft(n, false, FAF_PREC_FP64, 0);
+    faf_transform* t = bench_fft(n, FAF_PREC_FP64);
     double* in = (double*)aligned_alloc(64, 2 * n * sizeof(double));
     double* out = (double*)aligned_alloc(64, 2 * n * sizeof(double));
     for (size_t i = 0; i < n; i++) {

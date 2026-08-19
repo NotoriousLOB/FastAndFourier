@@ -99,25 +99,29 @@ static inline void free_regs(void* ptr) {
 }
 
 static void apply_dwt_interleaved_f32(float *regs, size_t n, size_t length,
-                                      faf_wavelet_family fam, int inv) {
+                                      faf_wavelet_family fam, int inv,
+                                      float *scratch, size_t scratch_n) {
     if (length < 2 || length > n) return;
-    float *tmp = (float*)alloc_regs(length * sizeof(float));
+    float *tmp = (scratch && scratch_n >= length) ? scratch
+                 : (float*)alloc_regs(length * sizeof(float));
     if (!tmp) return;
     for (size_t i = 0; i < length; i++) tmp[i] = regs[i * 2];
     faf_dwt_level_f32(tmp, length, fam, inv);
     for (size_t i = 0; i < length; i++) regs[i * 2] = tmp[i];
-    free_regs(tmp);
+    if (tmp != scratch) free_regs(tmp);
 }
 
 static void apply_dwt_interleaved_f64(double *regs, size_t n, size_t length,
-                                      faf_wavelet_family fam, int inv) {
+                                      faf_wavelet_family fam, int inv,
+                                      double *scratch, size_t scratch_n) {
     if (length < 2 || length > n) return;
-    double *tmp = (double*)alloc_regs(length * sizeof(double));
+    double *tmp = (scratch && scratch_n >= length) ? scratch
+                  : (double*)alloc_regs(length * sizeof(double));
     if (!tmp) return;
     for (size_t i = 0; i < length; i++) tmp[i] = regs[i * 2];
     faf_dwt_level_f64(tmp, length, fam, inv);
     for (size_t i = 0; i < length; i++) regs[i * 2] = tmp[i];
-    free_regs(tmp);
+    if (tmp != scratch) free_regs(tmp);
 }
 
 static void bitrev_interleaved_f32(float *regs, size_t n) {
@@ -894,7 +898,9 @@ label_DWT_STAGE:
 #endif
         apply_dwt_interleaved_f32(regs, t->n, inst->a1,
                                   (faf_wavelet_family)inst->a0,
-                                  (int)(inst->a2 & FAF_DWT_FLAG_INVERSE));
+                                  (int)(inst->a2 & FAF_DWT_FLAG_INVERSE),
+                                  (float *)t->scratch,
+                                  t->scratch_size / sizeof(float));
         DISPATCH();
 
 #ifdef FAF_USE_DIRECT_THREADED
@@ -1193,7 +1199,9 @@ int faf_vm_execute_f64(const faf_transform *t,
             case FAF_DWT_STAGE:
                 apply_dwt_interleaved_f64(regs, t->n, inst->a1,
                                           (faf_wavelet_family)inst->a0,
-                                          (int)(inst->a2 & FAF_DWT_FLAG_INVERSE));
+                                          (int)(inst->a2 & FAF_DWT_FLAG_INVERSE),
+                                          (double *)t->scratch,
+                                          t->scratch_size / sizeof(double));
                 break;
             case FAF_THRESHOLD: {
                 union { uint32_t u; float f; } lam;

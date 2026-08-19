@@ -31,8 +31,8 @@ int main(void) {
            err53, err53 < 1e-5f ? "ok" : "FAIL");
 
     /* Lossy: CDF 9/7, uniform-quantize details, invert. */
-    faf_transform *fwd = faf_create_cdf97(n, levels, FAF_PREC_FP32, 0);
-    faf_transform *inv = faf_create_dwt(FAF_WAVELET_CDF97, n, levels, true, FAF_PREC_FP32, 0);
+    faf_transform *fwd = dwt_make(FAF_WAVELET_CDF97, n, levels, 0);
+    faf_transform *inv = dwt_make(FAF_WAVELET_CDF97, n, levels, 1);
     if (!fwd || !inv) return 1;
     faf_execute_f32(fwd, mid, in);
 

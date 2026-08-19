@@ -5,12 +5,9 @@
  * Chirp is a Scheme-like DSL with Smalltalk-style keyword arguments:
  * 
  *   (pipeline
- *     (fft :size 1024)
- *     twiddle
- *     (bfly 4)
- *     (lift :predict gaussian :update softmax)
- *     (custom softmax)
- *     reduce-sum)
+ *     (fft :size 64)
+ *     softmax
+ *     (ifft :size 64))
  */
 
 #include <stdio.h>
@@ -97,38 +94,26 @@ int main(void) {
         faf_destroy_transform(t1);
     }
     
-    /* Example 2: Complex pipeline with custom functions */
-    printf("\nExample 2: Complex DSP Pipeline\n");
-    printf("Program:\n");
-    printf("  (pipeline\n");
-    printf("    (fft :size 1024)\n");
-    printf("    twiddle\n");
-    printf("    (bfly 4)\n");
-    printf("    (lift :predict gaussian :update softmax)\n");
-    printf("    (custom softmax)\n");
-    printf("    reduce-sum)\n\n");
-    
-    const char *complex_program = 
-        "(pipeline "
-        "  (fft :size 1024) "
-        "  twiddle "
-        "  (bfly 4) "
-        "  (lift :predict gaussian :update softmax) "
-        "  (custom softmax) "
-        "  reduce-sum)";
-    
+    /* Example 2: FFT → registered C → IFFT */
+    printf("\nExample 2: Fourier-domain C pipeline\n");
+    printf("Program: (pipeline (fft :size 64) softmax (ifft :size 64))\n\n");
+
+    const char *complex_program =
+        "(pipeline (fft :size 64) softmax (ifft :size 64))";
+
     faf_transform *t2 = chirp_compile(complex_program);
     if (t2) {
         print_ir(t2);
-        printf("Transform size: %zu\n\n", t2->n);
+        printf("Transform size: %zu  inverse=%s\n\n",
+               t2->n, (t2->cfg.dir == FAF_DIR_INVERSE) ? "yes" : "partial");
         faf_destroy_transform(t2);
     }
-    
-    /* Example 3: Wavelet transform */
-    printf("\nExample 3: Wavelet Transform\n");
-    printf("Program: (lift :predict gaussian :update normalize)\n\n");
-    
-    faf_transform *t3 = chirp_compile("(lift :predict gaussian :update normalize)");
+
+    /* Example 3: named-family lifting is a real DWT level */
+    printf("\nExample 3: Wavelet transform\n");
+    printf("Program: (lift :predict haar :update haar)\n\n");
+
+    faf_transform *t3 = chirp_compile("(lift :predict haar :update haar)");
     if (t3) {
         print_ir(t3);
         faf_destroy_transform(t3);

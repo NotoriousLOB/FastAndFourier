@@ -59,10 +59,20 @@ static inline float dwt_energy(const float *buf, size_t start, size_t end) {
     return e;
 }
 
+static inline faf_transform *dwt_make(faf_wavelet_family fam, size_t n,
+                                      size_t levels, int inverse) {
+    faf_config c = faf_config_init(n);
+    c.family = fam;
+    c.levels = levels;
+    c.dir = inverse ? FAF_DIR_INVERSE : FAF_DIR_FORWARD;
+    c.layout = FAF_LAYOUT_INTERLEAVED;
+    return faf_create_dwt(&c);
+}
+
 static inline int dwt_run_pr(faf_wavelet_family fam, size_t n, size_t levels,
                              const float *in, float *mid, float *out, float *err) {
-    faf_transform *fwd = faf_create_dwt(fam, n, levels, false, FAF_PREC_FP32, 0);
-    faf_transform *inv = faf_create_dwt(fam, n, levels, true, FAF_PREC_FP32, 0);
+    faf_transform *fwd = dwt_make(fam, n, levels, 0);
+    faf_transform *inv = dwt_make(fam, n, levels, 1);
     if (!fwd || !inv) {
         faf_destroy_transform(fwd);
         faf_destroy_transform(inv);

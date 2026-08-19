@@ -24,6 +24,7 @@ extern "C" {
 #include <stdint.h>
 #include <stddef.h>
 #include <stdlib.h>
+#include <string.h>
 #include <stdbool.h>
 
 /* C/C++ compatibility for restrict keyword */
@@ -168,6 +169,79 @@ typedef enum {
 #define FAF_THRESH_SOFT  1u
 
 /**
+ * @brief Buffer / spectrum layout
+ *
+ * FAF_LAYOUT_DEFAULT lets each create function pick a type-specific default:
+ * split for C2C FFT, real for DWT/DCT, hermitian for R2C.
+ */
+typedef enum {
+    FAF_LAYOUT_DEFAULT = 0,  /**< Type-specific default */
+    FAF_LAYOUT_SPLIT,        /**< re[n], im[n] — native for C2C */
+    FAF_LAYOUT_HERMITIAN,    /**< packed R2C, n/2+1 split planes */
+    FAF_LAYOUT_REAL,         /**< float[n] — native for DWT / DCT */
+    FAF_LAYOUT_INTERLEAVED   /**< complex float[2n] — opt-in convenience */
+} faf_layout;
+
+/**
+ * @brief Scaling convention (FFT and wavelets)
+ */
+typedef enum {
+    FAF_NORM_DEFAULT = 0,    /**< Type-specific default */
+    FAF_NORM_NONE,           /**< Forward unscaled; inverse 1/n (NumPy) */
+    FAF_NORM_ORTHO,          /**< 1/sqrt(n) both ways; Haar/D4/Sym4 default */
+    FAF_NORM_FORWARD,        /**< 1/n on forward, unscaled inverse */
+    FAF_NORM_LAZY,           /**< Haar split only, no scale */
+    FAF_NORM_JPEG2000        /**< CDF 5/3 / 9/7 JPEG 2000 convention */
+} faf_norm;
+
+typedef enum {
+    FAF_DIR_FORWARD = 0,
+    FAF_DIR_INVERSE
+} faf_direction;
+
+typedef enum {
+    FAF_BACKEND_AUTO = 0,    /**< JIT above threshold, else VM */
+    FAF_BACKEND_VM,
+    FAF_BACKEND_JIT
+} faf_backend;
+
+/**
+ * @brief Shared create-time configuration
+ *
+ * Pass the same struct to every faf_create_* . Zero / DEFAULT fields take
+ * type-specific defaults. Use faf_config_init() rather than memset so
+ * precision starts at FP32 (FAF_PREC_FP8 is zero).
+ */
+typedef struct faf_config {
+    size_t            n;          /**< Required: transform length */
+    faf_precision     precision;  /**< Default FP32 */
+    faf_layout        layout;     /**< Default: type-specific */
+    faf_norm          norm;       /**< Default: NONE (FFT) / ORTHO (DWT) */
+    faf_direction     dir;        /**< Default FORWARD */
+    faf_backend       backend;    /**< Default AUTO */
+    uint32_t          flags;      /**< FAF_FLAG_INPLACE, … */
+
+    faf_wavelet_family family;    /**< DWT; ignored otherwise */
+    size_t            levels;     /**< DWT; 0 = full log2(n) */
+    int               dct_type;   /**< DCT/DST type 1–4; 0 = 2 */
+    size_t            hop_length; /**< STFT */
+    size_t            win_length; /**< STFT */
+} faf_config;
+
+/**
+ * @brief Execute-time buffer descriptor
+ *
+ * layout must match the transform. im is NULL for REAL.
+ * n is the logical length of this buffer (n, or n/2+1 for HERMITIAN).
+ */
+typedef struct faf_buffer {
+    void      *re;
+    void      *im;
+    size_t     n;
+    faf_layout layout;
+} faf_buffer;
+
+/**
  * @brief IR opcodes for the virtual machine
  */
 typedef enum {
@@ -250,6 +324,9 @@ typedef struct {
     size_t win_length;           /**< STFT: window length (0 if unused) */
     size_t levels;               /**< DWT: number of Mallat decomposition levels */
     faf_wavelet_family family; /**< DWT: wavelet family */
+    faf_config cfg;            /**< Resolved create-time configuration */
+    void *scratch;             /**< Aligned workspace (DWT, packing) */
+    size_t scratch_size;       /**< Bytes allocated at scratch */
 } faf_transform;
 
 /**
@@ -332,139 +409,139 @@ static inline void faf_aligned_free(void* ptr) {
 #endif
 }
 
+/* --- CONFIG HELPERS --- */
+
+/**
+ * @brief Zero a config and set n, precision=FP32, other fields DEFAULT/FORWARD/AUTO
+ */
+static inline faf_config faf_config_init(size_t n) {
+    faf_config c;
+    memset(&c, 0, sizeof(c));
+    c.n = n;
+    c.precision = FAF_PREC_FP32;
+    return c;
+}
+
+/**
+ * @brief Snapshot the resolved config stored on a transform
+ */
+static inline faf_config faf_config_from(const faf_transform *t) {
+    faf_config c;
+    memset(&c, 0, sizeof(c));
+    return t ? t->cfg : c;
+}
+
+/**
+ * @brief Flip dir, keep every other knob
+ */
+static inline faf_config faf_config_inverse(faf_config cfg) {
+    cfg.dir = (cfg.dir == FAF_DIR_INVERSE) ? FAF_DIR_FORWARD : FAF_DIR_INVERSE;
+    return cfg;
+}
+
+static inline faf_buffer faf_buffer_real(void *data, size_t n) {
+    faf_buffer b;
+    memset(&b, 0, sizeof(b));
+    b.re = data;
+    b.n = n;
+    b.layout = FAF_LAYOUT_REAL;
+    return b;
+}
+
+static inline faf_buffer faf_buffer_split(void *re, void *im, size_t n) {
+    faf_buffer b;
+    memset(&b, 0, sizeof(b));
+    b.re = re;
+    b.im = im;
+    b.n = n;
+    b.layout = FAF_LAYOUT_SPLIT;
+    return b;
+}
+
+static inline faf_buffer faf_buffer_interleaved(void *data, size_t n) {
+    faf_buffer b;
+    memset(&b, 0, sizeof(b));
+    b.re = data;
+    b.n = n;
+    b.layout = FAF_LAYOUT_INTERLEAVED;
+    return b;
+}
+
+static inline faf_buffer faf_buffer_hermitian(void *re, void *im, size_t n_bins) {
+    faf_buffer b;
+    memset(&b, 0, sizeof(b));
+    b.re = re;
+    b.im = im;
+    b.n = n_bins;
+    b.layout = FAF_LAYOUT_HERMITIAN;
+    return b;
+}
+
+const char* faf_layout_name(faf_layout layout);
+const char* faf_norm_name(faf_norm norm);
+
+/**
+ * @brief Logical spectrum length: n/2+1 for R2C, n otherwise
+ */
+size_t faf_spectrum_len(const faf_transform *t);
+
 /* --- TRANSFORM CREATION --- */
 
 /**
- * @brief Create an FFT transform
- * @param n Transform size (must be power of 2)
- * @param inverse True for inverse FFT
- * @param precision Precision level
- * @param flags Additional flags
- * @return Transform object or NULL on error
+ * @brief Create a transform of any supported type from one config
  */
-faf_transform* faf_create_fft(size_t n, 
-                                   bool inverse, 
-                                   faf_precision precision,
-                                   uint32_t flags);
+faf_transform* faf_create(faf_transform_type type, const faf_config *cfg);
 
 /**
- * @brief Create a DCT transform
- * @param n Transform size
- * @param type DCT type (I-IV)
- * @param precision Precision level
- * @param flags Additional flags
- * @return Transform object or NULL on error
+ * @brief Create an FFT (C2C). n must be a power of 2.
+ *
+ * Default layout SPLIT, default norm NONE (unscaled forward, 1/n inverse).
  */
-faf_transform* faf_create_dct(size_t n,
-                                   int type,
-                                   faf_precision precision,
-                                   uint32_t flags);
+faf_transform* faf_create_fft(const faf_config *cfg);
 
 /**
- * @brief Create a DST transform
- * @param n Transform size
- * @param type DST type (I-IV)
- * @param precision Precision level
- * @param flags Additional flags
- * @return Transform object or NULL on error
+ * @brief Create a DCT. cfg->dct_type is 1–4 (0 means type II).
  */
-faf_transform* faf_create_dst(size_t n,
-                                   int type,
-                                   faf_precision precision,
-                                   uint32_t flags);
+faf_transform* faf_create_dct(const faf_config *cfg);
 
 /**
- * @brief Create an STFT transform
- * @param n_fft FFT size
- * @param hop_length Hop between frames
- * @param win_length Window length
- * @param precision Precision level
- * @param flags Additional flags
- * @return Transform object or NULL on error
+ * @brief Create a DST. cfg->dct_type is 1–4 (0 means type II).
  */
-faf_transform* faf_create_stft(size_t n_fft,
-                                    size_t hop_length,
-                                    size_t win_length,
-                                    faf_precision precision,
-                                    uint32_t flags);
+faf_transform* faf_create_dst(const faf_config *cfg);
 
 /**
- * @brief Create an MDCT transform
- * @param n Transform size (must be even)
- * @param precision Precision level
- * @param flags Additional flags
- * @return Transform object or NULL on error
+ * @brief Create an STFT. hop_length / win_length of 0 pick defaults.
  */
-faf_transform* faf_create_mdct(size_t n,
-                                    faf_precision precision,
-                                    uint32_t flags);
+faf_transform* faf_create_stft(const faf_config *cfg);
 
 /**
- * @brief Create a Haar wavelet transform
- * @param n Transform size (must be power of 2)
- * @param levels Decomposition levels
- * @param precision Precision level
- * @param flags Additional flags
- * @return Transform object or NULL on error
+ * @brief Create an MDCT. n must be even.
  */
-faf_transform* faf_create_haar(size_t n,
-                                    size_t levels,
-                                    faf_precision precision,
-                                    uint32_t flags);
+faf_transform* faf_create_mdct(const faf_config *cfg);
 
 /**
- * @brief Create a Daubechies-4 wavelet transform
- * @param n Transform size (must be power of 2)
- * @param levels Decomposition levels
- * @param precision Precision level
- * @param flags Additional flags
- * @return Transform object or NULL on error
+ * @brief Create a Haar DWT (family forced to HAAR)
  */
-faf_transform* faf_create_daubechies4(size_t n,
-                                           size_t levels,
-                                           faf_precision precision,
-                                           uint32_t flags);
+faf_transform* faf_create_haar(const faf_config *cfg);
 
 /**
- * @brief Create a discrete wavelet transform
- * @param family Wavelet family
- * @param n Transform size (must be power of 2)
- * @param levels Decomposition levels (0 = full log2(n))
- * @param inverse True for inverse (IDWT)
- * @param precision Precision level
- * @param flags Additional flags (FAF_FLAG_INVERSE is OR'd if inverse)
- * @return Transform object or NULL on error
+ * @brief Create a Daubechies-4 / db2 DWT
  */
-faf_transform* faf_create_dwt(faf_wavelet_family family,
-                              size_t n,
-                              size_t levels,
-                              bool inverse,
-                              faf_precision precision,
-                              uint32_t flags);
+faf_transform* faf_create_daubechies4(const faf_config *cfg);
 
 /**
- * @brief Create a CDF 5/3 (LeGall) wavelet transform
+ * @brief Create a DWT / IDWT. family and levels come from cfg.
  */
-faf_transform* faf_create_cdf53(size_t n,
-                                size_t levels,
-                                faf_precision precision,
-                                uint32_t flags);
+faf_transform* faf_create_dwt(const faf_config *cfg);
+
+faf_transform* faf_create_cdf53(const faf_config *cfg);
+faf_transform* faf_create_cdf97(const faf_config *cfg);
+faf_transform* faf_create_sym4(const faf_config *cfg);
 
 /**
- * @brief Create a CDF 9/7 wavelet transform
+ * @brief Recreate the inverse of fwd, inheriting every config knob
  */
-faf_transform* faf_create_cdf97(size_t n,
-                                size_t levels,
-                                faf_precision precision,
-                                uint32_t flags);
-
-/**
- * @brief Create a Symlet-4 wavelet transform
- */
-faf_transform* faf_create_sym4(size_t n,
-                               size_t levels,
-                               faf_precision precision,
-                               uint32_t flags);
+faf_transform* faf_create_inverse(const faf_transform *fwd);
 
 /**
  * @brief Wavelet family name (e.g. "haar", "cdf97")
@@ -532,15 +609,11 @@ int faf_execute_jit_cached(const faf_transform *t,
                               const void *FAF_RESTRICT in);
 
 /**
- * @brief Execute transform with automatic backend selection
- * @param t Transform to execute
- * @param out Output buffer
- * @param in Input buffer
- * @return 0 on success, non-zero on error
+ * @brief Execute transform. in/out.layout must match t->cfg.layout.
  */
 int faf_execute(const faf_transform *t,
-                  void *FAF_RESTRICT out,
-                  const void *FAF_RESTRICT in);
+                faf_buffer *out,
+                const faf_buffer *in);
 
 /* Type-specific execution functions */
 int faf_execute_f32(const faf_transform *t, 
