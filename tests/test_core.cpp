@@ -60,6 +60,8 @@ TEST(CoreTest, PrecisionNames) {
 TEST(CoreTest, TransformNames) {
     EXPECT_STREQ(faf_transform_name(FAF_TRANSFORM_FFT), "fft");
     EXPECT_STREQ(faf_transform_name(FAF_TRANSFORM_IFFT), "ifft");
+    EXPECT_STREQ(faf_transform_name(FAF_TRANSFORM_RFFT), "rfft");
+    EXPECT_STREQ(faf_transform_name(FAF_TRANSFORM_IRFFT), "irfft");
     EXPECT_STREQ(faf_transform_name(FAF_TRANSFORM_DCT_II), "dct_ii");
     EXPECT_STREQ(faf_transform_name(FAF_TRANSFORM_MDCT), "mdct");
     EXPECT_STREQ(faf_transform_name(FAF_TRANSFORM_HAAR), "haar");
@@ -75,6 +77,12 @@ TEST(CoreTest, SizeSupport) {
     EXPECT_FALSE(faf_is_size_supported(FAF_TRANSFORM_FFT, 3));
     EXPECT_FALSE(faf_is_size_supported(FAF_TRANSFORM_FFT, 5));
     EXPECT_FALSE(faf_is_size_supported(FAF_TRANSFORM_FFT, 100));
+
+    /* R2C: power of 2, at least 2 */
+    EXPECT_TRUE(faf_is_size_supported(FAF_TRANSFORM_RFFT, 2));
+    EXPECT_TRUE(faf_is_size_supported(FAF_TRANSFORM_IRFFT, 64));
+    EXPECT_FALSE(faf_is_size_supported(FAF_TRANSFORM_RFFT, 1));
+    EXPECT_FALSE(faf_is_size_supported(FAF_TRANSFORM_RFFT, 3));
     
     /* MDCT requires even size */
     EXPECT_TRUE(faf_is_size_supported(FAF_TRANSFORM_MDCT, 2));

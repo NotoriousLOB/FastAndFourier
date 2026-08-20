@@ -192,6 +192,7 @@ set(FAF_CORE_SOURCES
     src/faf_transforms.c
     src/faf_twiddles.c
     src/faf_wavelets.c
+    src/faf_rfft.c
     src/chirp.c
     src/chirp_builtins.c
 )

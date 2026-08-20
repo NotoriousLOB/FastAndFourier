@@ -25,6 +25,7 @@ set(TEST_SOURCES
     test_chirp.cpp
     test_chirp_compositions.cpp
     test_wavelets.cpp
+    test_rfft.cpp
 )
 
 # Architecture-specific tests

@@ -73,6 +73,8 @@ typedef struct {
 typedef enum {
     CHIRP_NODE_PIPELINE,   /* (pipeline ...) */
     CHIRP_NODE_FFT,        /* (fft :size N) */
+    CHIRP_NODE_RFFT,       /* (rfft :size N) */
+    CHIRP_NODE_IRFFT,      /* (irfft :size N) */
     CHIRP_NODE_TWIDDLE,    /* twiddle */
     CHIRP_NODE_BFLY,       /* (bfly N) */
     CHIRP_NODE_LIFT,       /* (lift :predict X :update Y) */
@@ -446,6 +448,10 @@ static chirp_node* chirp_parse_expr(chirp_lexer *lex) {
                 node = chirp_node_new(CHIRP_NODE_FFT);
                 if (strcmp(op.text, "ifft") == 0)
                     node->value = 1; /* inverse */
+            } else if (strcmp(op.text, "rfft") == 0) {
+                node = chirp_node_new(CHIRP_NODE_RFFT);
+            } else if (strcmp(op.text, "irfft") == 0) {
+                node = chirp_node_new(CHIRP_NODE_IRFFT);
             } else if (strcmp(op.text, "bfly") == 0) {
                 node = chirp_node_new(CHIRP_NODE_BFLY);
             } else if (strcmp(op.text, "lift") == 0) {
@@ -548,6 +554,8 @@ static void chirp_node_print(chirp_node *node, int indent) {
     switch (node->type) {
         case CHIRP_NODE_PIPELINE: printf("(pipeline"); break;
         case CHIRP_NODE_FFT: printf("(fft"); break;
+        case CHIRP_NODE_RFFT: printf("(rfft"); break;
+        case CHIRP_NODE_IRFFT: printf("(irfft"); break;
         case CHIRP_NODE_TWIDDLE: printf("twiddle"); break;
         case CHIRP_NODE_BFLY: printf("(bfly"); break;
         case CHIRP_NODE_LIFT: printf("(lift"); break;
@@ -620,6 +628,29 @@ static int chirp_parse_family(chirp_node *node, faf_wavelet_family *out) {
     return faf_wavelet_from_name(name, out);
 }
 
+static int chirp_parse_layout(chirp_node *node, faf_layout *out) {
+    const char *name = chirp_node_name(node);
+    if (!name) return -1;
+    if (strcmp(name, "hermitian") == 0)      { *out = FAF_LAYOUT_HERMITIAN; return 0; }
+    if (strcmp(name, "interleaved") == 0)    { *out = FAF_LAYOUT_INTERLEAVED; return 0; }
+    if (strcmp(name, "split") == 0)          { *out = FAF_LAYOUT_SPLIT; return 0; }
+    if (strcmp(name, "real") == 0)           { *out = FAF_LAYOUT_REAL; return 0; }
+    if (strcmp(name, "default") == 0)        { *out = FAF_LAYOUT_DEFAULT; return 0; }
+    return -1;
+}
+
+static int chirp_parse_norm(chirp_node *node, faf_norm *out) {
+    const char *name = chirp_node_name(node);
+    if (!name) return -1;
+    if (strcmp(name, "none") == 0)           { *out = FAF_NORM_NONE; return 0; }
+    if (strcmp(name, "ortho") == 0)          { *out = FAF_NORM_ORTHO; return 0; }
+    if (strcmp(name, "forward") == 0)        { *out = FAF_NORM_FORWARD; return 0; }
+    if (strcmp(name, "lazy") == 0)           { *out = FAF_NORM_LAZY; return 0; }
+    if (strcmp(name, "jpeg2000") == 0)       { *out = FAF_NORM_JPEG2000; return 0; }
+    if (strcmp(name, "default") == 0)        { *out = FAF_NORM_DEFAULT; return 0; }
+    return -1;
+}
+
 static size_t chirp_log2_size(size_t n) {
     size_t bits = 0;
     while (n > 1) { n >>= 1; bits++; }
@@ -689,6 +720,12 @@ static void chirp_compile_node_emit(chirp_node *node, faf_transform *t, int *ins
             return;
         }
         
+        case CHIRP_NODE_RFFT:
+        case CHIRP_NODE_IRFFT:
+            faf_set_error("Chirp: (rfft)/(irfft) cannot mix with other forms yet; "
+                          "compile them as a standalone program");
+            return;
+
         case CHIRP_NODE_FFT: {
             size_t n = 64;
             chirp_node *size_node = chirp_node_get_kwarg(node, "size");
@@ -909,6 +946,43 @@ static void chirp_compile_node_emit(chirp_node *node, faf_transform *t, int *ins
     chirp_emit_inst(t, inst, inst_count);
 }
 
+static int chirp_ast_has_rfft(const chirp_node *n) {
+    if (!n) return 0;
+    if (n->type == CHIRP_NODE_RFFT || n->type == CHIRP_NODE_IRFFT)
+        return 1;
+    for (int i = 0; i < n->n_children; i++) {
+        if (chirp_ast_has_rfft(n->children[i]))
+            return 1;
+    }
+    return 0;
+}
+
+static faf_transform *chirp_compile_rfft_node(chirp_node *node) {
+    faf_config c = faf_config_init(0);
+    chirp_node *size_node = chirp_node_get_kwarg(node, "size");
+    if (size_node && size_node->type == CHIRP_NODE_LITERAL)
+        c.n = (size_t)size_node->value;
+    else if (node->n_children > 0 &&
+             node->children[0]->type == CHIRP_NODE_LITERAL)
+        c.n = (size_t)node->children[0]->value;
+    if (c.n == 0)
+        c.n = 64;
+    if (node->type == CHIRP_NODE_IRFFT)
+        c.dir = FAF_DIR_INVERSE;
+
+    chirp_node *norm_node = chirp_node_get_kwarg(node, "norm");
+    if (norm_node && chirp_parse_norm(norm_node, &c.norm) != 0) {
+        faf_set_error("Chirp: unknown :norm for rfft");
+        return NULL;
+    }
+    chirp_node *lay_node = chirp_node_get_kwarg(node, "layout");
+    if (lay_node && chirp_parse_layout(lay_node, &c.layout) != 0) {
+        faf_set_error("Chirp: unknown :layout for rfft");
+        return NULL;
+    }
+    return faf_create_rfft(&c);
+}
+
 /* Public API: Compile a Chirp program */
 faf_transform* chirp_compile(const char *source) {
     if (!source) return NULL;
@@ -922,6 +996,27 @@ faf_transform* chirp_compile(const char *source) {
     if (!ast) {
         faf_set_error("Chirp: failed to parse program");
         fprintf(stderr, "Chirp: failed to parse program\n");
+        return NULL;
+    }
+
+    /* Standalone (rfft)/(irfft) — or a one-child pipeline wrapping one —
+     * compile through faf_create_rfft. Fused spectral pipelines are Phase 2. */
+    chirp_node *rfft_node = NULL;
+    if (ast->type == CHIRP_NODE_RFFT || ast->type == CHIRP_NODE_IRFFT)
+        rfft_node = ast;
+    else if (ast->type == CHIRP_NODE_PIPELINE && ast->n_children == 1 &&
+             (ast->children[0]->type == CHIRP_NODE_RFFT ||
+              ast->children[0]->type == CHIRP_NODE_IRFFT))
+        rfft_node = ast->children[0];
+    if (rfft_node) {
+        faf_transform *rt = chirp_compile_rfft_node(rfft_node);
+        chirp_node_free(ast);
+        return rt;
+    }
+    if (chirp_ast_has_rfft(ast)) {
+        faf_set_error("Chirp: (rfft)/(irfft) cannot mix with other forms yet; "
+                      "compile them as a standalone program");
+        chirp_node_free(ast);
         return NULL;
     }
     

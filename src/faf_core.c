@@ -672,10 +672,11 @@ faf_transform* faf_create(faf_transform_type type, const faf_config *cfg) {
             c.family = FAF_WAVELET_CDF97; return faf_create_dwt(&c);
         case FAF_TRANSFORM_SYM4:
             c.family = FAF_WAVELET_SYM4; return faf_create_dwt(&c);
-        case FAF_TRANSFORM_RFFT:
         case FAF_TRANSFORM_IRFFT:
-            set_error("R2C is not implemented yet");
-            return NULL;
+            c.dir = FAF_DIR_INVERSE;
+            /* fall through */
+        case FAF_TRANSFORM_RFFT:
+            return faf_create_rfft(&c);
         default:
             set_error("Unknown transform type %d", (int)type);
             return NULL;
@@ -718,6 +719,9 @@ faf_transform* faf_create_inverse(const faf_transform *fwd) {
         case FAF_TRANSFORM_CDF97:
         case FAF_TRANSFORM_SYM4:
             return faf_create_dwt(&c);
+        case FAF_TRANSFORM_RFFT:
+        case FAF_TRANSFORM_IRFFT:
+            return faf_create_rfft(&c);
         default:
             set_error("faf_create_inverse: unsupported type %s",
                       faf_transform_name(fwd->type));
@@ -727,6 +731,11 @@ faf_transform* faf_create_inverse(const faf_transform *fwd) {
 
 void faf_destroy_transform(faf_transform *t) {
     if (!t) return;
+
+    if (t->inner) {
+        faf_destroy_transform(t->inner);
+        t->inner = NULL;
+    }
     
     /* Clean up JIT cache if present */
     if (t->jit_cache) {
@@ -845,6 +854,13 @@ static int execute_untyped(const faf_transform *t, void *out, const void *in) {
 
 int faf_execute(const faf_transform *t, faf_buffer *out, const faf_buffer *in) {
     if (!t || !out || !in) return -1;
+
+    if (t->type == FAF_TRANSFORM_RFFT || t->type == FAF_TRANSFORM_IRFFT) {
+        int rret = faf_rfft_execute(t, out, in);
+        if (rret != 0) return rret;
+        return apply_fft_norm(t, out);
+    }
+
     if (in->layout != t->cfg.layout || out->layout != t->cfg.layout) {
         set_error("buffer layout (%s/%s) does not match transform (%s)",
                   faf_layout_name(in->layout), faf_layout_name(out->layout),

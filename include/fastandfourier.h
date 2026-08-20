@@ -231,8 +231,11 @@ typedef struct faf_config {
 /**
  * @brief Execute-time buffer descriptor
  *
- * layout must match the transform. im is NULL for REAL.
- * n is the logical length of this buffer (n, or n/2+1 for HERMITIAN).
+ * For C2C/DWT, in/out.layout must match t->cfg.layout.
+ * For R2C forward: in is REAL of length n, out is HERMITIAN (or
+ * INTERLEAVED packed) of length n/2+1. Inverse swaps those.
+ * im is NULL for REAL. n is the logical length of this buffer
+ * (n, or n/2+1 for HERMITIAN / packed interleaved).
  */
 typedef struct faf_buffer {
     void      *re;
@@ -310,8 +313,8 @@ typedef struct {
 /**
  * @brief Complete transform program
  */
-typedef struct {
-    size_t n;                    /**< Transform size */
+typedef struct faf_transform {
+    size_t n;                    /**< Transform size (real length for R2C) */
     size_t n_inst;               /**< Number of instructions */
     faf_inst *code;            /**< Instruction array */
     void *twiddles[8];           /**< Twiddle factor tables */
@@ -327,6 +330,7 @@ typedef struct {
     faf_config cfg;            /**< Resolved create-time configuration */
     void *scratch;             /**< Aligned workspace (DWT, packing) */
     size_t scratch_size;       /**< Bytes allocated at scratch */
+    struct faf_transform *inner; /**< Nested C2C for R2C (n/2), NULL otherwise */
 } faf_transform;
 
 /**
@@ -500,6 +504,19 @@ faf_transform* faf_create(faf_transform_type type, const faf_config *cfg);
 faf_transform* faf_create_fft(const faf_config *cfg);
 
 /**
+ * @brief Create a real FFT (R2C) or its inverse (C2R).
+ *
+ * n must be a power of 2 and >= 2. Default layout HERMITIAN (packed
+ * split-plane spectrum of n/2+1 bins); INTERLEAVED packed is opt-in.
+ * Default norm NONE (unscaled forward, 1/n on the real inverse).
+ * Set cfg->dir = FAF_DIR_INVERSE, or use faf_create_inverse(), for C2R.
+ *
+ * Forward: REAL x[n] -> HERMITIAN (re[n/2+1], im[n/2+1]).
+ * Inverse: HERMITIAN -> REAL y[n].
+ */
+faf_transform* faf_create_rfft(const faf_config *cfg);
+
+/**
  * @brief Create a DCT. cfg->dct_type is 1–4 (0 means type II).
  */
 faf_transform* faf_create_dct(const faf_config *cfg);
@@ -609,7 +626,11 @@ int faf_execute_jit_cached(const faf_transform *t,
                               const void *FAF_RESTRICT in);
 
 /**
- * @brief Execute transform. in/out.layout must match t->cfg.layout.
+ * @brief Execute transform.
+ *
+ * C2C/DWT: in/out.layout must match t->cfg.layout.
+ * R2C: forward is REAL -> HERMITIAN (or INTERLEAVED packed);
+ * inverse is the reverse. No silent layout conversion.
  */
 int faf_execute(const faf_transform *t,
                 faf_buffer *out,

@@ -3,6 +3,7 @@
 set(EXAMPLES
     que_onda_mundo
     simple_fft
+    simple_rfft
     dct_example
     wavelet_example
     jit_example

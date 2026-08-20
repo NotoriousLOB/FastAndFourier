@@ -17,6 +17,12 @@ static inline faf_transform *bench_fft_split(size_t n, faf_precision prec) {
     return faf_create_fft(&c);
 }
 
+static inline faf_transform *bench_rfft(size_t n, faf_precision prec) {
+    faf_config c = faf_config_init(n);
+    c.precision = prec;
+    return faf_create_rfft(&c);
+}
+
 static inline faf_transform *bench_dct(size_t n, int type) {
     faf_config c = faf_config_init(n);
     c.dct_type = type;

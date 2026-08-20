@@ -252,3 +252,62 @@ BENCHMARK(BM_FFT_JIT)
     ->Arg(8192)
     ->Arg(16384)
     ->Unit(benchmark::kMicrosecond);
+
+/* Packed R2C vs C2C of a real signal with a zeroed imag plane. */
+static void BM_RFFT(benchmark::State& state) {
+    const size_t n = (size_t)state.range(0);
+    const size_t nb = n / 2 + 1;
+    faf_transform *t = bench_rfft(n, FAF_PREC_FP32);
+    if (!t) {
+        state.SkipWithError("Failed to create rfft");
+        return;
+    }
+    float *x = (float *)aligned_alloc(64, n * sizeof(float));
+    float *re = (float *)aligned_alloc(64, nb * sizeof(float));
+    float *im = (float *)aligned_alloc(64, nb * sizeof(float));
+    for (size_t i = 0; i < n; i++)
+        x[i] = sinf(2.0f * (float)M_PI * 4.0f * (float)i / (float)n);
+    faf_buffer in = faf_buffer_real(x, n);
+    faf_buffer out = faf_buffer_hermitian(re, im, nb);
+    for (auto _ : state) {
+        faf_execute(t, &out, &in);
+        benchmark::DoNotOptimize(re);
+    }
+    state.SetItemsProcessed(state.iterations() * (int64_t)n);
+    state.SetBytesProcessed(state.iterations() * (int64_t)n * sizeof(float));
+    free(x); free(re); free(im);
+    faf_destroy_transform(t);
+}
+BENCHMARK(BM_RFFT)
+    ->Arg(64)->Arg(256)->Arg(1024)->Arg(4096)
+    ->Unit(benchmark::kMicrosecond);
+
+static void BM_C2C_ZeroImag(benchmark::State& state) {
+    const size_t n = (size_t)state.range(0);
+    faf_transform *t = bench_fft_split(n, FAF_PREC_FP32);
+    if (!t) {
+        state.SkipWithError("Failed to create fft");
+        return;
+    }
+    float *re_in = (float *)aligned_alloc(64, n * sizeof(float));
+    float *im_in = (float *)aligned_alloc(64, n * sizeof(float));
+    float *re_out = (float *)aligned_alloc(64, n * sizeof(float));
+    float *im_out = (float *)aligned_alloc(64, n * sizeof(float));
+    for (size_t i = 0; i < n; i++) {
+        re_in[i] = sinf(2.0f * (float)M_PI * 4.0f * (float)i / (float)n);
+        im_in[i] = 0.0f;
+    }
+    faf_buffer in = faf_buffer_split(re_in, im_in, n);
+    faf_buffer out = faf_buffer_split(re_out, im_out, n);
+    for (auto _ : state) {
+        faf_execute(t, &out, &in);
+        benchmark::DoNotOptimize(re_out);
+    }
+    state.SetItemsProcessed(state.iterations() * (int64_t)n);
+    state.SetBytesProcessed(state.iterations() * (int64_t)n * 2 * sizeof(float));
+    free(re_in); free(im_in); free(re_out); free(im_out);
+    faf_destroy_transform(t);
+}
+BENCHMARK(BM_C2C_ZeroImag)
+    ->Arg(64)->Arg(256)->Arg(1024)->Arg(4096)
+    ->Unit(benchmark::kMicrosecond);
