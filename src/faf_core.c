@@ -144,7 +144,8 @@ const char* faf_norm_name(faf_norm norm) {
 
 size_t faf_spectrum_len(const faf_transform *t) {
     if (!t) return 0;
-    if (t->type == FAF_TRANSFORM_RFFT || t->type == FAF_TRANSFORM_IRFFT)
+    if (t->type == FAF_TRANSFORM_RFFT || t->type == FAF_TRANSFORM_IRFFT ||
+        t->type == FAF_TRANSFORM_PIPELINE)
         return t->n / 2 + 1;
     return t->n;
 }
@@ -171,6 +172,7 @@ const char* faf_transform_name(faf_transform_type type) {
         case FAF_TRANSFORM_CDF53:        return "cdf53";
         case FAF_TRANSFORM_CDF97:        return "cdf97";
         case FAF_TRANSFORM_SYM4:         return "sym4";
+        case FAF_TRANSFORM_PIPELINE:     return "pipeline";
         default: return "unknown";
     }
 }
@@ -736,6 +738,10 @@ void faf_destroy_transform(faf_transform *t) {
         faf_destroy_transform(t->inner);
         t->inner = NULL;
     }
+    if (t->inner_inv) {
+        faf_destroy_transform(t->inner_inv);
+        t->inner_inv = NULL;
+    }
     
     /* Clean up JIT cache if present */
     if (t->jit_cache) {
@@ -854,6 +860,9 @@ static int execute_untyped(const faf_transform *t, void *out, const void *in) {
 
 int faf_execute(const faf_transform *t, faf_buffer *out, const faf_buffer *in) {
     if (!t || !out || !in) return -1;
+
+    if (t->type == FAF_TRANSFORM_PIPELINE)
+        return faf_pipeline_execute(t, out, in);
 
     if (t->type == FAF_TRANSFORM_RFFT || t->type == FAF_TRANSFORM_IRFFT) {
         int rret = faf_rfft_execute(t, out, in);

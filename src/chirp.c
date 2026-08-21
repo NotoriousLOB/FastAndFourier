@@ -31,7 +31,9 @@
 typedef struct {
     char *name;
     void (*fn)(void);
+    void (*fn_f64)(void);
     int kind;
+    void *ctx;
 } chirp_builtin;
 
 chirp_builtin chirp_table[CHIRP_MAX_BUILTINS];
@@ -75,6 +77,10 @@ typedef enum {
     CHIRP_NODE_FFT,        /* (fft :size N) */
     CHIRP_NODE_RFFT,       /* (rfft :size N) */
     CHIRP_NODE_IRFFT,      /* (irfft :size N) */
+    CHIRP_NODE_SPECTRAL,   /* (spectral name) */
+    CHIRP_NODE_BANDPASS,   /* (bandpass :lo :hi) */
+    CHIRP_NODE_MULSPEC,    /* (mul-spectrum) */
+    CHIRP_NODE_CONJ,       /* conj */
     CHIRP_NODE_TWIDDLE,    /* twiddle */
     CHIRP_NODE_BFLY,       /* (bfly N) */
     CHIRP_NODE_LIFT,       /* (lift :predict X :update Y) */
@@ -122,6 +128,9 @@ void chirp_cleanup(void) {
         free(chirp_table[i].name);
         chirp_table[i].name = NULL;
         chirp_table[i].fn = NULL;
+        chirp_table[i].fn_f64 = NULL;
+        chirp_table[i].kind = CHIRP_KIND_UNARY;
+        chirp_table[i].ctx = NULL;
     }
     g_chirp_count = 0;
     chirp_initialized = 0;
@@ -175,7 +184,9 @@ int chirp_register(const char *name, void (*fn)(void)) {
 
     chirp_table[g_chirp_count].name = strdup(name);
     chirp_table[g_chirp_count].fn = fn;
+    chirp_table[g_chirp_count].fn_f64 = NULL;
     chirp_table[g_chirp_count].kind = CHIRP_KIND_UNARY;
+    chirp_table[g_chirp_count].ctx = NULL;
     return g_chirp_count++;
 }
 
@@ -183,6 +194,53 @@ int chirp_register_ex(const char *name, void (*fn)(void), int kind) {
     int id = chirp_register(name, fn);
     if (id >= 0) chirp_table[id].kind = kind;
     return id;
+}
+
+int chirp_register_unary(const char *name, float (*f32)(float),
+                         double (*f64)(double)) {
+    if (!name || !f32) return -1;
+    int id = chirp_register(name, (void (*)(void))f32);
+    if (id < 0) return id;
+    chirp_table[id].kind = CHIRP_KIND_UNARY;
+    chirp_table[id].fn_f64 = (void (*)(void))f64;
+    return id;
+}
+
+int chirp_register_spectral(const char *name, chirp_spectral_fn fn, void *ctx) {
+    return chirp_register_spectral_ex(name, fn, NULL, ctx);
+}
+
+int chirp_register_spectral_ex(const char *name, chirp_spectral_fn f32,
+                               chirp_spectral_fn_f64 f64, void *ctx) {
+    if (!name || !f32) return -1;
+    int id = chirp_register(name, (void (*)(void))f32);
+    if (id < 0) return id;
+    chirp_table[id].kind = CHIRP_KIND_SPECTRAL;
+    chirp_table[id].fn_f64 = (void (*)(void))f64;
+    chirp_table[id].ctx = ctx;
+    return id;
+}
+
+void *chirp_builtin_ctx(int idx) {
+    if (idx < 0 || idx >= g_chirp_count) return NULL;
+    return chirp_table[idx].ctx;
+}
+
+int chirp_bind(faf_transform *t, const char *name, void *re, void *im,
+               size_t n_bins) {
+    if (!t || !name || !re) {
+        faf_set_error("chirp_bind: transform, name, and re are required");
+        return -1;
+    }
+    if (strcmp(name, "H") != 0 && strcmp(name, "mul-spectrum") != 0 &&
+        strcmp(name, "kernel") != 0) {
+        faf_set_error("chirp_bind: unknown slot '%s' (use \"H\")", name);
+        return -1;
+    }
+    t->user_aux = re;
+    t->user_aux_im = im;
+    t->user_aux_n = n_bins;
+    return 0;
 }
 
 int chirp_builtin_kind(int idx) {
@@ -193,6 +251,10 @@ int chirp_builtin_kind(int idx) {
 /* Public API: Return the function pointer for a builtin, selecting the
  * precision-appropriate variant (e.g. sin_f32 vs sin_f64) when available. */
 void* chirp_builtin_fn_for_precision(int idx, faf_precision precision) {
+    if (idx < 0 || idx >= g_chirp_count) return NULL;
+    if (precision == FAF_PREC_FP64 && chirp_table[idx].fn_f64)
+        return (void *)chirp_table[idx].fn_f64;
+
     const char *name = chirp_builtin_name(idx);
     if (!name) return NULL;
 
@@ -212,6 +274,121 @@ void* chirp_builtin_fn_for_precision(int idx, faf_precision precision) {
 
     /* Fallback: return the original registered function. */
     return chirp_builtin_fn(idx);
+}
+
+void chirp_apply_split_f32(const faf_transform *t, uint32_t a0, uint32_t a1,
+                           uint32_t a2, float *re, float *im, size_t n) {
+    if (!re || n == 0) return;
+    if (a0 == CHIRP_OP_CONJ) {
+        if (!im) return;
+        for (size_t i = 0; i < n; i++) im[i] = -im[i];
+        return;
+    }
+    if (a0 == CHIRP_OP_MUL) {
+        if (!im || !t || !t->user_aux || !t->user_aux_im) return;
+        size_t m = t->user_aux_n < n ? t->user_aux_n : n;
+        const float *hr = (const float *)t->user_aux;
+        const float *hi = (const float *)t->user_aux_im;
+        for (size_t i = 0; i < m; i++) {
+            float ar = re[i], ai = im[i];
+            re[i] = ar * hr[i] - ai * hi[i];
+            im[i] = ar * hi[i] + ai * hr[i];
+        }
+        return;
+    }
+    if (a0 == CHIRP_OP_BANDPASS) {
+        if (!im) return;
+        uint32_t lo = a1, hi = a2;
+        for (size_t i = 0; i < n; i++) {
+            if (i < lo || i > hi) {
+                re[i] = 0.0f;
+                im[i] = 0.0f;
+            }
+        }
+        return;
+    }
+    int idx = (int)a0;
+    int kind = chirp_builtin_kind(idx);
+    void *fn = chirp_builtin_fn_for_precision(idx, FAF_PREC_FP32);
+    void *ctx = chirp_builtin_ctx(idx);
+    if (!fn) return;
+    if (kind == CHIRP_KIND_UNARY) {
+        for (size_t i = 0; i < n; i++)
+            re[i] = ((float (*)(float))fn)(re[i]);
+    } else if (kind == CHIRP_KIND_COMPLEX) {
+        if (!im) return;
+        chirp_complex_fn cf = (chirp_complex_fn)fn;
+        for (size_t i = 0; i < n; i++)
+            cf(&re[i], &im[i]);
+    } else if (kind == CHIRP_KIND_VECTOR) {
+        ((chirp_vector_fn)fn)(re, n);
+    } else if (kind == CHIRP_KIND_SPECTRAL || kind == CHIRP_KIND_HERMITIAN) {
+        if (!im) return;
+        ((chirp_spectral_fn)fn)(re, im, n, ctx);
+        if (kind == CHIRP_KIND_HERMITIAN) {
+            im[0] = 0.0f;
+            if (n > 0) im[n - 1] = 0.0f;
+        }
+    }
+}
+
+void chirp_apply_split_f64(const faf_transform *t, uint32_t a0, uint32_t a1,
+                           uint32_t a2, double *re, double *im, size_t n) {
+    if (!re || n == 0) return;
+    if (a0 == CHIRP_OP_CONJ) {
+        if (!im) return;
+        for (size_t i = 0; i < n; i++) im[i] = -im[i];
+        return;
+    }
+    if (a0 == CHIRP_OP_MUL) {
+        if (!im || !t || !t->user_aux || !t->user_aux_im) return;
+        size_t m = t->user_aux_n < n ? t->user_aux_n : n;
+        const double *hr = (const double *)t->user_aux;
+        const double *hi = (const double *)t->user_aux_im;
+        for (size_t i = 0; i < m; i++) {
+            double ar = re[i], ai = im[i];
+            re[i] = ar * hr[i] - ai * hi[i];
+            im[i] = ar * hi[i] + ai * hr[i];
+        }
+        return;
+    }
+    if (a0 == CHIRP_OP_BANDPASS) {
+        if (!im) return;
+        uint32_t lo = a1, hi = a2;
+        for (size_t i = 0; i < n; i++) {
+            if (i < lo || i > hi) {
+                re[i] = 0.0;
+                im[i] = 0.0;
+            }
+        }
+        return;
+    }
+    int idx = (int)a0;
+    int kind = chirp_builtin_kind(idx);
+    void *fn = chirp_builtin_fn_for_precision(idx, FAF_PREC_FP64);
+    void *ctx = chirp_builtin_ctx(idx);
+    if (!fn) return;
+    if (kind == CHIRP_KIND_UNARY) {
+        for (size_t i = 0; i < n; i++)
+            re[i] = ((double (*)(double))fn)(re[i]);
+    } else if (kind == CHIRP_KIND_COMPLEX) {
+        if (!im) return;
+        chirp_complex_fn_f64 cf = (chirp_complex_fn_f64)fn;
+        for (size_t i = 0; i < n; i++)
+            cf(&re[i], &im[i]);
+    } else if (kind == CHIRP_KIND_VECTOR) {
+        ((chirp_vector_fn_f64)fn)(re, n);
+    } else if (kind == CHIRP_KIND_SPECTRAL || kind == CHIRP_KIND_HERMITIAN) {
+        if (!im) return;
+        chirp_spectral_fn_f64 sf = (chirp_spectral_fn_f64)fn;
+        /* f64 pointer may be missing; fall back is the f32 slot, skip */
+        if (chirp_table[idx].fn_f64)
+            sf(re, im, n, ctx);
+        if (kind == CHIRP_KIND_HERMITIAN) {
+            im[0] = 0.0;
+            if (n > 0) im[n - 1] = 0.0;
+        }
+    }
 }
 
 /* Create a lexer */
@@ -452,6 +629,14 @@ static chirp_node* chirp_parse_expr(chirp_lexer *lex) {
                 node = chirp_node_new(CHIRP_NODE_RFFT);
             } else if (strcmp(op.text, "irfft") == 0) {
                 node = chirp_node_new(CHIRP_NODE_IRFFT);
+            } else if (strcmp(op.text, "spectral") == 0) {
+                node = chirp_node_new(CHIRP_NODE_SPECTRAL);
+            } else if (strcmp(op.text, "bandpass") == 0) {
+                node = chirp_node_new(CHIRP_NODE_BANDPASS);
+            } else if (strcmp(op.text, "mul-spectrum") == 0) {
+                node = chirp_node_new(CHIRP_NODE_MULSPEC);
+            } else if (strcmp(op.text, "conj") == 0) {
+                node = chirp_node_new(CHIRP_NODE_CONJ);
             } else if (strcmp(op.text, "bfly") == 0) {
                 node = chirp_node_new(CHIRP_NODE_BFLY);
             } else if (strcmp(op.text, "lift") == 0) {
@@ -508,6 +693,8 @@ static chirp_node* chirp_parse_expr(chirp_lexer *lex) {
             /* Bare symbol - check for registered builtins first */
             if (strcmp(tok.text, "twiddle") == 0) {
                 node = chirp_node_new(CHIRP_NODE_TWIDDLE);
+            } else if (strcmp(tok.text, "conj") == 0) {
+                node = chirp_node_new(CHIRP_NODE_CONJ);
             } else if (strcmp(tok.text, "reduce-sum") == 0) {
                 node = chirp_node_new(CHIRP_NODE_REDUCE);
                 node->sym = strdup("sum");
@@ -556,6 +743,10 @@ static void chirp_node_print(chirp_node *node, int indent) {
         case CHIRP_NODE_FFT: printf("(fft"); break;
         case CHIRP_NODE_RFFT: printf("(rfft"); break;
         case CHIRP_NODE_IRFFT: printf("(irfft"); break;
+        case CHIRP_NODE_SPECTRAL: printf("(spectral"); break;
+        case CHIRP_NODE_BANDPASS: printf("(bandpass"); break;
+        case CHIRP_NODE_MULSPEC: printf("(mul-spectrum"); break;
+        case CHIRP_NODE_CONJ: printf("conj"); break;
         case CHIRP_NODE_TWIDDLE: printf("twiddle"); break;
         case CHIRP_NODE_BFLY: printf("(bfly"); break;
         case CHIRP_NODE_LIFT: printf("(lift"); break;
@@ -722,8 +913,11 @@ static void chirp_compile_node_emit(chirp_node *node, faf_transform *t, int *ins
         
         case CHIRP_NODE_RFFT:
         case CHIRP_NODE_IRFFT:
-            faf_set_error("Chirp: (rfft)/(irfft) cannot mix with other forms yet; "
-                          "compile them as a standalone program");
+        case CHIRP_NODE_SPECTRAL:
+        case CHIRP_NODE_BANDPASS:
+        case CHIRP_NODE_MULSPEC:
+        case CHIRP_NODE_CONJ:
+            /* Handled by the fused-pipeline compiler, not the IR emitter. */
             return;
 
         case CHIRP_NODE_FFT: {
@@ -983,6 +1177,159 @@ static faf_transform *chirp_compile_rfft_node(chirp_node *node) {
     return faf_create_rfft(&c);
 }
 
+static int chirp_node_is_spectral_op(chirp_node *n) {
+    if (!n) return 0;
+    if (n->type == CHIRP_NODE_SPECTRAL || n->type == CHIRP_NODE_BANDPASS ||
+        n->type == CHIRP_NODE_MULSPEC || n->type == CHIRP_NODE_CONJ)
+        return 1;
+    if (n->type == CHIRP_NODE_CUSTOM && n->sym) {
+        int idx = chirp_lookup_builtin(n->sym);
+        int k = chirp_builtin_kind(idx);
+        return k == CHIRP_KIND_SPECTRAL || k == CHIRP_KIND_HERMITIAN ||
+               k == CHIRP_KIND_COMPLEX || k == CHIRP_KIND_VECTOR;
+    }
+    if ((n->type == CHIRP_NODE_LITERAL || n->type == CHIRP_NODE_LIST) &&
+        n->sym) {
+        if (strcmp(n->sym, "conj") == 0 ||
+            strcmp(n->sym, "mul-spectrum") == 0)
+            return 1;
+        int idx = chirp_lookup_builtin(n->sym);
+        if (idx >= 0) {
+            int k = chirp_builtin_kind(idx);
+            return k == CHIRP_KIND_SPECTRAL || k == CHIRP_KIND_HERMITIAN ||
+                   k == CHIRP_KIND_COMPLEX || k == CHIRP_KIND_VECTOR;
+        }
+    }
+    return 0;
+}
+
+static int chirp_emit_pipe_op(chirp_node *n, faf_inst *out) {
+    memset(out, 0, sizeof(*out));
+    out->packed = FAF_CALL_BUILTIN;
+    if (n->type == CHIRP_NODE_CONJ ||
+        (n->sym && strcmp(n->sym, "conj") == 0)) {
+        out->a0 = CHIRP_OP_CONJ;
+        return 0;
+    }
+    if (n->type == CHIRP_NODE_MULSPEC ||
+        (n->sym && strcmp(n->sym, "mul-spectrum") == 0)) {
+        out->a0 = CHIRP_OP_MUL;
+        return 0;
+    }
+    if (n->type == CHIRP_NODE_BANDPASS) {
+        chirp_node *lo = chirp_node_get_kwarg(n, "lo");
+        chirp_node *hi = chirp_node_get_kwarg(n, "hi");
+        out->a0 = CHIRP_OP_BANDPASS;
+        out->a1 = (uint32_t)chirp_node_int(lo, 0);
+        out->a2 = (uint32_t)chirp_node_int(hi, 0);
+        return 0;
+    }
+    const char *name = NULL;
+    if (n->type == CHIRP_NODE_SPECTRAL) {
+        chirp_node *nm = chirp_node_get_kwarg(n, "name");
+        if (nm) name = chirp_node_name(nm);
+        else if (n->n_children > 0) name = chirp_node_name(n->children[0]);
+        else name = n->sym;
+    } else {
+        name = chirp_node_name(n);
+    }
+    if (!name) {
+        faf_set_error("Chirp: spectral form needs a registered name");
+        return -1;
+    }
+    int idx = chirp_lookup_builtin(name);
+    if (idx < 0) {
+        faf_set_error("Chirp: unknown spectral builtin '%s'", name);
+        return -1;
+    }
+    out->a0 = (uint32_t)idx;
+    return 0;
+}
+
+static faf_transform *chirp_compile_spectral_pipeline(chirp_node *ast) {
+    chirp_node **kids = ast->children;
+    int nch = ast->n_children;
+    if (nch < 1 || kids[0]->type != CHIRP_NODE_RFFT)
+        return NULL;
+
+    int has_irfft = (nch >= 2 && kids[nch - 1]->type == CHIRP_NODE_IRFFT);
+    int mid0 = 1;
+    int mid1 = has_irfft ? nch - 1 : nch;
+    for (int i = mid0; i < mid1; i++) {
+        if (!chirp_node_is_spectral_op(kids[i])) {
+            faf_set_error("Chirp: fused rfft pipeline only accepts "
+                          "spectral/conj/mul-spectrum/bandpass in the middle");
+            return NULL;
+        }
+    }
+
+    faf_transform *fwd = chirp_compile_rfft_node(kids[0]);
+    if (!fwd) return NULL;
+
+    faf_transform *inv = NULL;
+    if (has_irfft) {
+        chirp_node *inode = kids[nch - 1];
+        chirp_node *sz = chirp_node_get_kwarg(inode, "size");
+        if (!sz && inode->n_children == 0) {
+            /* inherit size/norm/layout from the forward rfft */
+            faf_config ic = faf_config_inverse(fwd->cfg);
+            inv = faf_create_rfft(&ic);
+        } else {
+            inv = chirp_compile_rfft_node(inode);
+        }
+        if (!inv) {
+            faf_destroy_transform(fwd);
+            return NULL;
+        }
+    }
+
+    int nops = mid1 - mid0;
+    faf_transform *t = calloc(1, sizeof(faf_transform));
+    if (!t) {
+        faf_destroy_transform(fwd);
+        faf_destroy_transform(inv);
+        return NULL;
+    }
+    t->type = FAF_TRANSFORM_PIPELINE;
+    t->n = fwd->n;
+    t->precision = fwd->precision;
+    t->cfg = fwd->cfg;
+    t->cfg.layout = has_irfft ? FAF_LAYOUT_REAL : FAF_LAYOUT_HERMITIAN;
+    t->cfg.dir = has_irfft ? FAF_DIR_INVERSE : FAF_DIR_FORWARD;
+    t->inner = fwd;
+    t->inner_inv = inv;
+    t->flags = FAF_FLAG_REAL;
+
+    if (nops > 0) {
+        t->code = calloc((size_t)nops, sizeof(faf_inst));
+        if (!t->code) {
+            faf_destroy_transform(t);
+            return NULL;
+        }
+        t->n_inst = (size_t)nops;
+        for (int i = 0; i < nops; i++) {
+            if (chirp_emit_pipe_op(kids[mid0 + i], &t->code[i]) != 0) {
+                faf_destroy_transform(t);
+                return NULL;
+            }
+        }
+    }
+
+    size_t nbins = t->n / 2 + 1;
+    size_t elem = (t->precision == FAF_PREC_FP64) ? sizeof(double)
+                                                  : sizeof(float);
+    size_t bytes = ((nbins * 2 * elem) + 63u) & ~(size_t)63u;
+    t->scratch = aligned_alloc(64, bytes);
+    if (!t->scratch) {
+        faf_set_error("Chirp: failed to allocate pipeline scratch");
+        faf_destroy_transform(t);
+        return NULL;
+    }
+    t->scratch_size = bytes;
+    memset(t->scratch, 0, bytes);
+    return t;
+}
+
 /* Public API: Compile a Chirp program */
 faf_transform* chirp_compile(const char *source) {
     if (!source) return NULL;
@@ -999,8 +1346,7 @@ faf_transform* chirp_compile(const char *source) {
         return NULL;
     }
 
-    /* Standalone (rfft)/(irfft) — or a one-child pipeline wrapping one —
-     * compile through faf_create_rfft. Fused spectral pipelines are Phase 2. */
+    /* Standalone (rfft)/(irfft), or a fused R2C → spectral C → C2R pipeline. */
     chirp_node *rfft_node = NULL;
     if (ast->type == CHIRP_NODE_RFFT || ast->type == CHIRP_NODE_IRFFT)
         rfft_node = ast;
@@ -1013,9 +1359,15 @@ faf_transform* chirp_compile(const char *source) {
         chirp_node_free(ast);
         return rt;
     }
+    if (ast->type == CHIRP_NODE_PIPELINE && ast->n_children >= 1 &&
+        ast->children[0]->type == CHIRP_NODE_RFFT) {
+        faf_transform *pt = chirp_compile_spectral_pipeline(ast);
+        chirp_node_free(ast);
+        return pt;
+    }
     if (chirp_ast_has_rfft(ast)) {
-        faf_set_error("Chirp: (rfft)/(irfft) cannot mix with other forms yet; "
-                      "compile them as a standalone program");
+        faf_set_error("Chirp: (rfft)/(irfft) must lead a fused pipeline "
+                      "(rfft … irfft); they cannot mix with FFT IR stages");
         chirp_node_free(ast);
         return NULL;
     }

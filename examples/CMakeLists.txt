@@ -15,6 +15,10 @@ set(EXAMPLES
     chirp_dwt_jpeg2000
     chirp_dwt_transients
     chirp_dwt_ecg
+    spectral_notch
+    fft_convolve
+    matched_filter
+    analytic_envelope
 )
 
 foreach(example ${EXAMPLES})

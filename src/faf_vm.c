@@ -867,18 +867,33 @@ label_CALL_BUILTIN:
     case FAF_CALL_BUILTIN:
 #endif
         {
-            /* Apply a scalar unary builtin element-wise to the real plane. */
-            int idx = (int)inst->a0;
-            if (chirp_builtin_kind(idx) == CHIRP_KIND_UNARY) {
-                void *fn = chirp_builtin_fn_for_precision(idx, t->precision);
+            int kind = chirp_builtin_kind((int)inst->a0);
+            if (kind == CHIRP_KIND_UNARY && inst->a0 < 0x7ffffff0u) {
+                void *fn = chirp_builtin_fn_for_precision((int)inst->a0,
+                                                          t->precision);
                 if (fn) {
                     for (size_t i = 0; i < t->n; i++) {
                         size_t r = i * 2;
-                        if (r + 1 < num_regs) {
+                        if (r + 1 < num_regs)
                             regs[r] = ((float (*)(float))fn)(regs[r]);
-                        }
                     }
                 }
+            } else {
+                float *re = (float *)malloc(t->n * sizeof(float));
+                float *im = (float *)malloc(t->n * sizeof(float));
+                if (re && im) {
+                    for (size_t i = 0; i < t->n; i++) {
+                        re[i] = regs[i * 2];
+                        im[i] = regs[i * 2 + 1];
+                    }
+                    chirp_apply_split_f32(t, inst->a0, inst->a1, inst->a2,
+                                          re, im, t->n);
+                    for (size_t i = 0; i < t->n; i++) {
+                        regs[i * 2]     = re[i];
+                        regs[i * 2 + 1] = im[i];
+                    }
+                }
+                free(re); free(im);
             }
         }
         DISPATCH();
@@ -1179,17 +1194,33 @@ int faf_vm_execute_f64(const faf_transform *t,
                 break;
             }
             case FAF_CALL_BUILTIN: {
-                int idx = (int)inst->a0;
-                if (chirp_builtin_kind(idx) == CHIRP_KIND_UNARY) {
-                    void *fn = chirp_builtin_fn_for_precision(idx, t->precision);
+                int kind = chirp_builtin_kind((int)inst->a0);
+                if (kind == CHIRP_KIND_UNARY && inst->a0 < 0x7ffffff0u) {
+                    void *fn = chirp_builtin_fn_for_precision((int)inst->a0,
+                                                              t->precision);
                     if (fn) {
                         for (size_t i = 0; i < t->n; i++) {
                             size_t r = i * 2;
-                            if (r + 1 < num_regs) {
+                            if (r + 1 < num_regs)
                                 regs[r] = ((double (*)(double))fn)(regs[r]);
-                            }
                         }
                     }
+                } else {
+                    double *re = (double *)malloc(t->n * sizeof(double));
+                    double *im = (double *)malloc(t->n * sizeof(double));
+                    if (re && im) {
+                        for (size_t i = 0; i < t->n; i++) {
+                            re[i] = regs[i * 2];
+                            im[i] = regs[i * 2 + 1];
+                        }
+                        chirp_apply_split_f64(t, inst->a0, inst->a1, inst->a2,
+                                              re, im, t->n);
+                        for (size_t i = 0; i < t->n; i++) {
+                            regs[i * 2]     = re[i];
+                            regs[i * 2 + 1] = im[i];
+                        }
+                    }
+                    free(re); free(im);
                 }
                 break;
             }
@@ -1518,15 +1549,8 @@ int faf_execute_split_f32(const faf_transform *t,
                 break;
             }
             case FAF_CALL_BUILTIN: {
-                int idx = (int)inst->a0;
-                if (chirp_builtin_kind(idx) == CHIRP_KIND_UNARY) {
-                    void *fn = chirp_builtin_fn_for_precision(idx, t->precision);
-                    if (fn) {
-                        for (size_t i = 0; i < t->n; i++) {
-                            regs_re[i] = ((float (*)(float))fn)(regs_re[i]);
-                        }
-                    }
-                }
+                chirp_apply_split_f32(t, inst->a0, inst->a1, inst->a2,
+                                      regs_re, regs_im, t->n);
                 break;
             }
             case FAF_BITREV:
@@ -1809,15 +1833,8 @@ int faf_execute_split_f64(const faf_transform *t,
                 break;
             }
             case FAF_CALL_BUILTIN: {
-                int idx = (int)inst->a0;
-                if (chirp_builtin_kind(idx) == CHIRP_KIND_UNARY) {
-                    void *fn = chirp_builtin_fn_for_precision(idx, t->precision);
-                    if (fn) {
-                        for (size_t i = 0; i < t->n; i++) {
-                            regs_re[i] = ((double (*)(double))fn)(regs_re[i]);
-                        }
-                    }
-                }
+                chirp_apply_split_f64(t, inst->a0, inst->a1, inst->a2,
+                                      regs_re, regs_im, t->n);
                 break;
             }
             case FAF_BITREV:

@@ -21,7 +21,13 @@
 #include <string.h>
 
 /* External declarations from chirp.c — must match chirp_builtin layout */
-typedef struct { char *name; void (*fn)(void); int kind; } chirp_builtin_t;
+typedef struct {
+    char *name;
+    void (*fn)(void);
+    void (*fn_f64)(void);
+    int kind;
+    void *ctx;
+} chirp_builtin_t;
 extern chirp_builtin_t chirp_table[];
 extern int g_chirp_count;
 

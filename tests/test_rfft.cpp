@@ -341,8 +341,25 @@ TEST(RfftChirp, CompileStandalone) {
     faf_destroy_transform(pipe);
 }
 
-TEST(RfftChirp, MixedPipelineRejected) {
+TEST(RfftChirp, RoundtripPipeline) {
     faf_transform *t = chirp_compile("(pipeline (rfft :size 64) (irfft))");
+    ASSERT_NE(t, nullptr);
+    EXPECT_EQ(t->type, FAF_TRANSFORM_PIPELINE);
+
+    const size_t n = 64;
+    std::vector<float> x(n), y(n);
+    for (size_t i = 0; i < n; i++)
+        x[i] = sinf(2.0f * (float)M_PI * 3.0f * (float)i / (float)n);
+    faf_buffer in = faf_buffer_real(x.data(), n);
+    faf_buffer out = faf_buffer_real(y.data(), n);
+    ASSERT_EQ(faf_execute(t, &out, &in), 0);
+    for (size_t i = 0; i < n; i++)
+        EXPECT_NEAR(y[i], x[i], 1e-4f) << "i=" << i;
+    faf_destroy_transform(t);
+}
+
+TEST(RfftChirp, MixedWithFftIrRejected) {
+    faf_transform *t = chirp_compile("(pipeline (rfft :size 64) twiddle)");
     EXPECT_EQ(t, nullptr);
     EXPECT_STRNE(faf_get_error(), "");
 }

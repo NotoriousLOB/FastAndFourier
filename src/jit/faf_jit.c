@@ -359,10 +359,57 @@ static void emit_neon_split_twiddle_mul_f64(FILE *f, uint8_t base_idx) {
  * This is the compiler-based JIT approach - generates C code
  * and compiles it to a shared library.
  */
+static int faf_jit_generate_pipeline_c(faf_transform *t, const char *path) {
+    FILE *f = fopen(path, "w");
+    if (!f) return -1;
+    size_t n = t->n;
+    size_t nb = n / 2 + 1;
+    fprintf(f, "/* Auto-generated fused R2C pipeline kernel */\n");
+    fprintf(f, "#include <stddef.h>\n#include <stdint.h>\n\n");
+    fprintf(f, "typedef struct { void *re; void *im; size_t n; int layout; } buf_t;\n");
+    fprintf(f, "typedef int (*exec_fn)(const void *, buf_t *, const buf_t *);\n");
+    fprintf(f, "typedef void (*apply_fn)(const void *, uint32_t, uint32_t, "
+               "uint32_t, float *, float *, size_t);\n\n");
+    fprintf(f, "__attribute__((visibility(\"default\")))\n");
+    fprintf(f, "void faf_jit_kernel(void *restrict out, const void *restrict in,\n");
+    fprintf(f, "                    size_t n, const void *restrict twiddles) {\n");
+    fprintf(f, "    (void)n; (void)twiddles;\n");
+    fprintf(f, "    exec_fn ex = (exec_fn)(uintptr_t)%lluULL;\n",
+            (unsigned long long)(uintptr_t)faf_execute);
+    fprintf(f, "    apply_fn apply = (apply_fn)(uintptr_t)%lluULL;\n",
+            (unsigned long long)(uintptr_t)chirp_apply_split_f32);
+    fprintf(f, "    const void *fwd = (const void *)(uintptr_t)%lluULL;\n",
+            (unsigned long long)(uintptr_t)t->inner);
+    fprintf(f, "    const void *inv = (const void *)(uintptr_t)%lluULL;\n",
+            (unsigned long long)(uintptr_t)t->inner_inv);
+    fprintf(f, "    const void *self = (const void *)(uintptr_t)%lluULL;\n",
+            (unsigned long long)(uintptr_t)t);
+    fprintf(f, "    float *hr = (float *)(uintptr_t)%lluULL;\n",
+            (unsigned long long)(uintptr_t)t->scratch);
+    fprintf(f, "    float *hi = hr + %zu;\n", nb);
+    fprintf(f, "    buf_t inb  = { (void *)in, 0, %zu, %d };\n", n, (int)FAF_LAYOUT_REAL);
+    fprintf(f, "    buf_t spec = { hr, hi, %zu, %d };\n", nb, (int)FAF_LAYOUT_HERMITIAN);
+    fprintf(f, "    buf_t outb = { out, 0, %zu, %d };\n", n, (int)FAF_LAYOUT_REAL);
+    fprintf(f, "    if (ex(fwd, &spec, &inb) != 0) return;\n");
+    for (size_t i = 0; i < t->n_inst; i++) {
+        const faf_inst *inst = &t->code[i];
+        fprintf(f, "    apply(self, %uu, %uu, %uu, hr, hi, %zu);\n",
+                inst->a0, inst->a1, inst->a2, nb);
+    }
+    fprintf(f, "    ex(inv, &outb, &spec);\n");
+    fprintf(f, "}\n");
+    fclose(f);
+    return 0;
+}
+
 static void faf_jit_generate_c_ex(faf_transform *t, 
                                      const char *path,
                                      faf_arch_type arch,
                                      uint32_t flags) {
+    if (t->type == FAF_TRANSFORM_PIPELINE) {
+        faf_jit_generate_pipeline_c(t, path);
+        return;
+    }
     FILE *f = fopen(path, "w");
     if (!f) return;
     
@@ -858,20 +905,16 @@ static void faf_jit_generate_c_ex(faf_transform *t,
                 break;
                 
             case FAF_CALL_BUILTIN: {
-                int idx = (int)inst->a0;
-                void *fn = NULL;
-                if (chirp_builtin_kind(idx) == CHIRP_KIND_UNARY)
-                    fn = chirp_builtin_fn_for_precision(idx, t->precision);
-                fprintf(f, "    { /* CALL_BUILTIN %d */\n", idx);
-                if (fn) {
-                    fprintf(f,
-                        "        float (*_fn)(float) = (float (*)(float))(uintptr_t)%lluULL;\n"
-                        "        for (size_t _i = 0; _i < %zu; _i++)\n"
-                        "            regs_re[_i] = _fn(regs_re[_i]);\n",
-                        (unsigned long long)(uintptr_t)fn, t->n);
-                } else {
-                    fprintf(f, "        /* non-unary or missing builtin; skipped */\n");
-                }
+                fprintf(f, "    { /* CALL_BUILTIN %u */\n", inst->a0);
+                fprintf(f,
+                    "        typedef void (*_apply_fn)(const void *, uint32_t, uint32_t, "
+                    "uint32_t, float *, float *, size_t);\n"
+                    "        _apply_fn _apply = (_apply_fn)(uintptr_t)%lluULL;\n"
+                    "        _apply((const void *)(uintptr_t)%lluULL, %uu, %uu, %uu, "
+                    "regs_re, regs_im, %zu);\n",
+                    (unsigned long long)(uintptr_t)chirp_apply_split_f32,
+                    (unsigned long long)(uintptr_t)t,
+                    inst->a0, inst->a1, inst->a2, t->n);
                 fprintf(f, "    }\n");
                 break;
             }
@@ -962,8 +1005,9 @@ int faf_jit_compile_ex(faf_jit_ctx *ctx, faf_transform *t, uint32_t flags) {
 
     ctx->from_cache = 0;
     
-    /* Try to load from persistent cache first */
-    if (try_load_cached_kernel(ctx, t, flags)) {
+    /* Pointer-baked pipeline kernels are process-local; skip the disk cache. */
+    if (t->type != FAF_TRANSFORM_PIPELINE &&
+        try_load_cached_kernel(ctx, t, flags)) {
         ctx->flags = flags;
         return 0;
     }
@@ -1013,8 +1057,9 @@ int faf_jit_compile_ex(faf_jit_ctx *ctx, faf_transform *t, uint32_t flags) {
         return -1;
     }
     
-    /* Save to persistent cache for future use */
-    save_kernel_to_cache(ctx, t, flags);
+    /* Save to persistent cache for future use (not pointer-baked pipelines) */
+    if (t->type != FAF_TRANSFORM_PIPELINE)
+        save_kernel_to_cache(ctx, t, flags);
     
     return 0;
 }

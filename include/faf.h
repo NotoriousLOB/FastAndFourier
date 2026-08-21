@@ -249,6 +249,10 @@ int faf_jit_compile_arm(faf_jit_ctx *ctx, const faf_transform *t);
 /* Real FFT pack / unpack execute (called from faf_execute) */
 int faf_rfft_execute(const faf_transform *t, faf_buffer *out, const faf_buffer *in);
 
+/* Fused Chirp R2C → spectral C → C2R */
+int faf_pipeline_execute(const faf_transform *t, faf_buffer *out,
+                         const faf_buffer *in);
+
 /* Utility */
 size_t dsir_next_power_of_2(size_t n);
 int faf_is_power_of_2(size_t n);

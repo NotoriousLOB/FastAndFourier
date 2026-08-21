@@ -147,6 +147,7 @@ typedef enum {
     FAF_TRANSFORM_CDF53,     /**< CDF 5/3 (LeGall) Wavelet, JPEG 2000 lossless */
     FAF_TRANSFORM_CDF97,     /**< Cohen-Daubechies-Feauveau 9/7 Wavelet */
     FAF_TRANSFORM_SYM4,      /**< Symlet-4 Wavelet */
+    FAF_TRANSFORM_PIPELINE,  /**< Chirp fused pipeline (R2C → C → C2R) */
 } faf_transform_type;
 
 /**
@@ -331,6 +332,10 @@ typedef struct faf_transform {
     void *scratch;             /**< Aligned workspace (DWT, packing) */
     size_t scratch_size;       /**< Bytes allocated at scratch */
     struct faf_transform *inner; /**< Nested C2C for R2C (n/2), NULL otherwise */
+    struct faf_transform *inner_inv; /**< Nested inverse (fused R2C pipeline) */
+    void *user_aux;            /**< Bound spectrum re[] (mul-spectrum) */
+    void *user_aux_im;         /**< Bound spectrum im[] */
+    size_t user_aux_n;         /**< Bound spectrum length (bins) */
 } faf_transform;
 
 /**
