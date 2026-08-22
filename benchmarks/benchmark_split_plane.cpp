@@ -5,6 +5,7 @@
 
 #include <benchmark/benchmark.h>
 #include <fastandfourier.h>
+#include "bench_util.h"
 #include <cmath>
 #include <cstring>
 
@@ -16,7 +17,7 @@
 static void BM_SplitPlane_FP32(benchmark::State& state) {
     const size_t n = state.range(0);
     
-    faf_transform* t = bench_fft(n, FAF_PREC_FP32);
+    faf_transform* t = bench_fft_split(n, FAF_PREC_FP32);
     if (!t) {
         state.SkipWithError("Failed to create transform");
         return;
@@ -33,14 +34,16 @@ static void BM_SplitPlane_FP32(benchmark::State& state) {
         in_re[i] = sinf(2.0f * (float)M_PI * 4.0f * (float)i / (float)n);
         in_im[i] = 0.0f;
     }
+    faf_buffer in = faf_buffer_split(in_re, in_im, n);
+    faf_buffer out = faf_buffer_split(out_re, out_im, n);
     
     /* Warm up */
     for (int i = 0; i < 10; i++) {
-        faf_execute_split_f32(t, out_re, out_im, in_re, in_im);
+        faf_execute(t, &out, &in);
     }
     
     for (auto _ : state) {
-        faf_execute_split_f32(t, out_re, out_im, in_re, in_im);
+        faf_execute(t, &out, &in);
         benchmark::DoNotOptimize(out_re);
         benchmark::DoNotOptimize(out_im);
     }
@@ -97,7 +100,7 @@ static void BM_Standard_FP32(benchmark::State& state) {
 static void BM_SplitPlane_FP64(benchmark::State& state) {
     const size_t n = state.range(0);
     
-    faf_transform* t = bench_fft(n, FAF_PREC_FP64);
+    faf_transform* t = bench_fft_split(n, FAF_PREC_FP64);
     if (!t) {
         state.SkipWithError("Failed to create transform");
         return;
@@ -114,14 +117,16 @@ static void BM_SplitPlane_FP64(benchmark::State& state) {
         in_re[i] = sin(2.0 * M_PI * 4.0 * (double)i / (double)n);
         in_im[i] = 0.0;
     }
+    faf_buffer in = faf_buffer_split(in_re, in_im, n);
+    faf_buffer out = faf_buffer_split(out_re, out_im, n);
     
     /* Warm up */
     for (int i = 0; i < 10; i++) {
-        faf_execute_split_f64(t, out_re, out_im, in_re, in_im);
+        faf_execute(t, &out, &in);
     }
     
     for (auto _ : state) {
-        faf_execute_split_f64(t, out_re, out_im, in_re, in_im);
+        faf_execute(t, &out, &in);
         benchmark::DoNotOptimize(out_re);
         benchmark::DoNotOptimize(out_im);
     }

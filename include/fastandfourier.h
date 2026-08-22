@@ -641,25 +641,33 @@ int faf_execute(const faf_transform *t,
                 faf_buffer *out,
                 const faf_buffer *in);
 
-/* Type-specific execution functions */
+/**
+ * @brief Explicit interleaved ↔ split converters (edge of the garage only).
+ *
+ * faf_execute never interleaves or deinterleaves for you. Convert here,
+ * then pass buffers whose layout matches t->cfg.layout.
+ *
+ * interleaved is [re0, im0, re1, im1, ...]; split is re[n], im[n].
+ * n is the number of complex samples (or packed Hermitian bins).
+ */
+int faf_deinterleave_f32(float *FAF_RESTRICT re, float *FAF_RESTRICT im,
+                         const float *FAF_RESTRICT interleaved, size_t n);
+int faf_interleave_f32(float *FAF_RESTRICT interleaved,
+                       const float *FAF_RESTRICT re, const float *FAF_RESTRICT im,
+                       size_t n);
+int faf_deinterleave_f64(double *FAF_RESTRICT re, double *FAF_RESTRICT im,
+                         const double *FAF_RESTRICT interleaved, size_t n);
+int faf_interleave_f64(double *FAF_RESTRICT interleaved,
+                       const double *FAF_RESTRICT re, const double *FAF_RESTRICT im,
+                       size_t n);
+
+/* Interleaved convenience wrappers. Prefer faf_execute + faf_buffer. */
 int faf_execute_f32(const faf_transform *t, 
                        float *FAF_RESTRICT out, 
                        const float *FAF_RESTRICT in);
 int faf_execute_f64(const faf_transform *t,
                        double *FAF_RESTRICT out,
                        const double *FAF_RESTRICT in);
-
-/* Split-plane execution (separate real/imag arrays for better SIMD) */
-int faf_execute_split_f32(const faf_transform *t,
-                             float *FAF_RESTRICT out_re,
-                             float *FAF_RESTRICT out_im,
-                             const float *FAF_RESTRICT in_re,
-                             const float *FAF_RESTRICT in_im);
-int faf_execute_split_f64(const faf_transform *t,
-                             double *FAF_RESTRICT out_re,
-                             double *FAF_RESTRICT out_im,
-                             const double *FAF_RESTRICT in_re,
-                             const double *FAF_RESTRICT in_im);
 #ifdef FAF_HAS_FP16
     /* _Float16 is a C extension; skip for C++ */
     #ifndef __cplusplus

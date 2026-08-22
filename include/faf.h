@@ -253,6 +253,18 @@ int faf_rfft_execute(const faf_transform *t, faf_buffer *out, const faf_buffer *
 int faf_pipeline_execute(const faf_transform *t, faf_buffer *out,
                          const faf_buffer *in);
 
+/* Internal split-plane VM. Public execute is faf_execute + faf_buffer. */
+int faf_execute_split_f32(const faf_transform *t,
+                          float *FAF_RESTRICT out_re,
+                          float *FAF_RESTRICT out_im,
+                          const float *FAF_RESTRICT in_re,
+                          const float *FAF_RESTRICT in_im);
+int faf_execute_split_f64(const faf_transform *t,
+                          double *FAF_RESTRICT out_re,
+                          double *FAF_RESTRICT out_im,
+                          const double *FAF_RESTRICT in_re,
+                          const double *FAF_RESTRICT in_im);
+
 /* Utility */
 size_t dsir_next_power_of_2(size_t n);
 int faf_is_power_of_2(size_t n);

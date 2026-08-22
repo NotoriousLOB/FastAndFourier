@@ -91,6 +91,60 @@ size_t faf_get_alignment(void) {
     return FAF_ALIGN;
 }
 
+int faf_deinterleave_f32(float *FAF_RESTRICT re, float *FAF_RESTRICT im,
+                         const float *FAF_RESTRICT interleaved, size_t n) {
+    if (!re || !im || !interleaved) {
+        set_error("deinterleave: null buffer");
+        return -1;
+    }
+    for (size_t i = 0; i < n; i++) {
+        re[i] = interleaved[2 * i];
+        im[i] = interleaved[2 * i + 1];
+    }
+    return 0;
+}
+
+int faf_interleave_f32(float *FAF_RESTRICT interleaved,
+                       const float *FAF_RESTRICT re, const float *FAF_RESTRICT im,
+                       size_t n) {
+    if (!interleaved || !re || !im) {
+        set_error("interleave: null buffer");
+        return -1;
+    }
+    for (size_t i = 0; i < n; i++) {
+        interleaved[2 * i]     = re[i];
+        interleaved[2 * i + 1] = im[i];
+    }
+    return 0;
+}
+
+int faf_deinterleave_f64(double *FAF_RESTRICT re, double *FAF_RESTRICT im,
+                         const double *FAF_RESTRICT interleaved, size_t n) {
+    if (!re || !im || !interleaved) {
+        set_error("deinterleave: null buffer");
+        return -1;
+    }
+    for (size_t i = 0; i < n; i++) {
+        re[i] = interleaved[2 * i];
+        im[i] = interleaved[2 * i + 1];
+    }
+    return 0;
+}
+
+int faf_interleave_f64(double *FAF_RESTRICT interleaved,
+                       const double *FAF_RESTRICT re, const double *FAF_RESTRICT im,
+                       size_t n) {
+    if (!interleaved || !re || !im) {
+        set_error("interleave: null buffer");
+        return -1;
+    }
+    for (size_t i = 0; i < n; i++) {
+        interleaved[2 * i]     = re[i];
+        interleaved[2 * i + 1] = im[i];
+    }
+    return 0;
+}
+
 size_t faf_precision_size(faf_precision prec) {
     switch (prec) {
         case FAF_PREC_FP8:  return 1;

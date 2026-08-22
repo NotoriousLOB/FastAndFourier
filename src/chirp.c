@@ -929,6 +929,15 @@ static void chirp_compile_node_emit(chirp_node *node, faf_transform *t, int *ins
                 n = (size_t)node->children[0]->value;
             }
             if (n == 0) n = 64;
+            chirp_node *lay_node = chirp_node_get_kwarg(node, "layout");
+            if (lay_node) {
+                faf_layout lay;
+                if (chirp_parse_layout(lay_node, &lay) != 0) {
+                    faf_set_error("Chirp: unknown :layout for fft");
+                    return;
+                }
+                t->cfg.layout = lay;
+            }
             int inverse = (node->value != 0);
             t->type = inverse ? FAF_TRANSFORM_IFFT : FAF_TRANSFORM_FFT;
             if (inverse) t->flags |= FAF_FLAG_INVERSE;
@@ -1293,11 +1302,29 @@ static faf_transform *chirp_compile_spectral_pipeline(chirp_node *ast) {
     t->type = FAF_TRANSFORM_PIPELINE;
     t->n = fwd->n;
     t->precision = fwd->precision;
-    t->cfg = fwd->cfg;
-    t->cfg.layout = has_irfft ? FAF_LAYOUT_REAL : FAF_LAYOUT_HERMITIAN;
-    t->cfg.dir = has_irfft ? FAF_DIR_INVERSE : FAF_DIR_FORWARD;
     t->inner = fwd;
     t->inner_inv = inv;
+    t->cfg = fwd->cfg;
+    /* Time I/O is REAL when irfft is present. Spectrum stays on fwd. */
+    t->cfg.layout = has_irfft ? FAF_LAYOUT_REAL : fwd->cfg.layout;
+    if (ast->type == CHIRP_NODE_PIPELINE) {
+        chirp_node *play = chirp_node_get_kwarg(ast, "layout");
+        if (play) {
+            faf_layout lay;
+            if (chirp_parse_layout(play, &lay) != 0) {
+                faf_set_error("Chirp: unknown :layout for pipeline");
+                faf_destroy_transform(t);
+                return NULL;
+            }
+            /* :layout on a full round-trip is the time-domain layout. */
+            if (has_irfft && lay != FAF_LAYOUT_DEFAULT)
+                t->cfg.layout = (lay == FAF_LAYOUT_INTERLEAVED)
+                    ? FAF_LAYOUT_REAL : lay;
+            else if (!has_irfft && lay != FAF_LAYOUT_DEFAULT)
+                t->cfg.layout = lay;
+        }
+    }
+    t->cfg.dir = has_irfft ? FAF_DIR_INVERSE : FAF_DIR_FORWARD;
     t->flags = FAF_FLAG_REAL;
 
     if (nops > 0) {
@@ -1428,11 +1455,12 @@ faf_transform* chirp_compile(const char *source) {
     chirp_node_free(ast);
 
     /* Resolved config so faf_execute / create_inverse work on Chirp programs.
-     * Layout is interleaved: Chirp execute helpers and examples still pass
-     * float[2n] through faf_execute_f32. */
+     * Default layout stays interleaved so existing faf_execute_f32 helpers
+     * keep working; (fft :layout split) overrides during emit. */
+    faf_layout lay = t->cfg.layout;
     t->cfg = faf_config_init(t->n);
     t->cfg.precision = t->precision;
-    t->cfg.layout = FAF_LAYOUT_INTERLEAVED;
+    t->cfg.layout = (lay == FAF_LAYOUT_DEFAULT) ? FAF_LAYOUT_INTERLEAVED : lay;
     t->cfg.norm = FAF_NORM_NONE;
     if (t->flags & FAF_FLAG_INVERSE)
         t->cfg.dir = FAF_DIR_INVERSE;

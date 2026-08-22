@@ -33,7 +33,7 @@ int main(void) {
     chirp_register_spectral("hilbert", hilbert_scale, NULL);
 
     faf_transform *an = chirp_compile(
-        "(pipeline (rfft :size 256) (spectral hilbert))");
+        "(pipeline (rfft :size 256 :layout hermitian) (spectral hilbert))");
     if (!an) {
         fprintf(stderr, "compile: %s\n", faf_get_error());
         return 1;

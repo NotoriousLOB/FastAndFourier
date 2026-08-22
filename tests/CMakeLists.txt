@@ -27,6 +27,7 @@ set(TEST_SOURCES
     test_wavelets.cpp
     test_rfft.cpp
     test_spectral.cpp
+    test_layout.cpp
 )
 
 # Architecture-specific tests

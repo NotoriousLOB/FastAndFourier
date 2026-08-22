@@ -60,7 +60,11 @@ Chirp:
 ```scheme
 (rfft :size 4096 :norm none :layout hermitian)
 (irfft :size 4096)
+(fft :size 1024 :layout split)
 ```
+
+Interleaved is an opt-in convenience. Convert at the edge with
+`faf_deinterleave_f32` / `faf_interleave_f32`; `faf_execute` will not.
 
 A fused `(pipeline (rfft) … (irfft))` is a later phase (Fourier-domain C).
 Compile the two forms separately for now.
