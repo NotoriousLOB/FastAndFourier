@@ -311,3 +311,35 @@ static void BM_C2C_ZeroImag(benchmark::State& state) {
 BENCHMARK(BM_C2C_ZeroImag)
     ->Arg(64)->Arg(256)->Arg(1024)->Arg(4096)
     ->Unit(benchmark::kMicrosecond);
+
+/* Mixed-radix 4000 vs padded-to-4096 vs native 4096. */
+static void BM_FFT_Mixed(benchmark::State& state) {
+    const size_t n = (size_t)state.range(0);
+    faf_config c = faf_config_init(n);
+    c.layout = FAF_LAYOUT_SPLIT;
+    faf_transform *t = faf_create_fft(&c);
+    if (!t) {
+        state.SkipWithError("Failed to create mixed-radix fft");
+        return;
+    }
+    float *re_in = (float *)aligned_alloc(64, n * sizeof(float));
+    float *im_in = (float *)aligned_alloc(64, n * sizeof(float));
+    float *re_out = (float *)aligned_alloc(64, n * sizeof(float));
+    float *im_out = (float *)aligned_alloc(64, n * sizeof(float));
+    for (size_t i = 0; i < n; i++) {
+        re_in[i] = sinf(2.0f * (float)M_PI * 4.0f * (float)i / (float)n);
+        im_in[i] = 0.0f;
+    }
+    faf_buffer in = faf_buffer_split(re_in, im_in, n);
+    faf_buffer out = faf_buffer_split(re_out, im_out, n);
+    for (auto _ : state) {
+        faf_execute(t, &out, &in);
+        benchmark::DoNotOptimize(re_out);
+    }
+    state.SetItemsProcessed(state.iterations() * (int64_t)n);
+    free(re_in); free(im_in); free(re_out); free(im_out);
+    faf_destroy_transform(t);
+}
+BENCHMARK(BM_FFT_Mixed)
+    ->Arg(4000)->Arg(4096)
+    ->Unit(benchmark::kMicrosecond);

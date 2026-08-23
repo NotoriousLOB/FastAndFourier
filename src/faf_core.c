@@ -301,6 +301,7 @@ bool faf_is_size_supported(faf_transform_type type, size_t n) {
     switch (type) {
         case FAF_TRANSFORM_FFT:
         case FAF_TRANSFORM_IFFT:
+            return faf_is_5_smooth(n);
         case FAF_TRANSFORM_HAAR:
         case FAF_TRANSFORM_DAUBECHIES4:
         case FAF_TRANSFORM_CDF53:
@@ -309,7 +310,7 @@ bool faf_is_size_supported(faf_transform_type type, size_t n) {
             return faf_is_power_of_2(n);
         case FAF_TRANSFORM_RFFT:
         case FAF_TRANSFORM_IRFFT:
-            return faf_is_power_of_2(n) && n >= 2;
+            return faf_is_5_smooth(n) && (n % 2u) == 0 && n >= 2;
         case FAF_TRANSFORM_DCT_I:
             return n >= 2;
         case FAF_TRANSFORM_DCT_II:
@@ -329,15 +330,16 @@ bool faf_is_size_supported(faf_transform_type type, size_t n) {
 }
 
 size_t faf_get_recommended_size(faf_transform_type type, size_t min_size) {
-    size_t n = dsir_next_power_of_2(min_size);
-    
-    /* For FFT, prefer sizes with small prime factors for Bluestein */
-    if (type == FAF_TRANSFORM_FFT || type == FAF_TRANSFORM_IFFT) {
-        /* Already power of 2, good for Cooley-Tukey */
+    if (type == FAF_TRANSFORM_FFT || type == FAF_TRANSFORM_IFFT ||
+        type == FAF_TRANSFORM_RFFT || type == FAF_TRANSFORM_IRFFT) {
+        size_t n = faf_next_5_smooth(min_size);
+        if (type == FAF_TRANSFORM_RFFT || type == FAF_TRANSFORM_IRFFT) {
+            if (n < 2) n = 2;
+            if ((n % 2u) != 0) n = faf_next_5_smooth(n + 1);
+        }
         return n;
     }
-    
-    return n;
+    return dsir_next_power_of_2(min_size);
 }
 
 static int alloc_scratch(faf_transform *t, size_t bytes) {
@@ -380,8 +382,10 @@ faf_transform* faf_create_fft(const faf_config *cfg) {
         return NULL;
     }
     faf_config c = *cfg;
-    if (!faf_is_power_of_2(c.n)) {
-        set_error("FFT size must be power of 2, got %zu", c.n);
+    if (!faf_is_5_smooth(c.n)) {
+        set_error("FFT size must be 5-smooth (2^a 3^b 5^c), got %zu; "
+                  "nearest is %zu", c.n, faf_get_recommended_size(
+                      FAF_TRANSFORM_FFT, c.n));
         return NULL;
     }
     if (c.layout == FAF_LAYOUT_DEFAULT)
@@ -404,10 +408,9 @@ faf_transform* faf_create_fft(const faf_config *cfg) {
     t->type = inverse ? FAF_TRANSFORM_IFFT : FAF_TRANSFORM_FFT;
     apply_resolved_config(t, c);
 
-    if (c.n <= 16) {
+    if (faf_is_power_of_2(c.n)) {
+        /* Pow2 path is frozen: existing radix-2 stage emitter. */
         faf_gen_fft_radix2(t, c.n, inverse);
-    } else if ((c.n & (c.n - 1)) == 0 && c.n >= 64) {
-        faf_gen_fft_radix4(t, c.n, inverse);
     } else {
         faf_gen_fft_mixed(t, c.n, inverse);
     }

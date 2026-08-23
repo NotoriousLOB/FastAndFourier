@@ -773,6 +773,21 @@ static void faf_jit_generate_c_ex(faf_transform *t,
                 break;
                 
             case FAF_FFT_STAGE:
+                if (inst->a1 == 3 || inst->a1 == 4 || inst->a1 == 5) {
+                    int inverse = (t->cfg.dir == FAF_DIR_INVERSE) ||
+                                  (t->flags & FAF_FLAG_INVERSE);
+                    fprintf(f, "    {\n");
+                    fprintf(f, "        typedef void (*_stfn)(float*,float*,size_t,"
+                               "uint32_t,uint32_t,uint32_t,const float*,size_t,int);\n");
+                    fprintf(f, "        _stfn _st = (_stfn)(uintptr_t)%lluULL;\n",
+                            (unsigned long long)(uintptr_t)faf_fft_stage_split_f32);
+                    fprintf(f, "        _st(regs_re, regs_im, %zu, %uu, %uu, %uu, "
+                               "tw, %zu, %d);\n",
+                            t->n, inst->a0, inst->a1, inst->a2,
+                            t->twiddle_sizes[0], inverse);
+                    fprintf(f, "    }\n");
+                    break;
+                }
                 /* Split-plane complex FFT stage with looped emission
                  * a0 = group_size (radix), a1 = stride, a2 = twiddle_step
                  * Pairs elements at (base+r) and (base+r+half), with
@@ -803,6 +818,15 @@ static void faf_jit_generate_c_ex(faf_transform *t,
                 break;
                 
             case FAF_BITREV: {
+                if (!faf_is_power_of_2(t->n)) {
+                    fprintf(f, "    {\n");
+                    fprintf(f, "        typedef void (*_drfn)(float*,float*,size_t);\n");
+                    fprintf(f, "        _drfn _dr = (_drfn)(uintptr_t)%lluULL;\n",
+                            (unsigned long long)(uintptr_t)faf_digitrev_split_f32);
+                    fprintf(f, "        _dr(regs_re, regs_im, %zu);\n", t->n);
+                    fprintf(f, "    }\n");
+                    break;
+                }
                 size_t bits = 0, tmpn = t->n;
                 while (tmpn > 1) { tmpn >>= 1; bits++; }
                 fprintf(f, "    {\n");
@@ -1005,8 +1029,8 @@ int faf_jit_compile_ex(faf_jit_ctx *ctx, faf_transform *t, uint32_t flags) {
 
     ctx->from_cache = 0;
     
-    /* Pointer-baked pipeline kernels are process-local; skip the disk cache. */
-    if (t->type != FAF_TRANSFORM_PIPELINE &&
+    /* Pointer-baked pipeline / mixed-radix kernels are process-local. */
+    if (t->type != FAF_TRANSFORM_PIPELINE && faf_is_power_of_2(t->n) &&
         try_load_cached_kernel(ctx, t, flags)) {
         ctx->flags = flags;
         return 0;
@@ -1058,7 +1082,7 @@ int faf_jit_compile_ex(faf_jit_ctx *ctx, faf_transform *t, uint32_t flags) {
     }
     
     /* Save to persistent cache for future use (not pointer-baked pipelines) */
-    if (t->type != FAF_TRANSFORM_PIPELINE)
+    if (t->type != FAF_TRANSFORM_PIPELINE && faf_is_power_of_2(t->n))
         save_kernel_to_cache(ctx, t, flags);
     
     return 0;

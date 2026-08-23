@@ -850,17 +850,28 @@ static size_t chirp_log2_size(size_t n) {
 
 static void chirp_ensure_fft_twiddles(faf_transform *t, size_t n, int inverse) {
     if (t->twiddles[0] || n == 0) return;
+    int full = !faf_is_power_of_2(n);
     if (t->precision == FAF_PREC_FP64) {
-        t->twiddles[0] = malloc(n * sizeof(double));
+        t->twiddles[0] = malloc((full ? n * 2 : n) * sizeof(double));
         if (t->twiddles[0]) {
-            faf_gen_twiddles_f64((double*)t->twiddles[0], n, inverse);
-            t->twiddle_sizes[0] = n / 2;
+            if (full) {
+                faf_gen_twiddles_full_f64((double *)t->twiddles[0], n, inverse);
+                t->twiddle_sizes[0] = n;
+            } else {
+                faf_gen_twiddles_f64((double *)t->twiddles[0], n, inverse);
+                t->twiddle_sizes[0] = n / 2;
+            }
         }
     } else {
-        t->twiddles[0] = malloc(n * sizeof(float));
+        t->twiddles[0] = malloc((full ? n * 2 : n) * sizeof(float));
         if (t->twiddles[0]) {
-            faf_gen_twiddles_f32((float*)t->twiddles[0], n, inverse);
-            t->twiddle_sizes[0] = n / 2;
+            if (full) {
+                faf_gen_twiddles_full_f32((float *)t->twiddles[0], n, inverse);
+                t->twiddle_sizes[0] = n;
+            } else {
+                faf_gen_twiddles_f32((float *)t->twiddles[0], n, inverse);
+                t->twiddle_sizes[0] = n / 2;
+            }
         }
     }
 }
@@ -942,22 +953,42 @@ static void chirp_compile_node_emit(chirp_node *node, faf_transform *t, int *ins
             t->type = inverse ? FAF_TRANSFORM_IFFT : FAF_TRANSFORM_FFT;
             if (inverse) t->flags |= FAF_FLAG_INVERSE;
             if (n > t->n) t->n = n;
+            if (!faf_is_5_smooth(n)) {
+                faf_set_error("Chirp: FFT size must be 5-smooth, got %zu; "
+                              "nearest is %zu", n,
+                              faf_get_recommended_size(FAF_TRANSFORM_FFT, n));
+                return;
+            }
             chirp_ensure_fft_twiddles(t, t->n, inverse);
 
-            /* Bit-reversal + staged FFT, matching faf_gen_fft_radix2. */
             faf_inst br = {0};
             br.packed = FAF_BITREV;
             chirp_emit_inst(t, br, inst_count);
 
-            size_t bits = chirp_log2_size(n);
-            for (size_t stage = 0; stage < bits; stage++) {
-                faf_inst st = {0};
-                size_t group_size = 2u << stage;
-                st.packed = FAF_FFT_STAGE;
-                st.a0 = (uint32_t)group_size;
-                st.a1 = 1;
-                st.a2 = (uint32_t)(n / group_size);
-                chirp_emit_inst(t, st, inst_count);
+            if (faf_is_power_of_2(n)) {
+                size_t bits = chirp_log2_size(n);
+                for (size_t stage = 0; stage < bits; stage++) {
+                    faf_inst st = {0};
+                    size_t group_size = 2u << stage;
+                    st.packed = FAF_FFT_STAGE;
+                    st.a0 = (uint32_t)group_size;
+                    st.a1 = 1;
+                    st.a2 = (uint32_t)(n / group_size);
+                    chirp_emit_inst(t, st, inst_count);
+                }
+            } else {
+                int fac[16], nf = 0;
+                faf_factor_5smooth(n, fac, &nf);
+                size_t group = 1;
+                for (int k = 0; k < nf; k++) {
+                    group *= (size_t)fac[k];
+                    faf_inst st = {0};
+                    st.packed = FAF_FFT_STAGE;
+                    st.a0 = (uint32_t)group;
+                    st.a1 = (fac[k] == 2) ? 1u : (uint32_t)fac[k];
+                    st.a2 = (uint32_t)(n / group);
+                    chirp_emit_inst(t, st, inst_count);
+                }
             }
             return;
         }

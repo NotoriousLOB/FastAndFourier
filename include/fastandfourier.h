@@ -502,16 +502,17 @@ size_t faf_spectrum_len(const faf_transform *t);
 faf_transform* faf_create(faf_transform_type type, const faf_config *cfg);
 
 /**
- * @brief Create an FFT (C2C). n must be a power of 2.
+ * @brief Create an FFT (C2C). n must be 5-smooth (2^a 3^b 5^c).
  *
- * Default layout SPLIT, default norm NONE (unscaled forward, 1/n inverse).
+ * Power-of-2 sizes use the existing radix-2 kernel. Other 5-smooth
+ * sizes use mixed-radix 2/3/4/5. Default layout SPLIT, default norm NONE.
  */
 faf_transform* faf_create_fft(const faf_config *cfg);
 
 /**
  * @brief Create a real FFT (R2C) or its inverse (C2R).
  *
- * n must be a power of 2 and >= 2. Default layout HERMITIAN (packed
+ * n must be even and 5-smooth, >= 2. Default layout HERMITIAN (packed
  * split-plane spectrum of n/2+1 bins); INTERLEAVED packed is opt-in.
  * Default norm NONE (unscaled forward, 1/n on the real inverse).
  * Set cfg->dir = FAF_DIR_INVERSE, or use faf_create_inverse(), for C2R.

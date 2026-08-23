@@ -77,7 +77,7 @@ TEST(RfftApi, RejectsOddAndNonPow2) {
     EXPECT_EQ(faf_create_rfft(&odd), nullptr);
     EXPECT_STRNE(faf_get_error(), "");
 
-    faf_config even = faf_config_init(12);
+    faf_config even = faf_config_init(14); /* 2*7, not 5-smooth */
     EXPECT_EQ(faf_create_rfft(&even), nullptr);
 
     faf_config split = faf_config_init(32);

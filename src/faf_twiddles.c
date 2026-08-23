@@ -40,6 +40,26 @@ void faf_gen_twiddles_f64(double *tw, size_t n, bool inverse) {
     }
 }
 
+void faf_gen_twiddles_full_f32(float *tw, size_t n, bool inverse) {
+    const float sign = inverse ? 1.0f : -1.0f;
+    const float twopi_over_n = 2.0f * (float)M_PI / (float)n;
+    for (size_t k = 0; k < n; k++) {
+        float angle = sign * twopi_over_n * (float)k;
+        tw[2 * k]     = cosf(angle);
+        tw[2 * k + 1] = sinf(angle);
+    }
+}
+
+void faf_gen_twiddles_full_f64(double *tw, size_t n, bool inverse) {
+    const double sign = inverse ? 1.0 : -1.0;
+    const double twopi_over_n = 2.0 * M_PI / (double)n;
+    for (size_t k = 0; k < n; k++) {
+        double angle = sign * twopi_over_n * (double)k;
+        tw[2 * k]     = cos(angle);
+        tw[2 * k + 1] = sin(angle);
+    }
+}
+
 /**
  * @brief Generate twiddle factors for DCT-II
  * 

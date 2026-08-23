@@ -181,9 +181,9 @@ faf_transform* faf_create_rfft(const faf_config *cfg) {
         faf_set_error("R2C size must be even and >= 2, got %zu", c.n);
         return NULL;
     }
-    if (!faf_is_power_of_2(c.n)) {
-        faf_set_error("R2C size must be a power of 2 for now (got %zu); "
-                      "mixed-radix comes later", c.n);
+    if (!faf_is_5_smooth(c.n)) {
+        faf_set_error("R2C size must be even and 5-smooth, got %zu; nearest is %zu",
+                      c.n, faf_get_recommended_size(FAF_TRANSFORM_RFFT, c.n));
         return NULL;
     }
     if (c.precision != FAF_PREC_FP32 && c.precision != FAF_PREC_FP64) {

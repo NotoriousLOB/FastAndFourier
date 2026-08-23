@@ -23,8 +23,7 @@ Inverse is the reverse: pre-pass, `n/2` IFFT, unpack even/odd. The inner C2C
 is **not** `1/(n/2)`-scaled; `faf_execute` applies the outer norm using the
 **real** length `n`.
 
-Odd `n` and mixed-radix `n/2` are not in this pass. Create fails with a
-clear error.
+`n` must be even and 5-smooth (`2^a 3^b 5^c`). Odd `n` is still rejected.
 
 ## Layouts and who owns what
 
@@ -96,5 +95,5 @@ flips `dir` and keeps `n`, precision, layout, norm, backend.
 
 - Not a C2C with `im[:] = 0`. Compare a few bins against our own C2C if you
   want a reference; magnitudes in `0 .. n/2` should match.
-- Not Bluestein / arbitrary `n`. Size must be a power of 2.
+- Not Bluestein / arbitrary `n`. Size must be even and 5-smooth.
 - Not a framed STFT. That stays a later transform.

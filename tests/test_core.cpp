@@ -69,20 +69,25 @@ TEST(CoreTest, TransformNames) {
 
 /* Test size support checking */
 TEST(CoreTest, SizeSupport) {
-    /* FFT requires power of 2 */
+    /* FFT requires 5-smooth n (2^a 3^b 5^c) */
     EXPECT_TRUE(faf_is_size_supported(FAF_TRANSFORM_FFT, 1));
     EXPECT_TRUE(faf_is_size_supported(FAF_TRANSFORM_FFT, 2));
+    EXPECT_TRUE(faf_is_size_supported(FAF_TRANSFORM_FFT, 3));
     EXPECT_TRUE(faf_is_size_supported(FAF_TRANSFORM_FFT, 4));
+    EXPECT_TRUE(faf_is_size_supported(FAF_TRANSFORM_FFT, 5));
+    EXPECT_TRUE(faf_is_size_supported(FAF_TRANSFORM_FFT, 12));
+    EXPECT_TRUE(faf_is_size_supported(FAF_TRANSFORM_FFT, 100));
     EXPECT_TRUE(faf_is_size_supported(FAF_TRANSFORM_FFT, 1024));
-    EXPECT_FALSE(faf_is_size_supported(FAF_TRANSFORM_FFT, 3));
-    EXPECT_FALSE(faf_is_size_supported(FAF_TRANSFORM_FFT, 5));
-    EXPECT_FALSE(faf_is_size_supported(FAF_TRANSFORM_FFT, 100));
+    EXPECT_FALSE(faf_is_size_supported(FAF_TRANSFORM_FFT, 7));
+    EXPECT_FALSE(faf_is_size_supported(FAF_TRANSFORM_FFT, 11));
 
-    /* R2C: power of 2, at least 2 */
+    /* R2C: even and 5-smooth, at least 2 */
     EXPECT_TRUE(faf_is_size_supported(FAF_TRANSFORM_RFFT, 2));
+    EXPECT_TRUE(faf_is_size_supported(FAF_TRANSFORM_RFFT, 12));
     EXPECT_TRUE(faf_is_size_supported(FAF_TRANSFORM_IRFFT, 64));
     EXPECT_FALSE(faf_is_size_supported(FAF_TRANSFORM_RFFT, 1));
     EXPECT_FALSE(faf_is_size_supported(FAF_TRANSFORM_RFFT, 3));
+    EXPECT_FALSE(faf_is_size_supported(FAF_TRANSFORM_RFFT, 14));
     
     /* MDCT requires even size */
     EXPECT_TRUE(faf_is_size_supported(FAF_TRANSFORM_MDCT, 2));
@@ -97,12 +102,14 @@ TEST(CoreTest, SizeSupport) {
 
 /* Test recommended size */
 TEST(CoreTest, RecommendedSize) {
-    /* Should return power of 2 for FFT */
+    /* 5-smooth (not necessarily pow2) */
     EXPECT_EQ(faf_get_recommended_size(FAF_TRANSFORM_FFT, 1), 1);
     EXPECT_EQ(faf_get_recommended_size(FAF_TRANSFORM_FFT, 2), 2);
-    EXPECT_EQ(faf_get_recommended_size(FAF_TRANSFORM_FFT, 3), 4);
-    EXPECT_EQ(faf_get_recommended_size(FAF_TRANSFORM_FFT, 100), 128);
-    EXPECT_EQ(faf_get_recommended_size(FAF_TRANSFORM_FFT, 1000), 1024);
+    EXPECT_EQ(faf_get_recommended_size(FAF_TRANSFORM_FFT, 3), 3);
+    EXPECT_EQ(faf_get_recommended_size(FAF_TRANSFORM_FFT, 7), 8);
+    EXPECT_EQ(faf_get_recommended_size(FAF_TRANSFORM_FFT, 100), 100);
+    EXPECT_EQ(faf_get_recommended_size(FAF_TRANSFORM_FFT, 1000), 1000);
+    EXPECT_EQ(faf_get_recommended_size(FAF_TRANSFORM_FFT, 11), 12);
 }
 
 /* Test error handling */
@@ -111,7 +118,7 @@ TEST(CoreTest, ErrorHandling) {
     EXPECT_STREQ(faf_get_error(), "");
     
     /* Create an invalid transform to trigger error */
-    faf_transform* t = test_fft_n(3);
+    faf_transform* t = test_fft_n(7);
     EXPECT_EQ(t, nullptr);
     EXPECT_STRNE(faf_get_error(), "");
     

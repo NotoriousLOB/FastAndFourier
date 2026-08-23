@@ -125,6 +125,22 @@ static void apply_dwt_interleaved_f64(double *regs, size_t n, size_t length,
 }
 
 static void bitrev_interleaved_f32(float *regs, size_t n) {
+    if (!faf_is_power_of_2(n)) {
+        float *re = (float *)malloc(n * sizeof(float));
+        float *im = (float *)malloc(n * sizeof(float));
+        if (!re || !im) { free(re); free(im); return; }
+        for (size_t i = 0; i < n; i++) {
+            re[i] = regs[2 * i];
+            im[i] = regs[2 * i + 1];
+        }
+        faf_digitrev_split_f32(re, im, n);
+        for (size_t i = 0; i < n; i++) {
+            regs[2 * i] = re[i];
+            regs[2 * i + 1] = im[i];
+        }
+        free(re); free(im);
+        return;
+    }
     size_t bits = 0;
     for (size_t tmp = n; tmp > 1; tmp >>= 1) bits++;
     for (size_t i = 0; i < n; i++) {
@@ -141,6 +157,22 @@ static void bitrev_interleaved_f32(float *regs, size_t n) {
 }
 
 static void bitrev_interleaved_f64(double *regs, size_t n) {
+    if (!faf_is_power_of_2(n)) {
+        double *re = (double *)malloc(n * sizeof(double));
+        double *im = (double *)malloc(n * sizeof(double));
+        if (!re || !im) { free(re); free(im); return; }
+        for (size_t i = 0; i < n; i++) {
+            re[i] = regs[2 * i];
+            im[i] = regs[2 * i + 1];
+        }
+        faf_digitrev_split_f64(re, im, n);
+        for (size_t i = 0; i < n; i++) {
+            regs[2 * i] = re[i];
+            regs[2 * i + 1] = im[i];
+        }
+        free(re); free(im);
+        return;
+    }
     size_t bits = 0;
     for (size_t tmp = n; tmp > 1; tmp >>= 1) bits++;
     for (size_t i = 0; i < n; i++) {
@@ -157,6 +189,10 @@ static void bitrev_interleaved_f64(double *regs, size_t n) {
 }
 
 static void bitrev_split_f32(float *re, float *im, size_t n) {
+    if (!faf_is_power_of_2(n)) {
+        faf_digitrev_split_f32(re, im, n);
+        return;
+    }
     size_t bits = 0;
     for (size_t tmp = n; tmp > 1; tmp >>= 1) bits++;
     for (size_t i = 0; i < n; i++) {
@@ -171,6 +207,10 @@ static void bitrev_split_f32(float *re, float *im, size_t n) {
 }
 
 static void bitrev_split_f64(double *re, double *im, size_t n) {
+    if (!faf_is_power_of_2(n)) {
+        faf_digitrev_split_f64(re, im, n);
+        return;
+    }
     size_t bits = 0;
     for (size_t tmp = n; tmp > 1; tmp >>= 1) bits++;
     for (size_t i = 0; i < n; i++) {
@@ -557,47 +597,11 @@ label_FFT_STAGE:
     case FAF_FFT_STAGE:
 #endif
         {
-            /* Execute complete FFT stage with complex butterflies
-             * Register file is interleaved: regs[2*i]=real, regs[2*i+1]=imag
-             * a0 = group_size (radix), a1 = stride, a2 = twiddle_step
-             */
-            size_t radix = inst->a0;
-            size_t stride = inst->a1;
-            size_t tw_step = inst->a2;
-            size_t half = radix / 2;
-            size_t ngroups = t->n / (radix * stride);
-
-            for (size_t g = 0; g < ngroups; g++) {
-                size_t base = g * radix * stride;
-
-                for (size_t r = 0; r < half; r++) {
-                    size_t idx1 = base + r * stride;
-                    size_t idx2 = idx1 + half * stride;
-
-                    /* Read complex values from interleaved layout */
-                    float ar = regs[idx1 * 2];
-                    float ai = regs[idx1 * 2 + 1];
-                    float br = regs[idx2 * 2];
-                    float bi = regs[idx2 * 2 + 1];
-
-                    size_t tw_idx = r * tw_step;
-                    if (tw && tw_idx < t->twiddle_sizes[0]) {
-                        float wr = tw[tw_idx * 2];
-                        float wi = tw[tw_idx * 2 + 1];
-                        float tw_re = br * wr - bi * wi;
-                        float tw_im = br * wi + bi * wr;
-                        regs[idx1 * 2]     = ar + tw_re;
-                        regs[idx1 * 2 + 1] = ai + tw_im;
-                        regs[idx2 * 2]     = ar - tw_re;
-                        regs[idx2 * 2 + 1] = ai - tw_im;
-                    } else {
-                        regs[idx1 * 2]     = ar + br;
-                        regs[idx1 * 2 + 1] = ai + bi;
-                        regs[idx2 * 2]     = ar - br;
-                        regs[idx2 * 2 + 1] = ai - bi;
-                    }
-                }
-            }
+            int inverse = (t->cfg.dir == FAF_DIR_INVERSE) ||
+                          (t->flags & FAF_FLAG_INVERSE);
+            faf_fft_stage_interleaved_f32(regs, t->n, inst->a0, inst->a1,
+                                          inst->a2, tw, t->twiddle_sizes[0],
+                                          inverse);
         }
         DISPATCH();
 
@@ -1166,31 +1170,11 @@ int faf_vm_execute_f64(const faf_transform *t,
                     regs[inst->a0] = regs[inst->a1] - regs[inst->a2];
                 break;
             case FAF_FFT_STAGE: {
-                size_t radix = inst->a0;
-                size_t stride = inst->a1;
-                size_t tw_step = inst->a2;
-                size_t half = radix / 2;
-                size_t ngroups = t->n / (radix * stride);
-                for (size_t g = 0; g < ngroups; g++) {
-                    size_t gbase = g * radix * stride;
-                    for (size_t r = 0; r < half; r++) {
-                        size_t idx1 = gbase + r * stride;
-                        size_t idx2 = idx1 + half * stride;
-                        double ar = regs[idx1 * 2], ai = regs[idx1 * 2 + 1];
-                        double br = regs[idx2 * 2], bi = regs[idx2 * 2 + 1];
-                        size_t tw_idx = r * tw_step;
-                        if (tw && tw_idx < t->twiddle_sizes[0]) {
-                            double wr = tw[tw_idx * 2], wi = tw[tw_idx * 2 + 1];
-                            double tw_re = br * wr - bi * wi;
-                            double tw_im = br * wi + bi * wr;
-                            regs[idx1 * 2]     = ar + tw_re; regs[idx1 * 2 + 1] = ai + tw_im;
-                            regs[idx2 * 2]     = ar - tw_re; regs[idx2 * 2 + 1] = ai - tw_im;
-                        } else {
-                            regs[idx1 * 2]     = ar + br; regs[idx1 * 2 + 1] = ai + bi;
-                            regs[idx2 * 2]     = ar - br; regs[idx2 * 2 + 1] = ai - bi;
-                        }
-                    }
-                }
+                int inverse = (t->cfg.dir == FAF_DIR_INVERSE) ||
+                              (t->flags & FAF_FLAG_INVERSE);
+                faf_fft_stage_interleaved_f64(regs, t->n, inst->a0, inst->a1,
+                                              inst->a2, tw, t->twiddle_sizes[0],
+                                              inverse);
                 break;
             }
             case FAF_CALL_BUILTIN: {
@@ -1466,34 +1450,11 @@ int faf_execute_split_f32(const faf_transform *t,
                 __asm__ volatile("" ::: "memory");
                 break;
             case FAF_FFT_STAGE: {
-                size_t radix = inst->a0;
-                size_t stride = inst->a1;
-                size_t tw_step = inst->a2;
-                size_t half = radix / 2;
-                size_t ngroups = t->n / (radix * stride);
-                for (size_t g = 0; g < ngroups; g++) {
-                    size_t gbase = g * radix * stride;
-                    for (size_t r = 0; r < half; r++) {
-                        size_t idx1 = gbase + r * stride;
-                        size_t idx2 = idx1 + half * stride;
-                        if (idx1 < t->n && idx2 < t->n) {
-                            float ar = regs_re[idx1], ai = regs_im[idx1];
-                            float br = regs_re[idx2], bi = regs_im[idx2];
-                            size_t tw_idx = r * tw_step;
-                            if (tw && tw_idx < t->twiddle_sizes[0]) {
-                                float wr = tw[tw_idx * 2];
-                                float wi = tw[tw_idx * 2 + 1];
-                                float tw_re = br * wr - bi * wi;
-                                float tw_im = br * wi + bi * wr;
-                                regs_re[idx1] = ar + tw_re; regs_im[idx1] = ai + tw_im;
-                                regs_re[idx2] = ar - tw_re; regs_im[idx2] = ai - tw_im;
-                            } else {
-                                regs_re[idx1] = ar + br; regs_im[idx1] = ai + bi;
-                                regs_re[idx2] = ar - br; regs_im[idx2] = ai - bi;
-                            }
-                        }
-                    }
-                }
+                int inverse = (t->cfg.dir == FAF_DIR_INVERSE) ||
+                              (t->flags & FAF_FLAG_INVERSE);
+                faf_fft_stage_split_f32(regs_re, regs_im, t->n, inst->a0,
+                                        inst->a1, inst->a2, tw,
+                                        t->twiddle_sizes[0], inverse);
                 break;
             }
             case FAF_DCT_STAGE: {
@@ -1750,34 +1711,11 @@ int faf_execute_split_f64(const faf_transform *t,
                 __asm__ volatile("" ::: "memory");
                 break;
             case FAF_FFT_STAGE: {
-                size_t radix = inst->a0;
-                size_t stride = inst->a1;
-                size_t tw_step = inst->a2;
-                size_t half = radix / 2;
-                size_t ngroups = t->n / (radix * stride);
-                for (size_t g = 0; g < ngroups; g++) {
-                    size_t gbase = g * radix * stride;
-                    for (size_t r = 0; r < half; r++) {
-                        size_t idx1 = gbase + r * stride;
-                        size_t idx2 = idx1 + half * stride;
-                        if (idx1 < t->n && idx2 < t->n) {
-                            double ar = regs_re[idx1], ai = regs_im[idx1];
-                            double br = regs_re[idx2], bi = regs_im[idx2];
-                            size_t tw_idx = r * tw_step;
-                            if (tw && tw_idx < t->twiddle_sizes[0]) {
-                                double wr = tw[tw_idx * 2];
-                                double wi = tw[tw_idx * 2 + 1];
-                                double tw_re = br * wr - bi * wi;
-                                double tw_im = br * wi + bi * wr;
-                                regs_re[idx1] = ar + tw_re; regs_im[idx1] = ai + tw_im;
-                                regs_re[idx2] = ar - tw_re; regs_im[idx2] = ai - tw_im;
-                            } else {
-                                regs_re[idx1] = ar + br; regs_im[idx1] = ai + bi;
-                                regs_re[idx2] = ar - br; regs_im[idx2] = ai - bi;
-                            }
-                        }
-                    }
-                }
+                int inverse = (t->cfg.dir == FAF_DIR_INVERSE) ||
+                              (t->flags & FAF_FLAG_INVERSE);
+                faf_fft_stage_split_f64(regs_re, regs_im, t->n, inst->a0,
+                                        inst->a1, inst->a2, tw,
+                                        t->twiddle_sizes[0], inverse);
                 break;
             }
             case FAF_DCT_STAGE: {

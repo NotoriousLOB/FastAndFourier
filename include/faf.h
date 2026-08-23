@@ -268,6 +268,29 @@ int faf_execute_split_f64(const faf_transform *t,
 /* Utility */
 size_t dsir_next_power_of_2(size_t n);
 int faf_is_power_of_2(size_t n);
+int faf_is_5_smooth(size_t n);
+size_t faf_next_5_smooth(size_t min);
+int faf_factor_5smooth(size_t n, int *factors, int *n_factors);
+size_t faf_digit_reverse(size_t i, const int *factors, int n_factors);
+void faf_digitrev_split_f32(float *re, float *im, size_t n);
+void faf_digitrev_split_f64(double *re, double *im, size_t n);
+void faf_gen_twiddles_full_f32(float *tw, size_t n, bool inverse);
+void faf_gen_twiddles_full_f64(double *tw, size_t n, bool inverse);
+
+/* Mixed-radix FFT stage (a1 = 3/4/5; a1==1 is the legacy radix-2 path) */
+void faf_fft_stage_split_f32(float *re, float *im, size_t n,
+                             uint32_t a0, uint32_t a1, uint32_t a2,
+                             const float *tw, size_t ntw, int inverse);
+void faf_fft_stage_split_f64(double *re, double *im, size_t n,
+                             uint32_t a0, uint32_t a1, uint32_t a2,
+                             const double *tw, size_t ntw, int inverse);
+void faf_fft_stage_interleaved_f32(float *regs, size_t n,
+                                   uint32_t a0, uint32_t a1, uint32_t a2,
+                                   const float *tw, size_t ntw, int inverse);
+void faf_fft_stage_interleaved_f64(double *regs, size_t n,
+                                   uint32_t a0, uint32_t a1, uint32_t a2,
+                                   const double *tw, size_t ntw, int inverse);
+
 void faf_bit_reverse_permute_f32(float *data, size_t n);
 void faf_bit_reverse_permute_f64(double *data, size_t n);
 

@@ -28,6 +28,7 @@ set(TEST_SOURCES
     test_rfft.cpp
     test_spectral.cpp
     test_layout.cpp
+    test_mixed_radix.cpp
 )
 
 # Architecture-specific tests

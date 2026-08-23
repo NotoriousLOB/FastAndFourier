@@ -145,8 +145,45 @@ void faf_gen_fft_radix4(faf_transform *t, size_t n, bool inverse) {
  * Combines different radices for optimal performance
  */
 void faf_gen_fft_mixed(faf_transform *t, size_t n, bool inverse) {
-    /* For now, fall back to radix-2 */
-    faf_gen_fft_radix2(t, n, inverse);
+    int fac[16], nf = 0;
+    if (n == 0 || faf_factor_5smooth(n, fac, &nf) != 0) {
+        t->code = NULL;
+        return;
+    }
+
+    t->code = calloc(MAX_INST, sizeof(faf_inst));
+    if (!t->code) return;
+
+    if (t->precision == FAF_PREC_FP64) {
+        t->twiddles[0] = malloc(n * 2 * sizeof(double));
+        if (!t->twiddles[0]) { free(t->code); t->code = NULL; return; }
+        faf_gen_twiddles_full_f64((double *)t->twiddles[0], n, inverse);
+    } else {
+        t->twiddles[0] = malloc(n * 2 * sizeof(float));
+        if (!t->twiddles[0]) { free(t->code); t->code = NULL; return; }
+        faf_gen_twiddles_full_f32((float *)t->twiddles[0], n, inverse);
+    }
+    t->twiddle_sizes[0] = n;
+
+    size_t idx = 0;
+    for (size_t i = 0; i < n; i++) {
+        size_t j = faf_digit_reverse(i, fac, nf);
+        idx = add_inst(t, idx, FAF_LOAD, (uint32_t)i, (uint32_t)j, 0);
+    }
+
+    size_t group = 1;
+    for (int k = 0; k < nf; k++) {
+        int r = fac[k];
+        group *= (size_t)r;
+        uint32_t a1 = (r == 2) ? 1u : (uint32_t)r;
+        uint32_t tw_step = (uint32_t)(n / group);
+        idx = add_inst(t, idx, FAF_FFT_STAGE, (uint32_t)group, a1, tw_step);
+    }
+
+    for (size_t i = 0; i < n; i++)
+        idx = add_inst(t, idx, FAF_STORE, (uint32_t)i, (uint32_t)i, 0);
+    idx = add_inst(t, idx, FAF_END, 0, 0, 0);
+    t->n_inst = idx;
 }
 
 /**
