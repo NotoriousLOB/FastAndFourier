@@ -7,10 +7,10 @@
  * - JIT compilation to native code
  * - Multi-architecture vectorization (x86_64, aarch64, CUDA)
  * - Multiple precision levels (FP8, FP16, FP32, FP64)
- * - Comprehensive transform support (FFT, DCT, DST, STFT, MDCT, Wavelets)
+ * - Comprehensive transform support (FFT, DCT, DST, STFT, MDCT, DWT, CWT)
  * 
- * @version 1.0.0
- * @author FastAndFourier Team
+ * @version 1.1.0
+ * @author adri4n <yo@adri4n.net>
  * @license MIT
  */
 
@@ -23,6 +23,7 @@ extern "C" {
 
 #include <stdint.h>
 #include <stddef.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
@@ -42,9 +43,9 @@ extern "C" {
 
 /* Version information */
 #define FASTANDFOURIER_VERSION_MAJOR 1
-#define FASTANDFOURIER_VERSION_MINOR 0
+#define FASTANDFOURIER_VERSION_MINOR 1
 #define FASTANDFOURIER_VERSION_PATCH 0
-#define FASTANDFOURIER_VERSION_STRING "1.0.0"
+#define FASTANDFOURIER_VERSION_STRING "1.1.0"
 
 /* Public utility macros */
 #define FAF_GET_OP(packed)      ((uint8_t)((packed) & 0xFF))
@@ -148,6 +149,8 @@ typedef enum {
     FAF_TRANSFORM_CDF97,     /**< Cohen-Daubechies-Feauveau 9/7 Wavelet */
     FAF_TRANSFORM_SYM4,      /**< Symlet-4 Wavelet */
     FAF_TRANSFORM_PIPELINE,  /**< Chirp fused pipeline (R2C → C → C2R) */
+    FAF_TRANSFORM_CWT,      /**< Continuous Wavelet Transform (filter bank) */
+    FAF_TRANSFORM_ICWT       /**< Inverse CWT (dual-frame or L1) */
 } faf_transform_type;
 
 /**
@@ -168,6 +171,62 @@ typedef enum {
 /** FAF_THRESHOLD.a0 */
 #define FAF_THRESH_HARD  0u
 #define FAF_THRESH_SOFT  1u
+
+/* --- CWT FILTER BANK TYPES --- */
+
+/**
+ * @brief Analytic wavelet prototype for the CWT filter bank
+ *
+ * All families are strictly analytic (zero for ω ≤ 0), zero-mean, and
+ * peak-normalized in the frequency domain. Morse with (β, γ) = (20, 3)
+ * is the default: MATLAB `cwtfilterbank` TimeBandwidth=60, P² = βγ.
+ */
+typedef enum {
+    FAF_CWT_WAVELET_MORLET  = 0, /**< Analytic Morlet, zero-mean correction */
+    FAF_CWT_WAVELET_MORSE   = 1, /**< Generalized Morse (default) */
+    FAF_CWT_WAVELET_BUMP    = 2, /**< Compact-support bump */
+    FAF_CWT_WAVELET_SHANNON = 3, /**< Ideal one-octave bandpass */
+    FAF_CWT_WAVELET_MEYER   = 4  /**< Zero-phase analytic Meyer */
+} faf_cwt_wavelet;
+
+/**
+ * @brief Per-scale filter normalization (not cosmetic)
+ *
+ * L1 dilation (ψ̂_s(ξ) = ψ̂(sξ)) preserves sinusoid amplitude across scales
+ * and is the default for scalograms and the one-integral inverse.
+ * L2 energy-corrects so the Littlewood-Paley sum is ≈ 1 (Plancherel).
+ * Bandpass sets each peak to `bandpass_peak` (MATLAB-style display gain).
+ * Dual-frame inversion uses the live analysis filters, so it is valid
+ * for every kind.
+ */
+typedef enum {
+    FAF_CWT_NORM_L1       = 0, /**< Amplitude-preserving L1 dilation (default) */
+    FAF_CWT_NORM_L2       = 1, /**< Energy-corrected; LP sum ≈ 1 */
+    FAF_CWT_NORM_BANDPASS = 2  /**< Peak = bandpass_peak (default 2) */
+} faf_cwt_norm_kind;
+
+typedef enum {
+    FAF_CWT_SCALE_GEOMETRIC = 0, /**< Constant-Q, 2^{1/voices} (default) */
+    FAF_CWT_SCALE_LINEAR    = 1  /**< Linear Hz; does not tile, needs ALLOW_UNTILED */
+} faf_cwt_scale_kind;
+
+typedef enum {
+    FAF_CWT_CENTER_PEAK   = 0, /**< Scale from prototype peak frequency */
+    FAF_CWT_CENTER_ENERGY = 1  /**< Scale from energy centroid of |ψ̂|² */
+} faf_cwt_center_kind;
+
+typedef enum {
+    FAF_CWT_INV_DUAL = 0, /**< Dual-frame (exact to FP noise when LP-certified) */
+    FAF_CWT_INV_L1   = 1  /**< Calderón one-integral; L1 banks only, approximate */
+} faf_cwt_inverse_kind;
+
+#define FAF_CWT_FLAG_INCLUDE_LOWPASS  0x0001u /**< Residual φ fills the DC hole (default) */
+#define FAF_CWT_FLAG_ALLOW_UNTILED    0x0002u /**< Create even if LP certification fails */
+#define FAF_CWT_FLAG_VALIDATE_STRICT  0x0020u /**< Fail create on LP/wrap failure (default) */
+/* Reserved; ignored in 1.1.0 (SSQ / alternative output layouts). */
+#define FAF_CWT_FLAG_FIXED_LOWPASS    0x0004u
+#define FAF_CWT_FLAG_KEEP_SPECTRUM    0x0008u
+#define FAF_CWT_FLAG_REAL_OUTPUT      0x0010u
 
 /**
  * @brief Buffer / spectrum layout
@@ -205,6 +264,65 @@ typedef enum {
     FAF_BACKEND_VM,
     FAF_BACKEND_JIT
 } faf_backend;
+
+/**
+ * @brief Create-time configuration for `faf_create_cwt` / `faf_create_icwt`
+ *
+ * Use `faf_cwt_config_init(n)` rather than memset: Morse (β, γ) = (20, 3),
+ * L1 norm, geometric scales, 10 voices, residual lowpass, strict LP checks.
+ * `n` must be even and 5-smooth. `fmin`/`fmax` ≤ 0 select automatic bounds
+ * that stay off Nyquist and cap the coarsest scale.
+ */
+typedef struct faf_cwt_config {
+    size_t              n;             /**< Signal length (even, 5-smooth) */
+    double              fs;            /**< Sample rate (default 1) */
+    faf_precision       precision;     /**< FP32 or FP64 */
+    faf_backend         backend;       /**< Inner RFFT backend */
+    faf_cwt_wavelet     wavelet;
+    faf_cwt_norm_kind   norm;
+    faf_cwt_scale_kind  scale_kind;
+    faf_cwt_center_kind center_kind;
+    unsigned            voices;        /**< Voices per octave (geometric) */
+    double              fmin;          /**< Lowest center frequency; 0 = auto */
+    double              fmax;          /**< Highest center frequency; 0 = auto */
+    double              morlet_mu;     /**< Morlet carrier (default 6) */
+    double              morse_gamma;   /**< Morse γ (default 3) */
+    double              morse_beta;    /**< Morse β (default 20, so P² = 60) */
+    double              bump_center;
+    double              bump_width;
+    double              bandpass_peak; /**< Peak gain for BANDPASS (default 2) */
+    double              lp_alpha;      /**< Max |A−1| allowed on the certified band */
+    double              lp_beta;       /**< Mean |A−1| allowed on the certified band */
+    double              lp_floor;      /**< Relative floor used to find the certified band */
+    uint32_t            flags;         /**< FAF_CWT_FLAG_* */
+} faf_cwt_config;
+
+/**
+ * @brief Littlewood-Paley report, filled at bank creation
+ *
+ * `A[k] = |φ[k]|² + Σ_j |Ψ_L2[j,k]|²` on the packed Hermitian grid.
+ * Tightness is `frame_cond = max_A / min_A` on `[k_lo, k_hi]`.
+ * The `A` pointer is owned by the transform; it is valid until destroy.
+ */
+typedef struct faf_cwt_lp_report {
+    size_t  n;
+    size_t  n_bins;
+    size_t  n_scales;
+    int     has_lowpass;
+    int     passed;
+    double  alpha, beta;
+    double  max_abs_dev;
+    double  mean_abs_dev;
+    double  min_A, max_A;
+    double  frame_cond;      /**< max_A / min_A on the certified band */
+    size_t  k_lo, k_hi;
+    size_t  hole_bins_dc;
+    size_t  hole_bins_nyq;
+    double  max_dc_wavelet;
+    double  max_wrap_energy; /**< Energy near t = n/2 of the coarsest kernel */
+    double  admissibility_C; /**< ∫ ψ̂(ω)/ω dω, for the L1 one-integral inverse */
+    const double *A;
+} faf_cwt_lp_report;
 
 /**
  * @brief Shared create-time configuration
@@ -395,14 +513,17 @@ const char* faf_arch_name(void);
  * @note Use faf_aligned_free() to free memory allocated by this function
  */
 static inline void* faf_aligned_alloc(size_t size) {
+    if (size == 0) return NULL;
+    /* C11 aligned_alloc requires size to be a multiple of the alignment. */
+    size_t aligned_size = (size + (size_t)63) & ~(size_t)63;
 #if defined(_WIN32)
-    return _aligned_malloc(size, 64);
+    return _aligned_malloc(aligned_size, 64);
 #elif defined(__APPLE__) || defined(__FreeBSD__)
     void* ptr = NULL;
-    if (posix_memalign(&ptr, 64, size) != 0) return NULL;
+    if (posix_memalign(&ptr, 64, aligned_size) != 0) return NULL;
     return ptr;
 #else
-    return aligned_alloc(64, size);
+    return aligned_alloc(64, aligned_size);
 #endif
 }
 
@@ -581,6 +702,57 @@ int faf_wavelet_taps(faf_wavelet_family family);
  * @return 0 on success
  */
 int faf_wavelet_from_name(const char *name, faf_wavelet_family *out);
+
+/* --- CWT FILTER BANK --- */
+
+/**
+ * @brief Zero a CWT config and fill Morse / L1 / geometric defaults
+ */
+faf_cwt_config faf_cwt_config_init(size_t n);
+
+/**
+ * @brief Create a CWT analysis transform
+ *
+ * Forward execute: REAL x[n] → REAL W[n_rows · n], row-major, row 0 is
+ * the residual lowpass (if enabled), then coarse → fine wavelet scales.
+ * @return Transform or NULL (see `faf_get_error`)
+ */
+faf_transform* faf_create_cwt(const faf_cwt_config *cfg);
+
+/**
+ * @brief Create a CWT inverse transform from a config
+ *
+ * Dual-frame inverse is valid for every analysis norm. L1 one-integral
+ * inverse requires `cfg->norm == FAF_CWT_NORM_L1`. Prefer
+ * `faf_create_inverse(fwd)` to inherit the forward bank's resolved config.
+ */
+faf_transform* faf_create_icwt(const faf_cwt_config *cfg, faf_cwt_inverse_kind kind);
+
+const faf_cwt_lp_report* faf_cwt_bank_report(const faf_transform *t);
+size_t faf_cwt_n_scales(const faf_transform *t);
+size_t faf_cwt_n_rows(const faf_transform *t);
+size_t faf_cwt_n_bins(const faf_transform *t); /**< Packed Hermitian length n/2+1 */
+int faf_cwt_has_lowpass(const faf_transform *t);
+
+/**
+ * @brief Copy up to `cap` center frequencies (Hz) or scales
+ * @return Number of values written, or -1 on error
+ */
+int faf_cwt_freqs(const faf_transform *t, double *hz, size_t cap);
+int faf_cwt_scales(const faf_transform *t, double *s, size_t cap);
+void faf_cwt_report_fprint(FILE *fp, const faf_cwt_lp_report *r);
+
+/**
+ * @brief Frequency-domain wavelet row (packed Hermitian, length `n/2+1`)
+ *
+ * `scale_index` is 0 = coarsest wavelet, not counting the lowpass row.
+ * The pointer is valid until `faf_destroy_transform`. Do not stride
+ * between scales with `n/2+1`; rows are internally padded.
+ */
+const float  *faf_cwt_psi_f32(const faf_transform *t, size_t scale_index);
+const double *faf_cwt_psi_f64(const faf_transform *t, size_t scale_index);
+const float  *faf_cwt_phi_f32(const faf_transform *t);
+const double *faf_cwt_phi_f64(const faf_transform *t);
 
 /**
  * @brief Destroy a transform and free resources

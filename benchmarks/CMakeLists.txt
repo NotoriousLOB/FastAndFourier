@@ -98,6 +98,7 @@ set(BENCHMARK_SOURCES
     benchmark_transforms.cpp
     benchmark_throughput.cpp
     benchmark_chirp.cpp
+    benchmark_cwt.cpp
 )
 
 if(ENABLE_EXTERNAL_BENCHMARKS)

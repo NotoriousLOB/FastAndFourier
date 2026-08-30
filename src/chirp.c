@@ -11,7 +11,7 @@
  *     (custom softmax)
  *     reduce-sum)
  * 
- * @version 1.0.0
+ * @version 1.1.0
  */
 
 #include "chirp.h"
@@ -89,6 +89,8 @@ typedef enum {
     CHIRP_NODE_DWT,        /* (dwt :family haar :size N :levels L) */
     CHIRP_NODE_IDWT,       /* (idwt ...) */
     CHIRP_NODE_THRESHOLD,  /* (threshold :mode soft :lambda x) */
+    CHIRP_NODE_CWT,        /* (cwt :n N :wavelet morse ...) */
+    CHIRP_NODE_ICWT,       /* (icwt :n N ...) */
     CHIRP_NODE_LITERAL,    /* number or symbol */
     CHIRP_NODE_LIST        /* generic list */
 } chirp_node_type;
@@ -649,6 +651,10 @@ static chirp_node* chirp_parse_expr(chirp_lexer *lex) {
                 node = chirp_node_new(CHIRP_NODE_IDWT);
             } else if (strcmp(op.text, "threshold") == 0) {
                 node = chirp_node_new(CHIRP_NODE_THRESHOLD);
+            } else if (strcmp(op.text, "cwt") == 0) {
+                node = chirp_node_new(CHIRP_NODE_CWT);
+            } else if (strcmp(op.text, "icwt") == 0) {
+                node = chirp_node_new(CHIRP_NODE_ICWT);
             } else {
                 node = chirp_node_new(CHIRP_NODE_LIST);
                 node->sym = strdup(op.text);
@@ -1217,6 +1223,118 @@ static faf_transform *chirp_compile_rfft_node(chirp_node *node) {
     return faf_create_rfft(&c);
 }
 
+static faf_transform *chirp_compile_cwt_node(chirp_node *node) {
+    size_t n = 0;
+    chirp_node *n_node = chirp_node_get_kwarg(node, "n");
+    if (!n_node) n_node = chirp_node_get_kwarg(node, "size");
+    if (n_node) n = (size_t)chirp_node_int(n_node, 0);
+    if (n == 0) {
+        faf_set_error("Chirp: (cwt) requires :n");
+        return NULL;
+    }
+
+    faf_cwt_config cfg = faf_cwt_config_init(n);
+
+    chirp_node *fs_node = chirp_node_get_kwarg(node, "fs");
+    if (fs_node) cfg.fs = chirp_node_float(fs_node, cfg.fs);
+
+    chirp_node *wav_node = chirp_node_get_kwarg(node, "wavelet");
+    if (wav_node) {
+        const char *wname = chirp_node_name(wav_node);
+        if (wname) {
+            if (strcmp(wname, "morlet") == 0)       cfg.wavelet = FAF_CWT_WAVELET_MORLET;
+            else if (strcmp(wname, "morse") == 0)    cfg.wavelet = FAF_CWT_WAVELET_MORSE;
+            else if (strcmp(wname, "bump") == 0)     cfg.wavelet = FAF_CWT_WAVELET_BUMP;
+            else if (strcmp(wname, "shannon") == 0)  cfg.wavelet = FAF_CWT_WAVELET_SHANNON;
+            else if (strcmp(wname, "meyer") == 0)    cfg.wavelet = FAF_CWT_WAVELET_MEYER;
+            else {
+                faf_set_error("Chirp: unknown CWT wavelet '%s'", wname);
+                return NULL;
+            }
+        }
+    }
+
+    chirp_node *v_node = chirp_node_get_kwarg(node, "voices");
+    if (v_node) cfg.voices = (size_t)chirp_node_int(v_node, (int)cfg.voices);
+
+    chirp_node *fmin_node = chirp_node_get_kwarg(node, "fmin");
+    if (fmin_node) cfg.fmin = chirp_node_float(fmin_node, cfg.fmin);
+
+    chirp_node *fmax_node = chirp_node_get_kwarg(node, "fmax");
+    if (fmax_node) cfg.fmax = chirp_node_float(fmax_node, cfg.fmax);
+
+    chirp_node *gamma_node = chirp_node_get_kwarg(node, "gamma");
+    if (gamma_node) cfg.morse_gamma = chirp_node_float(gamma_node, cfg.morse_gamma);
+
+    chirp_node *beta_node = chirp_node_get_kwarg(node, "beta");
+    if (beta_node) cfg.morse_beta = chirp_node_float(beta_node, cfg.morse_beta);
+
+    chirp_node *mu_node = chirp_node_get_kwarg(node, "mu");
+    if (mu_node) cfg.morlet_mu = chirp_node_float(mu_node, cfg.morlet_mu);
+
+    chirp_node *norm_node = chirp_node_get_kwarg(node, "norm");
+    if (norm_node) {
+        const char *nname = chirp_node_name(norm_node);
+        if (nname) {
+            if (strcmp(nname, "l1") == 0)            cfg.norm = FAF_CWT_NORM_L1;
+            else if (strcmp(nname, "l2") == 0)       cfg.norm = FAF_CWT_NORM_L2;
+            else if (strcmp(nname, "bandpass") == 0)  cfg.norm = FAF_CWT_NORM_BANDPASS;
+            else {
+                faf_set_error("Chirp: unknown CWT norm '%s'", nname);
+                return NULL;
+            }
+        }
+    }
+
+    chirp_node *prec_node = chirp_node_get_kwarg(node, "precision");
+    if (prec_node) {
+        const char *pname = chirp_node_name(prec_node);
+        if (pname) {
+            if (strcmp(pname, "f32") == 0)       cfg.precision = FAF_PREC_FP32;
+            else if (strcmp(pname, "f64") == 0)  cfg.precision = FAF_PREC_FP64;
+            else {
+                faf_set_error("Chirp: CWT only supports f32/f64 precision");
+                return NULL;
+            }
+        }
+    }
+
+    chirp_node *lp_node = chirp_node_get_kwarg(node, "lowpass");
+    if (lp_node) {
+        const char *lpname = chirp_node_name(lp_node);
+        if (lpname && strcmp(lpname, "off") == 0)
+            cfg.flags &= ~FAF_CWT_FLAG_INCLUDE_LOWPASS;
+        else
+            cfg.flags |= FAF_CWT_FLAG_INCLUDE_LOWPASS;
+    }
+
+    chirp_node *ut_node = chirp_node_get_kwarg(node, "allow-untiled");
+    if (ut_node) cfg.flags |= FAF_CWT_FLAG_ALLOW_UNTILED;
+
+    if (node->type == CHIRP_NODE_ICWT) {
+        faf_cwt_inverse_kind kind = FAF_CWT_INV_DUAL;
+        chirp_node *inv_node = chirp_node_get_kwarg(node, "inverse");
+        if (inv_node) {
+            const char *iname = chirp_node_name(inv_node);
+            if (iname && strcmp(iname, "l1") == 0) kind = FAF_CWT_INV_L1;
+        }
+        return faf_create_icwt(&cfg, kind);
+    }
+
+    return faf_create_cwt(&cfg);
+}
+
+static int chirp_ast_has_cwt(const chirp_node *n) {
+    if (!n) return 0;
+    if (n->type == CHIRP_NODE_CWT || n->type == CHIRP_NODE_ICWT)
+        return 1;
+    for (int i = 0; i < n->n_children; i++) {
+        if (chirp_ast_has_cwt(n->children[i]))
+            return 1;
+    }
+    return 0;
+}
+
 static int chirp_node_is_spectral_op(chirp_node *n) {
     if (!n) return 0;
     if (n->type == CHIRP_NODE_SPECTRAL || n->type == CHIRP_NODE_BANDPASS ||
@@ -1429,7 +1547,20 @@ faf_transform* chirp_compile(const char *source) {
         chirp_node_free(ast);
         return NULL;
     }
-    
+
+    /* Standalone (cwt)/(icwt) — not composable in pipelines. */
+    if (ast->type == CHIRP_NODE_CWT || ast->type == CHIRP_NODE_ICWT) {
+        faf_transform *ct = chirp_compile_cwt_node(ast);
+        chirp_node_free(ast);
+        return ct;
+    }
+    if (chirp_ast_has_cwt(ast)) {
+        faf_set_error("Chirp: (cwt)/(icwt) must be standalone; "
+                      "they cannot appear inside a pipeline");
+        chirp_node_free(ast);
+        return NULL;
+    }
+
     /* Create transform */
     faf_transform *t = calloc(1, sizeof(faf_transform));
     t->precision = FAF_PREC_FP32;

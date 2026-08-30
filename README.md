@@ -19,17 +19,17 @@
 
 That is a complete program. `chirp_compile` turns it into a `faf_transform *`; `faf_execute` runs it real-in, real-out. There is no planner object to manage and no bytecode to assemble by hand. You describe the pipeline, you get a pointer.
 
-The honest way to evaluate a library is the way you would evaluate a model: what does it do, what does it cost, and where does it break. Here are the answers, in that order.
+The honest way to evaluate a library is the way you would evaluate a ride: what can it do, what does it cost, and where does it break. Here are the answers, in that order.
 
 ---
 
 ## What it does
 
-- **A scripting language, not just an API.** Chirp is built into the library: S-expressions with Smalltalk-style keyword arguments, 140+ registered builtins (windows, distributions, activations, vector statistics), and a registry for your own C functions. A denoiser is three lines; a matched filter is one expression and one `chirp_bind`.
+- **Scripting.** Chirp is built into the library: S-expressions with Smalltalk-style keyword arguments, 140+ registered builtins (windows, distributions, activations, vector statistics), and a registry for your own C functions. A denoiser is three lines; a matched filter is one expression and one `chirp_bind`.
 
 - **A real JIT.** The IR is lowered to C, handed to the system compiler, and linked back in at runtime with AVX2/AVX-512/NEON intrinsics where the hardware allows. Compilation is cached on the transform object (thread-safe, pay once), with an on-disk cache across process runs.
 
-- **The whole family.** FFT (complex and real-input), DCT and DST types I–IV, STFT, MDCT, and five wavelet families — Haar, Daubechies-4, CDF 5/3, CDF 9/7, Symlet-4 — forward and inverse, all from one config struct and one execute call.
+- **The whole family.** FFT (complex and real-input), DCT and DST types I–IV, STFT, MDCT, CWT/CQT filter bank, and five DWT wavelet families — Haar, Daubechies-4, CDF 5/3, CDF 9/7, Symlet-4 — forward and inverse, all from one config struct and one execute call.
 
 - **Explicit data contracts.** Split-plane, Hermitian-packed, interleaved, and real layouts; NumPy-style, ortho, forward-scaled, and JPEG 2000 normalization conventions. The library never silently converts a layout for you. If a buffer does not match the transform, you get an error, not a wrong answer.
 
@@ -43,11 +43,21 @@ The honest way to evaluate a library is the way you would evaluate a model: what
 
 ## Where it breaks
 
-If your problem is "the fastest possible FFT of a fixed size, plan reused for years," the correct answer is FFTW3 with `FFTW_MEASURE`. It wins on this machine at nearly every size, and we publish our own numbers saying so — see [Quarter-mile times](#quarter-mile-times). You do not race the reigning champion at the light and then pretend you won.
+If your problem is "the fastest possible FFT of a fixed size, plan reused for years," the correct answer is FFTW3 with `FFTW_MEASURE`. It wins on this machine at nearly every size, and we publish our own numbers saying so (see [Quarter-mile times](#quarter-mile-times)). We're not here to race the reigning champion at the light.
 
-The case for FastAndFourier is different: you want transforms you can *compose, script, and embed* — a filter chain described in a config file, a wavelet denoiser tuned without recompiling, a spectral pipeline that fuses R2C → pointwise C → C2R into one kernel. That is the trade we make, and we make it openly.
+The case for FastAndFourier is different: you want transforms you can *compose, script, and embed* — a filter chain described in a config file, a wavelet denoiser tuned without recompiling, a spectral pipeline that fuses R2C → pointwise C → C2R into one kernel. That is the trade-off we make, and we make it openly.
 
 ---
+
+## What's new in 1.1.0
+
+- **CWT / CQT filter bank.** `faf_create_cwt` builds an analytic, zero-phase,
+  geometrically spaced bank (Morse default, MATLAB TimeBandwidth=60), certifies
+  the Littlewood–Paley sum, and refuses to ship a bank that does not tile.
+  Dual-frame inversion via `faf_create_inverse` reconstructs; an L1
+  one-integral inverse is there when you want Calderón instead of a dual.
+  Details, and the theorem the checks are special cases of, in
+  [docs/CWT.md](docs/CWT.md). Chirp: `(cwt :n 4096 :wavelet morse)`.
 
 ## What's new in 1.0.0
 
@@ -256,6 +266,7 @@ chirp_bind(corr, "H", Hr, Hi, nb);   /* conjugate Hi first to correlate */
 | CDF 5/3 | Yes | Yes | power of 2 | JPEG 2000 lossless |
 | CDF 9/7 | Yes | Yes | power of 2 | JPEG 2000 lossy |
 | Symlet-4 | Yes | Yes | power of 2 | 8-tap orthonormal |
+| CWT (filter bank) | Yes | Yes | even, 5-smooth | Fourier-domain CQT, LP-certified, [docs/CWT.md](docs/CWT.md) |
 
 All of the above, plus fused pipelines, run through the same 34-opcode IR. Adding a transform means adding opcodes, not forking the engine.
 
@@ -358,7 +369,7 @@ Release builds use `-O3 -march=native -ffast-math -funroll-loops`; the CMake con
 | x86_64 | Yes | Yes | Yes | — | — | Experimental |
 | AArch64 | — | — | — | Yes | Yes | — |
 
-A word on the CUDA backend: it is behind `-DENABLE_CUDA=ON` and is not yet the fast line on this track. Too soon, junior — the CPU paths are where the development miles have gone for 1.0.0.
+A word on the CUDA backend: it is behind `-DENABLE_CUDA=ON` and is not yet the fast line on this track. The CPU paths are where the development miles have gone for 1.1.0.
 
 ---
 

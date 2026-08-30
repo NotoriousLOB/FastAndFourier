@@ -29,6 +29,8 @@ set(TEST_SOURCES
     test_spectral.cpp
     test_layout.cpp
     test_mixed_radix.cpp
+    test_cwt.cpp
+    test_cwt_lp.cpp
 )
 
 # Architecture-specific tests

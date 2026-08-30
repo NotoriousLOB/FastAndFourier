@@ -5,7 +5,7 @@
  * A comprehensive library of mathematical functions, distributions,
  * and DSP primitives for the Chirp DSL.
  *
- * @version 1.0.0
+ * @version 1.1.0
  */
 
 /* Enable POSIX/XOPEN extensions for Bessel functions (j0f, j1f, y0f, y1f) */

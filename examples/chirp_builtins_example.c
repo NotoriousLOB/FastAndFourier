@@ -34,7 +34,7 @@ static void print_section(const char *title) {
 
 int main(void) {
     printf("╔════════════════════════════════════════════════════════════════╗\n");
-    printf("║      CHIRP BUILTINS - THE FULL TOOLBOX (v1.0.0)                ║\n");
+    printf("║      CHIRP BUILTINS - THE FULL TOOLBOX (v1.1.0)                ║\n");
     printf("║      \"You want functions? We got functions.\"                   ║\n");
     printf("╚════════════════════════════════════════════════════════════════╝\n");
     

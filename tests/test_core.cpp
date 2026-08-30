@@ -16,7 +16,7 @@
 TEST(CoreTest, Version) {
     const char* version = faf_version();
     EXPECT_NE(version, nullptr);
-    EXPECT_STREQ(version, "1.0.0");
+    EXPECT_STREQ(version, "1.1.0");
 }
 
 /* Test architecture detection */
