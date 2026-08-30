@@ -5,7 +5,7 @@
  * Provides a comprehensive library of mathematical functions, distributions,
  * and DSP primitives that can be called from Chirp programs.
  * 
- * @version 1.0.0
+ * @version 1.1.0
  */
 
 #ifndef CHIRP_BUILTINS_H

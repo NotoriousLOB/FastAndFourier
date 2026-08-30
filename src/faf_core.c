@@ -4,6 +4,7 @@
  */
 
 #include "faf.h"
+#include "faf_cwt.h"
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -227,6 +228,8 @@ const char* faf_transform_name(faf_transform_type type) {
         case FAF_TRANSFORM_CDF97:        return "cdf97";
         case FAF_TRANSFORM_SYM4:         return "sym4";
         case FAF_TRANSFORM_PIPELINE:     return "pipeline";
+        case FAF_TRANSFORM_CWT:          return "cwt";
+        case FAF_TRANSFORM_ICWT:         return "icwt";
         default: return "unknown";
     }
 }
@@ -310,6 +313,8 @@ bool faf_is_size_supported(faf_transform_type type, size_t n) {
             return faf_is_power_of_2(n);
         case FAF_TRANSFORM_RFFT:
         case FAF_TRANSFORM_IRFFT:
+        case FAF_TRANSFORM_CWT:
+        case FAF_TRANSFORM_ICWT:
             return faf_is_5_smooth(n) && (n % 2u) == 0 && n >= 2;
         case FAF_TRANSFORM_DCT_I:
             return n >= 2;
@@ -331,9 +336,11 @@ bool faf_is_size_supported(faf_transform_type type, size_t n) {
 
 size_t faf_get_recommended_size(faf_transform_type type, size_t min_size) {
     if (type == FAF_TRANSFORM_FFT || type == FAF_TRANSFORM_IFFT ||
-        type == FAF_TRANSFORM_RFFT || type == FAF_TRANSFORM_IRFFT) {
+        type == FAF_TRANSFORM_RFFT || type == FAF_TRANSFORM_IRFFT ||
+        type == FAF_TRANSFORM_CWT || type == FAF_TRANSFORM_ICWT) {
         size_t n = faf_next_5_smooth(min_size);
-        if (type == FAF_TRANSFORM_RFFT || type == FAF_TRANSFORM_IRFFT) {
+        if (type == FAF_TRANSFORM_RFFT || type == FAF_TRANSFORM_IRFFT ||
+            type == FAF_TRANSFORM_CWT || type == FAF_TRANSFORM_ICWT) {
             if (n < 2) n = 2;
             if ((n % 2u) != 0) n = faf_next_5_smooth(n + 1);
         }
@@ -736,6 +743,10 @@ faf_transform* faf_create(faf_transform_type type, const faf_config *cfg) {
             /* fall through */
         case FAF_TRANSFORM_RFFT:
             return faf_create_rfft(&c);
+        case FAF_TRANSFORM_CWT:
+        case FAF_TRANSFORM_ICWT:
+            set_error("CWT: use faf_create_cwt / faf_create_icwt");
+            return NULL;
         default:
             set_error("Unknown transform type %d", (int)type);
             return NULL;
@@ -781,6 +792,11 @@ faf_transform* faf_create_inverse(const faf_transform *fwd) {
         case FAF_TRANSFORM_RFFT:
         case FAF_TRANSFORM_IRFFT:
             return faf_create_rfft(&c);
+        case FAF_TRANSFORM_CWT: {
+            const faf_cwt_bank *bank = (const faf_cwt_bank *)fwd->user_aux;
+            if (!bank) { set_error("faf_create_inverse: CWT has no bank"); return NULL; }
+            return faf_create_icwt(&bank->cfg, FAF_CWT_INV_DUAL);
+        }
         default:
             set_error("faf_create_inverse: unsupported type %s",
                       faf_transform_name(fwd->type));
@@ -790,6 +806,16 @@ faf_transform* faf_create_inverse(const faf_transform *fwd) {
 
 void faf_destroy_transform(faf_transform *t) {
     if (!t) return;
+
+    if ((t->type == FAF_TRANSFORM_CWT || t->type == FAF_TRANSFORM_ICWT) && t->user_aux) {
+        faf_cwt_bank *bank = (faf_cwt_bank *)t->user_aux;
+        if (bank->bank_owned) {
+            t->inner = NULL;
+            t->inner_inv = NULL;
+            faf_cwt_bank_destroy(bank);
+        }
+        t->user_aux = NULL;
+    }
 
     if (t->inner) {
         faf_destroy_transform(t->inner);
@@ -926,6 +952,11 @@ int faf_execute(const faf_transform *t, faf_buffer *out, const faf_buffer *in) {
         if (rret != 0) return rret;
         return apply_fft_norm(t, out);
     }
+
+    if (t->type == FAF_TRANSFORM_CWT)
+        return faf_cwt_execute(t, out, in);
+    if (t->type == FAF_TRANSFORM_ICWT)
+        return faf_icwt_execute(t, out, in);
 
     if (in->layout != t->cfg.layout || out->layout != t->cfg.layout) {
         set_error("buffer layout (%s/%s) does not match transform (%s)",

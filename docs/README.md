@@ -19,6 +19,7 @@ A high-performance Digital Signal Processing (DSP) library featuring Intermediat
   - STFT (Short-Time Fourier Transform)
   - MDCT (Modified Discrete Cosine Transform)
   - Wavelet Transforms (Haar, Daubechies-4, CDF 5/3, CDF 9/7, Symlet-4) — forward and inverse
+  - CWT / CQT filter bank (Morse, Morlet, bump, Shannon, Meyer) with Littlewood–Paley certification — see [CWT.md](CWT.md)
 
 ## Building
 

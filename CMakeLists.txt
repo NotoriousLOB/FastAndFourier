@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.18)
-project(FastAndFourier VERSION 1.0.0 LANGUAGES C CXX)
+project(FastAndFourier VERSION 1.1.0 LANGUAGES C CXX)
 
 # C Standard
 set(CMAKE_C_STANDARD 11)
@@ -197,17 +197,22 @@ set(FAF_CORE_SOURCES
     src/faf_pipeline.c
     src/chirp.c
     src/chirp_builtins.c
+    src/faf_cwt.c
+    src/faf_cwt_wavelets.c
+    src/faf_cwt_kernels.c
 )
 
 set(FAF_X86_SOURCES
     src/arch/x86/faf_x86_sse.c
     src/arch/x86/faf_x86_avx2.c
     src/arch/x86/faf_x86_avx512.c
+    src/arch/x86/faf_cwt_avx2.c
 )
 
 set(FAF_ARM_SOURCES
     src/arch/arm/faf_arm_neon.c
     src/arch/arm/faf_arm_sve.c
+    src/arch/arm/faf_cwt_neon.c
 )
 
 set(FAF_CUDA_SOURCES

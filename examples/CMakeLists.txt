@@ -19,6 +19,8 @@ set(EXAMPLES
     fft_convolve
     matched_filter
     analytic_envelope
+    cwt_filterbank
+    cwt_reconstruct
 )
 
 foreach(example ${EXAMPLES})
