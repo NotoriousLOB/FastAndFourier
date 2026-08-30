@@ -210,6 +210,49 @@ void faf_gen_dwt(faf_transform *t, faf_wavelet_family family, size_t n,
 /* One Mallat level, in-place on a packed real array of length n (n even). */
 void faf_dwt_level_f32(float *x, size_t n, faf_wavelet_family family, int inverse);
 void faf_dwt_level_f64(double *x, size_t n, faf_wavelet_family family, int inverse);
+void faf_dwt_level_conv_f32(float *x, size_t n, faf_wavelet_family family,
+                            faf_wavelet_convention conv, int inverse);
+void faf_dwt_level_conv_f64(double *x, size_t n, faf_wavelet_family family,
+                            faf_wavelet_convention conv, int inverse);
+
+/* Convention helpers */
+faf_wavelet_convention faf_convention_default(faf_wavelet_family family);
+int faf_validate_convention(faf_wavelet_family family, faf_wavelet_convention conv);
+
+/* Polyphase FIR DWT backend */
+/* work is n samples (create-time scratch). NULL → heap fallback (tests). */
+void faf_dwt_polyfir_fwd_f32(float *x, size_t n,
+                              const float *h, const float *g, int len,
+                              float *work);
+void faf_dwt_polyfir_inv_f32(float *x, size_t n,
+                              const float *ht, const float *gt, int len,
+                              float *work);
+void faf_dwt_polyfir_fwd_f64(double *x, size_t n,
+                              const double *h, const double *g, int len,
+                              double *work);
+void faf_dwt_polyfir_inv_f64(double *x, size_t n,
+                              const double *ht, const double *gt, int len,
+                              double *work);
+void faf_dwt_ref_conv_decim_f32(float *x, size_t n,
+                                 const float *h, const float *g, int len);
+void faf_dwt_ref_conv_decim_f64(double *x, size_t n,
+                                 const double *h, const double *g, int len);
+int faf_dwt_builtin_taps_f32(faf_wavelet_family fam, faf_wavelet_convention conv,
+                             float *h, float *g, int *len_hg,
+                             float *ht, float *gt, int *len_syn);
+int faf_dwt_builtin_taps_f64(faf_wavelet_family fam, faf_wavelet_convention conv,
+                             double *h, double *g, int *len_hg,
+                             double *ht, double *gt, int *len_syn);
+void faf_dwt_apply_level_f32(float *x, size_t n, const faf_transform *t,
+                             faf_wavelet_family fam,
+                             faf_wavelet_convention conv, int inverse);
+void faf_dwt_apply_level_f64(double *x, size_t n, const faf_transform *t,
+                             faf_wavelet_family fam,
+                             faf_wavelet_convention conv, int inverse);
+int faf_dwt_resolve_backend(faf_wavelet_family family,
+                            faf_wavelet_convention conv,
+                            faf_dwt_backend requested,
+                            faf_dwt_backend *out);
 void faf_threshold_band_f32(float *x, size_t start, size_t end, int mode, float lambda);
 void faf_threshold_band_f64(double *x, size_t start, size_t end, int mode, double lambda);
 
@@ -252,6 +295,11 @@ int faf_rfft_execute(const faf_transform *t, faf_buffer *out, const faf_buffer *
 /* Fused Chirp R2C → spectral C → C2R */
 int faf_pipeline_execute(const faf_transform *t, faf_buffer *out,
                          const faf_buffer *in);
+
+/* Bluestein (chirp-z) FFT — create-time scratch, no BLUESTEIN opcode. */
+int faf_fft_init_bluestein(faf_transform *t);
+int faf_bluestein_execute(const faf_transform *t, faf_buffer *out,
+                          const faf_buffer *in);
 
 /* Internal split-plane VM. Public execute is faf_execute + faf_buffer. */
 int faf_execute_split_f32(const faf_transform *t,

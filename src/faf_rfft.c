@@ -177,6 +177,11 @@ faf_transform* faf_create_rfft(const faf_config *cfg) {
         return NULL;
     }
     faf_config c = *cfg;
+    if (c.flags & FAF_FLAG_BLUESTEIN) {
+        faf_set_error("R2C does not support Bluestein in v1; use C2C with "
+                      "FAF_FLAG_BLUESTEIN on a real buffer");
+        return NULL;
+    }
     if (c.n < 2 || (c.n & 1u)) {
         faf_set_error("R2C size must be even and >= 2, got %zu", c.n);
         return NULL;

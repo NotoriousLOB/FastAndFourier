@@ -192,7 +192,9 @@ set(FAF_CORE_SOURCES
     src/faf_transforms.c
     src/faf_twiddles.c
     src/faf_wavelets.c
+    src/faf_dwt_fir.c
     src/faf_rfft.c
+    src/faf_bluestein.c
     src/faf_fft_stage.c
     src/faf_pipeline.c
     src/chirp.c

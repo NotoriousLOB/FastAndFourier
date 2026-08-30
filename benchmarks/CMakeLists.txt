@@ -59,11 +59,11 @@ if(ENABLE_EXTERNAL_BENCHMARKS)
         FetchContent_Populate(mufft)
     endif()
 
-    # Notorious FFT - header only
+    # Notorious FFT - header only (v1.0.1: inverse SIMD + Bluestein AVX fix)
     FetchContent_Declare(
         notoriousfft
         GIT_REPOSITORY https://github.com/NotoriousLOB/Notorious-FFT.git
-        GIT_TAG master
+        GIT_TAG v1.0.1
     )
     FetchContent_GetProperties(notoriousfft)
     if(NOT notoriousfft_POPULATED)

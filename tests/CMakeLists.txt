@@ -31,6 +31,10 @@ set(TEST_SOURCES
     test_mixed_radix.cpp
     test_cwt.cpp
     test_cwt_lp.cpp
+    test_inverse.cpp
+    test_conventions.cpp
+    test_dwt_backends.cpp
+    test_sizes.cpp
 )
 
 # Architecture-specific tests

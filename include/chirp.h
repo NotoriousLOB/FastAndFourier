@@ -52,6 +52,19 @@ void *chirp_builtin_ctx(int idx);
 int chirp_bind(faf_transform *t, const char *name, void *re, void *im,
                size_t n_bins);
 
+/**
+ * Register a named real vector (caller owns the data) for `(bind … :h NAME)`.
+ */
+int chirp_register_vector(const char *name, const float *data, int len);
+
+/**
+ * Register a named DWT tap set for `(dwt :taps NAME …)`.
+ * ht/gt NULL ⇒ analysis-only.
+ */
+int chirp_register_taps(const char *name,
+                        const float *h, const float *g, int len_hg,
+                        const float *ht, const float *gt, int len_syn);
+
 /* Free all registered builtin names and reset the registry */
 void chirp_cleanup(void);
 

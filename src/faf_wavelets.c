@@ -131,6 +131,86 @@ int faf_wavelet_from_name(const char *name, faf_wavelet_family *out) {
     return -1;
 }
 
+const char* faf_convention_name(faf_wavelet_convention conv) {
+    switch (conv) {
+        case FAF_CONV_UNSPEC:        return "unspec";
+        case FAF_CONV_HAAR_ORTHO:    return "haar-ortho";
+        case FAF_CONV_HAAR_LAZY:     return "haar-lazy";
+        case FAF_CONV_HAAR_MEAN:     return "haar-mean";
+        case FAF_CONV_D4_ORTHO:      return "d4-ortho";
+        case FAF_CONV_SYM4_ORTHO:    return "sym4-ortho";
+        case FAF_CONV_CDF53_INT:     return "cdf53-int";
+        case FAF_CONV_CDF53_ENERGY:  return "cdf53-energy";
+        case FAF_CONV_CDF97_JPEG:    return "cdf97-jpeg";
+        case FAF_CONV_CDF97_ORTHO:   return "cdf97-ortho";
+        case FAF_CONV_CUSTOM_PR:     return "custom-pr";
+        case FAF_CONV_ANALYSIS_ONLY: return "analysis-only";
+        default: return "unknown";
+    }
+}
+
+int faf_convention_from_name(const char *name, faf_wavelet_convention *out) {
+    if (!name || !out) return -1;
+    if (name_eq(name, "haar-ortho") || name_eq(name, "haar_ortho"))
+        { *out = FAF_CONV_HAAR_ORTHO; return 0; }
+    if (name_eq(name, "haar-lazy") || name_eq(name, "haar_lazy"))
+        { *out = FAF_CONV_HAAR_LAZY; return 0; }
+    if (name_eq(name, "haar-mean") || name_eq(name, "haar_mean"))
+        { *out = FAF_CONV_HAAR_MEAN; return 0; }
+    if (name_eq(name, "d4-ortho") || name_eq(name, "d4_ortho"))
+        { *out = FAF_CONV_D4_ORTHO; return 0; }
+    if (name_eq(name, "sym4-ortho") || name_eq(name, "sym4_ortho"))
+        { *out = FAF_CONV_SYM4_ORTHO; return 0; }
+    if (name_eq(name, "cdf53-int") || name_eq(name, "cdf53_int"))
+        { *out = FAF_CONV_CDF53_INT; return 0; }
+    if (name_eq(name, "cdf53-energy") || name_eq(name, "cdf53_energy"))
+        { *out = FAF_CONV_CDF53_ENERGY; return 0; }
+    if (name_eq(name, "cdf97-jpeg") || name_eq(name, "cdf97_jpeg"))
+        { *out = FAF_CONV_CDF97_JPEG; return 0; }
+    if (name_eq(name, "cdf97-ortho") || name_eq(name, "cdf97_ortho"))
+        { *out = FAF_CONV_CDF97_ORTHO; return 0; }
+    if (name_eq(name, "custom-pr") || name_eq(name, "custom_pr"))
+        { *out = FAF_CONV_CUSTOM_PR; return 0; }
+    if (name_eq(name, "analysis-only") || name_eq(name, "analysis_only"))
+        { *out = FAF_CONV_ANALYSIS_ONLY; return 0; }
+    return -1;
+}
+
+faf_wavelet_convention faf_convention_default(faf_wavelet_family family) {
+    switch (family) {
+        case FAF_WAVELET_HAAR:  return FAF_CONV_HAAR_ORTHO;
+        case FAF_WAVELET_D4:    return FAF_CONV_D4_ORTHO;
+        case FAF_WAVELET_CDF53: return FAF_CONV_CDF53_INT;
+        case FAF_WAVELET_CDF97: return FAF_CONV_CDF97_JPEG;
+        case FAF_WAVELET_SYM4:  return FAF_CONV_SYM4_ORTHO;
+        default:                return FAF_CONV_UNSPEC;
+    }
+}
+
+int faf_validate_convention(faf_wavelet_family family, faf_wavelet_convention conv) {
+    if (conv == FAF_CONV_UNSPEC || conv == FAF_CONV_CUSTOM_PR ||
+        conv == FAF_CONV_ANALYSIS_ONLY)
+        return 0;
+    switch (conv) {
+        case FAF_CONV_HAAR_ORTHO:
+        case FAF_CONV_HAAR_LAZY:
+        case FAF_CONV_HAAR_MEAN:
+            return (family == FAF_WAVELET_HAAR) ? 0 : -1;
+        case FAF_CONV_D4_ORTHO:
+            return (family == FAF_WAVELET_D4) ? 0 : -1;
+        case FAF_CONV_SYM4_ORTHO:
+            return (family == FAF_WAVELET_SYM4) ? 0 : -1;
+        case FAF_CONV_CDF53_INT:
+        case FAF_CONV_CDF53_ENERGY:
+            return (family == FAF_WAVELET_CDF53) ? 0 : -1;
+        case FAF_CONV_CDF97_JPEG:
+        case FAF_CONV_CDF97_ORTHO:
+            return (family == FAF_WAVELET_CDF97) ? 0 : -1;
+        default:
+            return -1;
+    }
+}
+
 /* -------------------------------------------------------------------------- */
 /* Haar                                                                       */
 /* -------------------------------------------------------------------------- */
@@ -186,6 +266,110 @@ static void haar_inv_f64(double *x, size_t n) {
         double d = x[half + i];
         tmp[2 * i]     = (a + d) * FAF_INV_SQRT2;
         tmp[2 * i + 1] = (a - d) * FAF_INV_SQRT2;
+    }
+    memcpy(x, tmp, n * sizeof(double));
+    free(tmp);
+}
+
+/* -------------------------------------------------------------------------- */
+/* Haar lazy: no scale factor, divide by 2 on recon                           */
+/* -------------------------------------------------------------------------- */
+
+static void haar_lazy_fwd_f32(float *x, size_t n) {
+    size_t half = n / 2;
+    float *tmp = (float*)malloc(n * sizeof(float));
+    if (!tmp) return;
+    for (size_t i = 0; i < half; i++) {
+        tmp[i]        = x[2 * i] + x[2 * i + 1];
+        tmp[half + i] = x[2 * i] - x[2 * i + 1];
+    }
+    memcpy(x, tmp, n * sizeof(float));
+    free(tmp);
+}
+
+static void haar_lazy_inv_f32(float *x, size_t n) {
+    size_t half = n / 2;
+    float *tmp = (float*)malloc(n * sizeof(float));
+    if (!tmp) return;
+    for (size_t i = 0; i < half; i++) {
+        tmp[2 * i]     = (x[i] + x[half + i]) * 0.5f;
+        tmp[2 * i + 1] = (x[i] - x[half + i]) * 0.5f;
+    }
+    memcpy(x, tmp, n * sizeof(float));
+    free(tmp);
+}
+
+static void haar_lazy_fwd_f64(double *x, size_t n) {
+    size_t half = n / 2;
+    double *tmp = (double*)malloc(n * sizeof(double));
+    if (!tmp) return;
+    for (size_t i = 0; i < half; i++) {
+        tmp[i]        = x[2 * i] + x[2 * i + 1];
+        tmp[half + i] = x[2 * i] - x[2 * i + 1];
+    }
+    memcpy(x, tmp, n * sizeof(double));
+    free(tmp);
+}
+
+static void haar_lazy_inv_f64(double *x, size_t n) {
+    size_t half = n / 2;
+    double *tmp = (double*)malloc(n * sizeof(double));
+    if (!tmp) return;
+    for (size_t i = 0; i < half; i++) {
+        tmp[2 * i]     = (x[i] + x[half + i]) * 0.5;
+        tmp[2 * i + 1] = (x[i] - x[half + i]) * 0.5;
+    }
+    memcpy(x, tmp, n * sizeof(double));
+    free(tmp);
+}
+
+/* -------------------------------------------------------------------------- */
+/* Haar mean: LP = (a+b)/2, HP = a-b                                         */
+/* -------------------------------------------------------------------------- */
+
+static void haar_mean_fwd_f32(float *x, size_t n) {
+    size_t half = n / 2;
+    float *tmp = (float*)malloc(n * sizeof(float));
+    if (!tmp) return;
+    for (size_t i = 0; i < half; i++) {
+        tmp[i]        = (x[2 * i] + x[2 * i + 1]) * 0.5f;
+        tmp[half + i] = x[2 * i] - x[2 * i + 1];
+    }
+    memcpy(x, tmp, n * sizeof(float));
+    free(tmp);
+}
+
+static void haar_mean_inv_f32(float *x, size_t n) {
+    size_t half = n / 2;
+    float *tmp = (float*)malloc(n * sizeof(float));
+    if (!tmp) return;
+    for (size_t i = 0; i < half; i++) {
+        tmp[2 * i]     = x[i] + x[half + i] * 0.5f;
+        tmp[2 * i + 1] = x[i] - x[half + i] * 0.5f;
+    }
+    memcpy(x, tmp, n * sizeof(float));
+    free(tmp);
+}
+
+static void haar_mean_fwd_f64(double *x, size_t n) {
+    size_t half = n / 2;
+    double *tmp = (double*)malloc(n * sizeof(double));
+    if (!tmp) return;
+    for (size_t i = 0; i < half; i++) {
+        tmp[i]        = (x[2 * i] + x[2 * i + 1]) * 0.5;
+        tmp[half + i] = x[2 * i] - x[2 * i + 1];
+    }
+    memcpy(x, tmp, n * sizeof(double));
+    free(tmp);
+}
+
+static void haar_mean_inv_f64(double *x, size_t n) {
+    size_t half = n / 2;
+    double *tmp = (double*)malloc(n * sizeof(double));
+    if (!tmp) return;
+    for (size_t i = 0; i < half; i++) {
+        tmp[2 * i]     = x[i] + x[half + i] * 0.5;
+        tmp[2 * i + 1] = x[i] - x[half + i] * 0.5;
     }
     memcpy(x, tmp, n * sizeof(double));
     free(tmp);
@@ -457,12 +641,27 @@ static void cdf97_inv_f64(double *x, size_t n) {
 /* Public level kernels                                                       */
 /* -------------------------------------------------------------------------- */
 
-void faf_dwt_level_f32(float *x, size_t n, faf_wavelet_family family, int inverse) {
+void faf_dwt_level_conv_f32(float *x, size_t n,
+                            faf_wavelet_family family,
+                            faf_wavelet_convention conv, int inverse) {
     if (!x || n < 2 || (n & 1u)) return;
+
+    if (family == FAF_WAVELET_HAAR) {
+        faf_wavelet_convention c = (conv == FAF_CONV_UNSPEC) ? FAF_CONV_HAAR_ORTHO : conv;
+        switch (c) {
+            case FAF_CONV_HAAR_LAZY:
+                if (inverse) haar_lazy_inv_f32(x, n); else haar_lazy_fwd_f32(x, n);
+                return;
+            case FAF_CONV_HAAR_MEAN:
+                if (inverse) haar_mean_inv_f32(x, n); else haar_mean_fwd_f32(x, n);
+                return;
+            default:
+                if (inverse) haar_inv_f32(x, n); else haar_fwd_f32(x, n);
+                return;
+        }
+    }
+
     switch (family) {
-        case FAF_WAVELET_HAAR:
-            if (inverse) haar_inv_f32(x, n); else haar_fwd_f32(x, n);
-            break;
         case FAF_WAVELET_D4:
             if (inverse) filt_inv_f32(x, n, D4_H_F32, 4); else filt_fwd_f32(x, n, D4_H_F32, 4);
             break;
@@ -480,12 +679,27 @@ void faf_dwt_level_f32(float *x, size_t n, faf_wavelet_family family, int invers
     }
 }
 
-void faf_dwt_level_f64(double *x, size_t n, faf_wavelet_family family, int inverse) {
+void faf_dwt_level_conv_f64(double *x, size_t n,
+                            faf_wavelet_family family,
+                            faf_wavelet_convention conv, int inverse) {
     if (!x || n < 2 || (n & 1u)) return;
+
+    if (family == FAF_WAVELET_HAAR) {
+        faf_wavelet_convention c = (conv == FAF_CONV_UNSPEC) ? FAF_CONV_HAAR_ORTHO : conv;
+        switch (c) {
+            case FAF_CONV_HAAR_LAZY:
+                if (inverse) haar_lazy_inv_f64(x, n); else haar_lazy_fwd_f64(x, n);
+                return;
+            case FAF_CONV_HAAR_MEAN:
+                if (inverse) haar_mean_inv_f64(x, n); else haar_mean_fwd_f64(x, n);
+                return;
+            default:
+                if (inverse) haar_inv_f64(x, n); else haar_fwd_f64(x, n);
+                return;
+        }
+    }
+
     switch (family) {
-        case FAF_WAVELET_HAAR:
-            if (inverse) haar_inv_f64(x, n); else haar_fwd_f64(x, n);
-            break;
         case FAF_WAVELET_D4:
             if (inverse) filt_inv_f64(x, n, D4_H_F64, 4); else filt_fwd_f64(x, n, D4_H_F64, 4);
             break;
@@ -501,6 +715,14 @@ void faf_dwt_level_f64(double *x, size_t n, faf_wavelet_family family, int inver
         default:
             break;
     }
+}
+
+void faf_dwt_level_f32(float *x, size_t n, faf_wavelet_family family, int inverse) {
+    faf_dwt_level_conv_f32(x, n, family, FAF_CONV_UNSPEC, inverse);
+}
+
+void faf_dwt_level_f64(double *x, size_t n, faf_wavelet_family family, int inverse) {
+    faf_dwt_level_conv_f64(x, n, family, FAF_CONV_UNSPEC, inverse);
 }
 
 void faf_threshold_band_f32(float *x, size_t start, size_t end, int mode, float lambda) {

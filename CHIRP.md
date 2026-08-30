@@ -39,7 +39,7 @@ faf_transform *dwt = chirp_compile(
     "(pipeline "
     "  (dwt :family cdf97 :size 1024 :levels 5)"
     "  (threshold :mode soft :lambda 0.08)"
-    "  (idwt :family cdf97 :size 1024 :levels 5))"
+    "  (inverse))"
 );
 ```
 
@@ -82,6 +82,40 @@ symbol      ; Symbol (function name, variable)
 
 ### Core Forms
 
+#### `(let NAME expr [body…])` / `(inverse)` / `(inverse NAME)`
+
+`(let)` binds a compiled form to a name. Body is optional: a following
+top-level form can use the name too.
+
+```scheme
+(let W (dwt :family haar :size 64 :levels 3)
+  (pipeline W (threshold :mode soft :lambda 0.1) (inverse W)))
+
+(let F (rfft :size 3840 :norm ortho :layout hermitian))
+(pipeline F (spectral corr) (inverse F))
+```
+
+- `(inverse)` inverts the nearest preceding invertible stage in the same pipeline.
+- `(inverse NAME)` inverts a `let` binding. Repeating `:size` is a compile error.
+
+#### `(bind NAME :h h :g g [:h-syn hs :g-syn gs])`
+
+Binds a custom PR (or analysis-only) tap set from vectors registered in C
+with `chirp_register_vector`. Then `(dwt :taps NAME :conv custom-pr :family custom …)`.
+
+```c
+chirp_register_vector("h", h, 2);
+chirp_register_vector("g", g, 2);
+chirp_register_vector("ht", ht, 2);
+chirp_register_vector("gt", gt, 2);
+chirp_compile(
+    "(bind lazy :h h :g g :h-syn ht :g-syn gt)"
+    "(dwt :family custom :size 64 :levels 2 :backend fir :conv custom-pr :taps lazy)");
+```
+
+Or skip the bind form and call `chirp_register_taps("lazy", h, g, 2, ht, gt, 2)`
+directly. `ht`/`gt` omitted ⇒ analysis-only (no inverse).
+
 #### `(pipeline expr1 expr2 ...)`
 
 Sequences multiple operations. Returns a transform that executes each expression in order.
@@ -94,29 +128,69 @@ Sequences multiple operations. Returns a transform that executes each expression
   reduce-sum)
 ```
 
-#### `(fft :size N)`
+#### `(fft :size N)` / `(ifft :size N)`
 
-Full staged Fast Fourier Transform (bit-reversal + `log2(N)` `FFT_STAGE` ops).
+Full staged Fast Fourier Transform (bit-reversal + mixed-radix stages).
 
-- `:size N` - Transform size (must be power of 2)
+- `:size N` — Transform size (must be 5-smooth: `2^a · 3^b · 5^c`, unless `:bluestein`)
+- `:layout split|interleaved` — Buffer layout (default: interleaved in Chirp)
+- `:norm none|ortho|forward` — Same contract as C `faf_norm`
+- `:precision f32|f64`
+- `:bluestein` — Opt-in chirp-z for non-5-smooth `N`. Explicit; never implied. See [docs/SIZES.md](docs/SIZES.md).
 
 ```scheme
 (fft :size 256)      ; 256-point FFT
+(fft :size 3840)     ; 3840 = 2^8 · 3 · 5 — legal, mixed-radix
 (fft :size 4096)     ; 4096-point FFT
+(ifft :size 1024)    ; inverse FFT
+(fft :size 307 :bluestein :layout split)  ; prime length, opt-in
 ```
 
 #### `(dwt :family name :size N :levels L)` / `(idwt …)`
 
 Discrete wavelet transform. Families: `haar`, `d4` / `daubechies4` / `db2`, `cdf53` / `legall`, `cdf97`, `sym4`.
 
-- `:size N` — power of 2
+- `:size N` — power of 2 (DWT sizes must be powers of two, unlike FFT; see [docs/DWT.md](docs/DWT.md))
 - `:levels L` — Mallat levels (`0` or omitted = full `log2(N)`)
+- `:conv name` — Haar-ortho / Haar-lazy / Haar-mean / JPEG 5/3 / … (see docs/DWT.md)
+- `:backend auto|lift|fir` — AUTO is the §6.3 rule; `cdf53` + `:backend fir` is a compile error
 - Periodic boundaries, real-valued (imaginary plane left untouched)
+
+`(dwt :size 3840)` is **illegal** — DWT requires dyadic sizes. Use
+`(fft :size 3840)` or `(rfft :size 3840)` for 5-smooth sizes.
 
 ```scheme
 (dwt :family cdf97 :size 1024 :levels 5)
 (idwt :family cdf97 :size 1024 :levels 5)
+(dwt :family haar :size 1024 :levels 4 :conv haar-ortho :backend fir)
 ```
+
+#### `(rfft :size N …)` / `(irfft :size N …)`
+
+Real-to-complex FFT. Standalone or as the endpoints of a fused spectral
+pipeline. See [docs/RFFT.md](docs/RFFT.md) for the full contract.
+
+| Keyword | Default | Description |
+|---------|---------|-------------|
+| `:size N` | *required* | Signal length (even, 5-smooth) |
+| `:norm kind` | `none` | `none`, `ortho`, `forward` |
+| `:layout kind` | `hermitian` | `hermitian` (split-plane) or `interleaved` |
+| `:precision p` | `f32` | `f32` or `f64` |
+
+`(irfft)` accepts the same keywords. In a pipeline, use `(inverse)` instead
+to inherit all settings from the preceding `(rfft)`. `:bluestein` on
+`(rfft)` is a compile error (v1).
+
+```scheme
+(rfft :size 4096 :norm ortho :layout hermitian)
+(irfft :size 4096)
+
+; Fused spectral pipeline — real in, real out:
+(pipeline (rfft :size 256) (spectral notch) (irfft))
+```
+
+`:norm lazy` and `:norm jpeg2000` are rejected at compile time (they belong to
+DWT conventions, not RFFT).
 
 #### `(cwt :n N …)` / `(icwt :n N …)`
 

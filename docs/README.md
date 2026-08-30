@@ -18,8 +18,11 @@ A high-performance Digital Signal Processing (DSP) library featuring Intermediat
   - DST (Discrete Sine Transform) - Types I-IV
   - STFT (Short-Time Fourier Transform)
   - MDCT (Modified Discrete Cosine Transform)
-  - Wavelet Transforms (Haar, Daubechies-4, CDF 5/3, CDF 9/7, Symlet-4) — forward and inverse
+  - Wavelet Transforms (Haar, Daubechies-4, CDF 5/3, CDF 9/7, Symlet-4) — lifting and polyphase FIR backends, see [DWT.md](DWT.md)
   - CWT / CQT filter bank (Morse, Morlet, bump, Shannon, Meyer) with Littlewood–Paley certification — see [CWT.md](CWT.md)
+  - Real FFT (R2C/C2R): [RFFT.md](RFFT.md)
+  - Buffer layouts (split / Hermitian / interleaved): [LAYOUT.md](LAYOUT.md)
+  - Size policy (5-smooth, optional Bluestein): [SIZES.md](SIZES.md)
 
 ## Building
 

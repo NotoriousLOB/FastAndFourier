@@ -101,7 +101,9 @@ Results collected on **2026-02-22** on the following system:
 - **Precision:** Double (FP64) across all libraries
 - **Libraries active:** FastAndFourier, KissFFT 131.1.0, NotoriousFFT, FFTW3 3.3.10
 
-> **Note on NotoriousFFT:** Now included — bugs have been fixed in the latest version.
+> **Note on NotoriousFFT:** Pinned to **v1.0.1** (`GIT_TAG v1.0.1`). That
+> release adds inverse SIMD butterflies and fixes AVX Bluestein
+> double-conjugation. Fetch with `-DENABLE_EXTERNAL_BENCHMARKS=ON`.
 
 ### Single-Transform Latency (µs, complex-to-complex, FP64, 1 run)
 
@@ -168,6 +170,40 @@ advantage on real-valued inputs. The gap narrows sharply at large sizes.
 
 The N=65536 FAF spike (10.4 GFLOP) confirms JIT-generated code engaging the AVX2
 vectorization path for large transforms. FFTW3 benefits from decades of codelet tuning.
+
+### aarch64 re-run vs NotoriousFFT v1.0.1 (2026-08-30)
+
+Machine: Linux aarch64, 6 × 1728 MHz, L1 64 KiB, L2 256 KiB × 6, L3 2 MiB.
+Build: Release (`-O3 -march=native`). FP64 C2C, same binary. CPU frequency
+scaling was on, so treat absolute µs as noisy; **ratios** are the signal.
+
+**Single-transform time (µs, C2C FP64):**
+
+| Size | FastAndFourier | KissFFT | NotoriousFFT v1.0.1 | FAF / Nott |
+|-----:|---------------:|--------:|--------------------:|-----------:|
+|    16 |          1.03 |   0.149 |               0.076 |      13.6× |
+|    64 |          2.41 |   0.847 |               0.495 |       4.9× |
+|   256 |          8.98 |    4.42 |                2.71 |       3.3× |
+|  1024 |          35.6 |    21.6 |                13.8 |       2.6× |
+|  4096 |           165 |     110 |                68.6 |       2.4× |
+| 16384 |           891 |     550 |                 344 |       2.6× |
+| 65536 |          1963 |    3180 |                1631 |       1.20× |
+
+**Small-N latency (ns):**
+
+| Size | FastAndFourier | KissFFT | NotoriousFFT v1.0.1 |
+|-----:|---------------:|--------:|--------------------:|
+|    8 |            835 |    94.7 |                30.6 |
+|   16 |            949 |     149 |                75.8 |
+|   32 |           1392 |     522 |                 205 |
+|   64 |           2288 |     849 |                 495 |
+|  128 |           5112 |    2578 |                1176 |
+|  256 |           9002 |    4424 |                2710 |
+|  512 |          17389 |   12328 |                6150 |
+
+v1.0.1 on this box is the fastest of the three at every size except FAF
+catches KissFFT at 64K (JIT). The 8-point gap (FAF 835 ns vs Notorious 31 ns)
+is the VM + register-file tax, not arithmetic.
 
 ## Performance Summary
 

@@ -146,6 +146,78 @@ int faf_interleave_f64(double *FAF_RESTRICT interleaved,
     return 0;
 }
 
+void faf_herm_mul_f32(float *yr, float *yi,
+                      const float *xr, const float *xi,
+                      const float *hr, const float *hi, size_t n_bins) {
+    if (!yr || !yi || !xr || !xi || !hr || !hi || n_bins == 0) return;
+    yr[0] = xr[0] * hr[0];
+    yi[0] = 0.0f;
+    for (size_t k = 1; k + 1 < n_bins; k++) {
+        float ar = xr[k], ai = xi[k];
+        float br = hr[k], bi = hi[k];
+        yr[k] = ar * br - ai * bi;
+        yi[k] = ar * bi + ai * br;
+    }
+    if (n_bins > 1) {
+        yr[n_bins - 1] = xr[n_bins - 1] * hr[n_bins - 1];
+        yi[n_bins - 1] = 0.0f;
+    }
+}
+
+void faf_herm_mul_f64(double *yr, double *yi,
+                      const double *xr, const double *xi,
+                      const double *hr, const double *hi, size_t n_bins) {
+    if (!yr || !yi || !xr || !xi || !hr || !hi || n_bins == 0) return;
+    yr[0] = xr[0] * hr[0];
+    yi[0] = 0.0;
+    for (size_t k = 1; k + 1 < n_bins; k++) {
+        double ar = xr[k], ai = xi[k];
+        double br = hr[k], bi = hi[k];
+        yr[k] = ar * br - ai * bi;
+        yi[k] = ar * bi + ai * br;
+    }
+    if (n_bins > 1) {
+        yr[n_bins - 1] = xr[n_bins - 1] * hr[n_bins - 1];
+        yi[n_bins - 1] = 0.0;
+    }
+}
+
+void faf_herm_mul_conj_f32(float *yr, float *yi,
+                           const float *xr, const float *xi,
+                           const float *hr, const float *hi, size_t n_bins) {
+    if (!yr || !yi || !xr || !xi || !hr || !hi || n_bins == 0) return;
+    yr[0] = xr[0] * hr[0];
+    yi[0] = 0.0f;
+    for (size_t k = 1; k + 1 < n_bins; k++) {
+        float ar = xr[k], ai = xi[k];
+        float br = hr[k], bi = hi[k];
+        yr[k] = ar * br + ai * bi;
+        yi[k] = ai * br - ar * bi;
+    }
+    if (n_bins > 1) {
+        yr[n_bins - 1] = xr[n_bins - 1] * hr[n_bins - 1];
+        yi[n_bins - 1] = 0.0f;
+    }
+}
+
+void faf_herm_mul_conj_f64(double *yr, double *yi,
+                           const double *xr, const double *xi,
+                           const double *hr, const double *hi, size_t n_bins) {
+    if (!yr || !yi || !xr || !xi || !hr || !hi || n_bins == 0) return;
+    yr[0] = xr[0] * hr[0];
+    yi[0] = 0.0;
+    for (size_t k = 1; k + 1 < n_bins; k++) {
+        double ar = xr[k], ai = xi[k];
+        double br = hr[k], bi = hi[k];
+        yr[k] = ar * br + ai * bi;
+        yi[k] = ai * br - ar * bi;
+    }
+    if (n_bins > 1) {
+        yr[n_bins - 1] = xr[n_bins - 1] * hr[n_bins - 1];
+        yi[n_bins - 1] = 0.0;
+    }
+}
+
 size_t faf_precision_size(faf_precision prec) {
     switch (prec) {
         case FAF_PREC_FP8:  return 1;
@@ -375,6 +447,40 @@ static void apply_resolved_config(faf_transform *t, faf_config c) {
     t->win_length = c.win_length;
 }
 
+int faf_dwt_resolve_backend(faf_wavelet_family family,
+                            faf_wavelet_convention conv,
+                            faf_dwt_backend requested,
+                            faf_dwt_backend *out) {
+    faf_dwt_backend b = requested;
+    if (b == FAF_DWT_BACKEND_AUTO) {
+        if (conv == FAF_CONV_CUSTOM_PR || conv == FAF_CONV_ANALYSIS_ONLY)
+            b = FAF_DWT_BACKEND_FIR;
+        else if (conv == FAF_CONV_CDF53_INT || conv == FAF_CONV_CDF97_JPEG)
+            b = FAF_DWT_BACKEND_LIFT;
+        else if (family < FAF_WAVELET_COUNT && faf_wavelet_taps(family) > 0 &&
+                 faf_wavelet_taps(family) <= 8)
+            b = FAF_DWT_BACKEND_LIFT;
+        else if (family == FAF_WAVELET_CDF97)
+            b = FAF_DWT_BACKEND_LIFT; /* 9-tap JPEG pair stays lifting */
+        else
+            b = FAF_DWT_BACKEND_FIR;
+    }
+    if (b == FAF_DWT_BACKEND_FIR &&
+        (conv == FAF_CONV_CDF53_INT || conv == FAF_CONV_CDF97_JPEG)) {
+        set_error("DWT backend FIR incompatible with lifting convention '%s'",
+                  faf_convention_name(conv));
+        return -1;
+    }
+    if (b == FAF_DWT_BACKEND_LIFT &&
+        (conv == FAF_CONV_CUSTOM_PR || conv == FAF_CONV_ANALYSIS_ONLY)) {
+        set_error("DWT backend LIFT incompatible with convention '%s' (no factorization)",
+                  faf_convention_name(conv));
+        return -1;
+    }
+    if (out) *out = b;
+    return 0;
+}
+
 static faf_transform* alloc_transform(void) {
     faf_transform *t = calloc(1, sizeof(faf_transform));
     if (!t)
@@ -389,11 +495,16 @@ faf_transform* faf_create_fft(const faf_config *cfg) {
         return NULL;
     }
     faf_config c = *cfg;
+    int use_bluestein = 0;
     if (!faf_is_5_smooth(c.n)) {
-        set_error("FFT size must be 5-smooth (2^a 3^b 5^c), got %zu; "
-                  "nearest is %zu", c.n, faf_get_recommended_size(
-                      FAF_TRANSFORM_FFT, c.n));
-        return NULL;
+        if (c.flags & FAF_FLAG_BLUESTEIN) {
+            use_bluestein = 1;
+        } else {
+            set_error("FFT size must be 5-smooth (2^a 3^b 5^c), got %zu; "
+                      "nearest is %zu (or set FAF_FLAG_BLUESTEIN)", c.n,
+                      faf_get_recommended_size(FAF_TRANSFORM_FFT, c.n));
+            return NULL;
+        }
     }
     if (c.layout == FAF_LAYOUT_DEFAULT)
         c.layout = FAF_LAYOUT_SPLIT;
@@ -407,6 +518,11 @@ faf_transform* faf_create_fft(const faf_config *cfg) {
         set_error("FFT does not support norm '%s'", faf_norm_name(c.norm));
         return NULL;
     }
+    if (use_bluestein &&
+        c.precision != FAF_PREC_FP32 && c.precision != FAF_PREC_FP64) {
+        set_error("Bluestein supports FP32 and FP64 only");
+        return NULL;
+    }
 
     faf_transform *t = alloc_transform();
     if (!t) return NULL;
@@ -414,6 +530,16 @@ faf_transform* faf_create_fft(const faf_config *cfg) {
     bool inverse = (c.dir == FAF_DIR_INVERSE);
     t->type = inverse ? FAF_TRANSFORM_IFFT : FAF_TRANSFORM_FFT;
     apply_resolved_config(t, c);
+
+    if (use_bluestein) {
+        t->flags |= FAF_FLAG_BLUESTEIN;
+        t->cfg.flags |= FAF_FLAG_BLUESTEIN;
+        if (faf_fft_init_bluestein(t) != 0) {
+            faf_destroy_transform(t);
+            return NULL;
+        }
+        return t;
+    }
 
     if (faf_is_power_of_2(c.n)) {
         /* Pow2 path is frozen: existing radix-2 stage emitter. */
@@ -557,6 +683,10 @@ faf_transform* faf_create_dwt(const faf_config *cfg) {
         return NULL;
     }
     faf_config c = *cfg;
+    if (c.flags & FAF_FLAG_BLUESTEIN) {
+        set_error("DWT does not support Bluestein");
+        return NULL;
+    }
     if (!faf_is_power_of_2(c.n) || c.n < 2) {
         set_error("DWT size must be a power of 2 >= 2, got %zu", c.n);
         return NULL;
@@ -573,6 +703,23 @@ faf_transform* faf_create_dwt(const faf_config *cfg) {
         else
             c.norm = FAF_NORM_ORTHO;
     }
+
+    if (c.conv == FAF_CONV_UNSPEC)
+        c.conv = faf_convention_default(c.family);
+    if (faf_validate_convention(c.family, c.conv) != 0) {
+        set_error("DWT convention '%s' incompatible with family '%s'",
+                  faf_convention_name(c.conv), faf_wavelet_name(c.family));
+        return NULL;
+    }
+    if (c.norm == FAF_NORM_ORTHO &&
+        (c.conv == FAF_CONV_CDF53_INT || c.conv == FAF_CONV_CDF97_JPEG)) {
+        set_error("DWT norm ORTHO incompatible with lifting convention '%s'",
+                  faf_convention_name(c.conv));
+        return NULL;
+    }
+
+    if (faf_dwt_resolve_backend(c.family, c.conv, c.dwt_backend, &c.dwt_backend) != 0)
+        return NULL;
 
     size_t max_levels = log2_size(c.n);
     if (c.levels == 0) c.levels = max_levels;
@@ -651,6 +798,34 @@ faf_transform* faf_create_sym4(const faf_config *cfg) {
     faf_config c = *cfg;
     c.family = FAF_WAVELET_SYM4;
     return faf_create_dwt(&c);
+}
+
+int faf_dwt_set_taps(faf_transform *t,
+                     const float *h, const float *g, int len_hg,
+                     const float *ht, const float *gt, int len_syn) {
+    if (!t || !h || !g || len_hg < 1) {
+        set_error("faf_dwt_set_taps: t, h, g required and len_hg >= 1");
+        return -1;
+    }
+    if (t->cfg.conv != FAF_CONV_CUSTOM_PR && t->cfg.conv != FAF_CONV_ANALYSIS_ONLY) {
+        set_error("faf_dwt_set_taps: transform convention is '%s', need CUSTOM_PR or ANALYSIS_ONLY",
+                  faf_convention_name(t->cfg.conv));
+        return -1;
+    }
+    t->custom_h = h;
+    t->custom_g = g;
+    t->custom_len_hg = len_hg;
+    if (ht && gt) {
+        t->custom_ht = ht;
+        t->custom_gt = gt;
+        t->custom_len_syn = len_syn;
+    } else {
+        t->custom_ht = NULL;
+        t->custom_gt = NULL;
+        t->custom_len_syn = 0;
+        t->cfg.conv = FAF_CONV_ANALYSIS_ONLY;
+    }
+    return 0;
 }
 
 faf_transform* faf_create_stft(const faf_config *cfg) {
@@ -788,7 +963,22 @@ faf_transform* faf_create_inverse(const faf_transform *fwd) {
         case FAF_TRANSFORM_CDF53:
         case FAF_TRANSFORM_CDF97:
         case FAF_TRANSFORM_SYM4:
-            return faf_create_dwt(&c);
+            if (c.conv == FAF_CONV_ANALYSIS_ONLY) {
+                set_error("faf_create_inverse: analysis-only bank has no inverse");
+                return NULL;
+            }
+            {
+                faf_transform *inv = faf_create_dwt(&c);
+                if (inv && fwd->custom_h) {
+                    inv->custom_h = fwd->custom_h;
+                    inv->custom_g = fwd->custom_g;
+                    inv->custom_ht = fwd->custom_ht;
+                    inv->custom_gt = fwd->custom_gt;
+                    inv->custom_len_hg = fwd->custom_len_hg;
+                    inv->custom_len_syn = fwd->custom_len_syn;
+                }
+                return inv;
+            }
         case FAF_TRANSFORM_RFFT:
         case FAF_TRANSFORM_IRFFT:
             return faf_create_rfft(&c);
@@ -950,6 +1140,12 @@ int faf_execute(const faf_transform *t, faf_buffer *out, const faf_buffer *in) {
     if (t->type == FAF_TRANSFORM_RFFT || t->type == FAF_TRANSFORM_IRFFT) {
         int rret = faf_rfft_execute(t, out, in);
         if (rret != 0) return rret;
+        return apply_fft_norm(t, out);
+    }
+
+    if ((t->flags & FAF_FLAG_BLUESTEIN) && t->inner) {
+        int bret = faf_bluestein_execute(t, out, in);
+        if (bret != 0) return bret;
         return apply_fft_norm(t, out);
     }
 

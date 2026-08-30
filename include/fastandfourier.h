@@ -172,6 +172,43 @@ typedef enum {
 #define FAF_THRESH_HARD  0u
 #define FAF_THRESH_SOFT  1u
 
+/**
+ * @brief Named wavelet convention (filters + normalization as a single contract)
+ *
+ * A convention is not a family: Haar-ortho, Haar-lazy, and Haar-mean are
+ * different operators with different coefficients and different inverse
+ * contracts.  Setting conv at create time selects the exact operator and
+ * enables create-time rejection of illegal family/convention/norm combos.
+ *
+ * FAF_CONV_UNSPEC (0) resolves to the family default at create time.
+ */
+typedef enum {
+    FAF_CONV_UNSPEC = 0,         /**< Resolve from family at create time */
+    FAF_CONV_HAAR_ORTHO,         /**< (1/√2)(1,1), (1/√2)(1,-1) — adjoint inverse */
+    FAF_CONV_HAAR_LAZY,          /**< (1,1), (1,-1) — divide by 2 on recon */
+    FAF_CONV_HAAR_MEAN,          /**< (½,½), (1,-1) — documented dual */
+    FAF_CONV_D4_ORTHO,           /**< Published D4 orthonormal QMF */
+    FAF_CONV_SYM4_ORTHO,         /**< Published Sym4 orthonormal QMF */
+    FAF_CONV_CDF53_INT,          /**< JPEG 2000 5/3 reversible lifting */
+    FAF_CONV_CDF53_ENERGY,       /**< Scaled 5/3 energy pair (if shipped) */
+    FAF_CONV_CDF97_JPEG,         /**< Annex 9/7 irreversible lifting */
+    FAF_CONV_CDF97_ORTHO,        /**< Energy-normalized 9/7 pair (if shipped) */
+    FAF_CONV_CUSTOM_PR,          /**< User-supplied h, g, h̃, g̃ */
+    FAF_CONV_ANALYSIS_ONLY       /**< User-supplied h, g — inverse illegal */
+} faf_wavelet_convention;
+
+/**
+ * @brief DWT algorithm backend
+ *
+ * AUTO selects lifting for the five short built-in families and FIR
+ * for custom taps, long filters, and analysis-only atoms.
+ */
+typedef enum {
+    FAF_DWT_BACKEND_AUTO = 0,    /**< Rule-based selection (see docs/DWT.md) */
+    FAF_DWT_BACKEND_LIFT = 1,    /**< Lifting scheme (in-place, PR by construction) */
+    FAF_DWT_BACKEND_FIR  = 2     /**< Polyphase FIR (explicit filter taps) */
+} faf_dwt_backend;
+
 /* --- CWT FILTER BANK TYPES --- */
 
 /**
@@ -342,6 +379,8 @@ typedef struct faf_config {
 
     faf_wavelet_family family;    /**< DWT; ignored otherwise */
     size_t            levels;     /**< DWT; 0 = full log2(n) */
+    faf_wavelet_convention conv;  /**< DWT convention; 0 = family default */
+    faf_dwt_backend   dwt_backend; /**< DWT backend; 0 = AUTO */
     int               dct_type;   /**< DCT/DST type 1–4; 0 = 2 */
     size_t            hop_length; /**< STFT */
     size_t            win_length; /**< STFT */
@@ -454,6 +493,12 @@ typedef struct faf_transform {
     void *user_aux;            /**< Bound spectrum re[] (mul-spectrum) */
     void *user_aux_im;         /**< Bound spectrum im[] */
     size_t user_aux_n;         /**< Bound spectrum length (bins) */
+    const float  *custom_h;   /**< Custom analysis LP taps (NULL for built-in) */
+    const float  *custom_g;   /**< Custom analysis HP taps */
+    const float  *custom_ht;  /**< Synthesis LP taps (NULL = ANALYSIS_ONLY) */
+    const float  *custom_gt;  /**< Synthesis HP taps */
+    int custom_len_hg;         /**< Length of analysis tap arrays */
+    int custom_len_syn;        /**< Length of synthesis tap arrays */
 } faf_transform;
 
 /**
@@ -627,6 +672,10 @@ faf_transform* faf_create(faf_transform_type type, const faf_config *cfg);
  *
  * Power-of-2 sizes use the existing radix-2 kernel. Other 5-smooth
  * sizes use mixed-radix 2/3/4/5. Default layout SPLIT, default norm NONE.
+ *
+ * Non-5-smooth n is accepted only with cfg->flags |= FAF_FLAG_BLUESTEIN
+ * (chirp-z via two length-M FFTs, M = next 5-smooth ≥ 2n−1). Scratch is
+ * allocated at create, not execute. RFFT+Bluestein is refused.
  */
 faf_transform* faf_create_fft(const faf_config *cfg);
 
@@ -702,6 +751,37 @@ int faf_wavelet_taps(faf_wavelet_family family);
  * @return 0 on success
  */
 int faf_wavelet_from_name(const char *name, faf_wavelet_family *out);
+
+/**
+ * @brief Convention name string (e.g. "haar-ortho", "cdf97-jpeg")
+ */
+const char* faf_convention_name(faf_wavelet_convention conv);
+
+/**
+ * @brief Parse a convention name string
+ * @return 0 on success
+ */
+int faf_convention_from_name(const char *name, faf_wavelet_convention *out);
+
+/**
+ * @brief Bind custom filter taps to a DWT transform
+ *
+ * The transform must have been created with FAF_CONV_CUSTOM_PR or
+ * FAF_CONV_ANALYSIS_ONLY.  If ht and gt are both NULL, the transform
+ * becomes analysis-only (inverse is illegal).
+ *
+ * @param t      DWT transform (must not be NULL)
+ * @param h      Analysis lowpass taps (len_hg coefficients)
+ * @param g      Analysis highpass taps (len_hg coefficients)
+ * @param len_hg Length of h and g arrays
+ * @param ht     Synthesis lowpass taps (len_syn coefficients), or NULL
+ * @param gt     Synthesis highpass taps (len_syn coefficients), or NULL
+ * @param len_syn Length of ht and gt arrays (ignored when both are NULL)
+ * @return 0 on success, non-zero on failure
+ */
+int faf_dwt_set_taps(faf_transform *t,
+                     const float *h, const float *g, int len_hg,
+                     const float *ht, const float *gt, int len_syn);
 
 /* --- CWT FILTER BANK --- */
 
@@ -834,6 +914,27 @@ int faf_interleave_f64(double *FAF_RESTRICT interleaved,
                        const double *FAF_RESTRICT re, const double *FAF_RESTRICT im,
                        size_t n);
 
+/**
+ * Packed Hermitian multiply on n_bins = n/2+1 split-plane bins.
+ *
+ * Bins 1 .. n/2-1: complex multiply. Bin 0 (DC) and bin n/2 (Nyquist):
+ * real multiply, imag forced to 0. y may alias x. See docs/LAYOUT.md.
+ */
+void faf_herm_mul_f32(float *yr, float *yi,
+                      const float *xr, const float *xi,
+                      const float *hr, const float *hi, size_t n_bins);
+void faf_herm_mul_f64(double *yr, double *yi,
+                      const double *xr, const double *xi,
+                      const double *hr, const double *hi, size_t n_bins);
+
+/** Packed Hermitian y = x * conj(h). Same DC/Nyquist rule as faf_herm_mul. */
+void faf_herm_mul_conj_f32(float *yr, float *yi,
+                           const float *xr, const float *xi,
+                           const float *hr, const float *hi, size_t n_bins);
+void faf_herm_mul_conj_f64(double *yr, double *yi,
+                           const double *xr, const double *xi,
+                           const double *hr, const double *hi, size_t n_bins);
+
 /* Interleaved convenience wrappers. Prefer faf_execute + faf_buffer. */
 int faf_execute_f32(const faf_transform *t, 
                        float *FAF_RESTRICT out, 
@@ -864,6 +965,13 @@ int faf_execute_fp8(const faf_transform *t,
 #define FAF_FLAG_JIT_INPLACE     0x0100  /**< JIT: Work in-place without register file */
 #define FAF_FLAG_JIT_SIMD        0x0200  /**< JIT: Use SIMD intrinsics */
 #define FAF_FLAG_JIT_SPLIT_PLANE 0x0400  /**< JIT: Use split real/imag planes for better vectorization */
+
+/**
+ * Opt-in chirp-z (Bluestein) FFT for lengths that are not 5-smooth.
+ * Without this flag, non-5-smooth n is a create error. Never implied.
+ * RFFT and DWT refuse this flag. See docs/SIZES.md.
+ */
+#define FAF_FLAG_BLUESTEIN       (1u << 12)
 
 /**
  * @brief Create a JIT compilation context

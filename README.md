@@ -58,12 +58,21 @@ The case for FastAndFourier is different: you want transforms you can *compose, 
   one-integral inverse is there when you want Calderón instead of a dual.
   Details, and the theorem the checks are special cases of, in
   [docs/CWT.md](docs/CWT.md). Chirp: `(cwt :n 4096 :wavelet morse)`.
+- **Two DWT backends.** Lifting for the five short PR families, polyphase FIR
+  for custom taps and analysis-only atoms. AUTO is a rule, not a heuristic.
+  See [docs/DWT.md](docs/DWT.md).
+- **Optional Bluestein.** Non-5-smooth FFT lengths only with
+  `FAF_FLAG_BLUESTEIN` / Chirp `:bluestein`. Off by default. RFFT and DWT
+  refuse it. See [docs/SIZES.md](docs/SIZES.md).
+- **Split-plane correlator.** Packed Hermitian multiply and
+  [`examples/split_corr.c`](examples/split_corr.c). Layout FAQ in
+  [docs/LAYOUT.md](docs/LAYOUT.md).
 
 ## What's new in 1.0.0
 
 - **Config-based creation.** One `faf_config` struct drives every transform type: `faf_config_init(n)`, set the knobs you care about, call `faf_create_*(&cfg)`. Defaults are sensible (FP32, split layout, NumPy norm) and every default is visible in `t->cfg`.
 - **Real-input FFT.** `faf_create_rfft` gives a true R2C with a packed Hermitian spectrum of `n/2 + 1` bins — not a C2C with a zeroed imaginary plane. `faf_create_inverse(fwd)` hands back the matching C2R with every knob inherited. Details in [docs/RFFT.md](docs/RFFT.md).
-- **Mixed-radix sizes.** FFT length must be 5-smooth (`2^a · 3^b · 5^c`), not a power of two. `faf_is_size_supported` and `faf_get_recommended_size` answer the practical questions.
+- **Mixed-radix sizes.** FFT length must be 5-smooth (`2^a · 3^b · 5^c`), not a power of two. `faf_is_size_supported` and `faf_get_recommended_size` answer the practical questions. Optional Bluestein (`FAF_FLAG_BLUESTEIN`) is opt-in for primes; see [docs/SIZES.md](docs/SIZES.md).
 - **Fused spectral pipelines.** `(pipeline (rfft) (spectral f) (irfft))` compiles to a single fused REAL → REAL transform. Bind an external spectrum with `chirp_bind` and `(mul-spectrum)` gives you convolution and matched filtering without touching a twiddle.
 - **Cached JIT execution.** `faf_execute_jit_cached` compiles once, pins the kernel to the transform, and takes a compare-and-swap fast path thereafter.
 
@@ -261,12 +270,18 @@ chirp_bind(corr, "H", Hr, Hi, nb);   /* conjugate Hi first to correlate */
 | DST I–IV | Yes | Yes | — | `cfg.dct_type`, 0 means II |
 | STFT | Yes | Yes | — | `cfg.hop_length`, `cfg.win_length` |
 | MDCT | Yes | Yes | even | AAC/Opus-style |
-| Haar | Yes | Yes | power of 2 | Orthonormal lifting |
+| Haar | Yes | Yes | power of 2 | Orthonormal lifting (default); FIR override |
 | Daubechies-4 (db2) | Yes | Yes | power of 2 | 4-tap orthonormal |
 | CDF 5/3 | Yes | Yes | power of 2 | JPEG 2000 lossless |
 | CDF 9/7 | Yes | Yes | power of 2 | JPEG 2000 lossy |
 | Symlet-4 | Yes | Yes | power of 2 | 8-tap orthonormal |
 | CWT (filter bank) | Yes | Yes | even, 5-smooth | Fourier-domain CQT, LP-certified, [docs/CWT.md](docs/CWT.md) |
+
+DWT has two backends. Lifting (Backend L) is the default for the five short
+PR families; polyphase FIR (Backend F) is for custom taps and analysis-only
+atoms. AUTO selection and the Haar convention table live in
+[docs/DWT.md](docs/DWT.md). Inverse is `faf_create_inverse` / Chirp
+`(inverse)`, not a second keyword pile.
 
 All of the above, plus fused pipelines, run through the same 34-opcode IR. Adding a transform means adding opcodes, not forking the engine.
 
@@ -277,7 +292,7 @@ All of the above, plus fused pipelines, run through the same 34-opcode IR. Addin
 | `FAF_LAYOUT_SPLIT` | `re[n]`, `im[n]` — default for C2C |
 | `FAF_LAYOUT_HERMITIAN` | packed R2C spectrum, `n/2+1` split bins — default for RFFT |
 | `FAF_LAYOUT_REAL` | `float[n]` — native for DWT/DCT, time-domain side of R2C |
-| `FAF_LAYOUT_INTERLEAVED` | `float[2n]`, opt-in convenience |
+| `FAF_LAYOUT_INTERLEAVED` | `float[2n]`, opt-in convenience — slower; see [docs/LAYOUT.md](docs/LAYOUT.md) |
 
 | `faf_norm` | Forward | Inverse | Used by |
 |---|---|---|---|
@@ -383,7 +398,7 @@ src/arch/   x86 (SSE/AVX2/AVX-512) · arm (NEON/SVE) · cuda
 examples/   18 runnable programs, from que_onda_mundo to matched_filter
 tests/      Google Test suite (ctest)
 benchmarks/ Google Benchmark suite + comparison harness
-docs/       RFFT contract · Doxygen config
+docs/       RFFT contract · CWT contract · Doxygen config
 CHIRP.md    the language reference
 ```
 

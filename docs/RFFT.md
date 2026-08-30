@@ -12,10 +12,10 @@ FFT and applying a super-twiddle post-pass is the standard ~2× win.
 
 ## Algorithm
 
-Let `n` be even (this cut: power of 2, `n >= 2`).
+Let `n` be even and 5-smooth (`2^a · 3^b · 5^c`), `n >= 2`.
 
 1. Pack `z[k] = x[2k] + i x[2k+1]` for `k = 0 .. n/2-1`.
-2. Run the existing power-of-2 C2C of length `n/2` (split-plane, unscaled).
+2. Run the inner C2C of length `n/2` (split-plane, mixed-radix, unscaled).
 3. Kiss / Sorensen post-pass with super-twiddles
    `exp(±i π ((k+1)/(n/2) + 1/2))` to produce packed `X[0 .. n/2]`.
 
@@ -97,3 +97,26 @@ flips `dir` and keeps `n`, precision, layout, norm, backend.
   want a reference; magnitudes in `0 .. n/2` should match.
 - Not Bluestein / arbitrary `n`. Size must be even and 5-smooth.
 - Not a framed STFT. That stays a later transform.
+
+## Feedback FAQ
+
+**Does R2C exist?** Yes. `faf_create_rfft` is a first-class create path since
+1.0.0. Chirp: `(rfft :size N :norm ortho :layout hermitian)`.
+
+**How is normalization applied?** Using the **real** length `n`, not `n/2`.
+`FAF_NORM_ORTHO` divides by `√n` on both forward and inverse.
+
+**Which layout should I use?** `FAF_LAYOUT_HERMITIAN` (split-plane, default) is
+the fast path: `re[n/2+1]`, `im[n/2+1]`. `FAF_LAYOUT_INTERLEAVED` is opt-in
+and slower — see the `benchmark_split_plane` benchmark.
+
+**How do I get the inverse?** `faf_create_inverse(fwd)` or Chirp `(inverse)`.
+Do not retype `:size`, `:norm`, or `:layout` — they are inherited.
+
+**Is there a fused rfft→spectral→irfft kernel?** Not yet. Track milestone B in
+`PLAN.md`. The unfused `(pipeline (rfft) (spectral ...) (irfft))` path works
+today; fusion is blocked on full Hermitian-multiply test coverage.
+
+**Can I use Bluestein for prime-length RFFT?** Not in v1. RFFT + Bluestein is
+refused at create time. Use a C2C FFT with `FAF_FLAG_BLUESTEIN` on a real
+buffer if you need a prime-length real transform.

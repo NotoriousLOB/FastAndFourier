@@ -363,3 +363,60 @@ TEST(RfftChirp, MixedWithFftIrRejected) {
     EXPECT_EQ(t, nullptr);
     EXPECT_STRNE(faf_get_error(), "");
 }
+
+TEST(RfftChirp, NormLayoutPrecision) {
+    faf_transform *t = chirp_compile(
+        "(rfft :size 32 :norm ortho :layout hermitian :precision f32)");
+    ASSERT_NE(t, nullptr);
+    EXPECT_EQ(t->cfg.norm, FAF_NORM_ORTHO);
+    EXPECT_EQ(t->cfg.layout, FAF_LAYOUT_HERMITIAN);
+    EXPECT_EQ(t->precision, FAF_PREC_FP32);
+
+    const size_t n = 32, nb = 17;
+    std::vector<float> x(n, 0.0f), re(nb), im(nb);
+    x[0] = 1.0f;
+    faf_buffer in = faf_buffer_real(x.data(), n);
+    faf_buffer out = faf_buffer_hermitian(re.data(), im.data(), nb);
+    ASSERT_EQ(faf_execute(t, &out, &in), 0);
+    float s = 1.0f / sqrtf((float)n);
+    EXPECT_NEAR(re[0], s, 1e-5f);
+    EXPECT_NEAR(im[0], 0.0f, 1e-5f);
+    EXPECT_NEAR(im[nb - 1], 0.0f, 1e-5f);
+    faf_destroy_transform(t);
+
+    faf_transform *il = chirp_compile("(rfft :size 16 :layout interleaved)");
+    ASSERT_NE(il, nullptr);
+    EXPECT_EQ(il->cfg.layout, FAF_LAYOUT_INTERLEAVED);
+    faf_destroy_transform(il);
+
+    faf_transform *d = chirp_compile("(rfft :size 16 :precision f64)");
+    ASSERT_NE(d, nullptr);
+    EXPECT_EQ(d->precision, FAF_PREC_FP64);
+    faf_destroy_transform(d);
+}
+
+TEST(RfftChirp, RejectsJpeg2000Norm) {
+    faf_transform *t = chirp_compile("(rfft :size 32 :norm jpeg2000)");
+    EXPECT_EQ(t, nullptr);
+    EXPECT_STRNE(faf_get_error(), "");
+
+    faf_transform *lazy = chirp_compile("(rfft :size 32 :norm lazy)");
+    EXPECT_EQ(lazy, nullptr);
+}
+
+TEST(RfftChirp, InverseInheritsNormLayout) {
+    faf_transform *pipe = chirp_compile(
+        "(pipeline (rfft :size 64 :norm ortho :layout hermitian) (inverse))");
+    ASSERT_NE(pipe, nullptr);
+    EXPECT_EQ(pipe->type, FAF_TRANSFORM_PIPELINE);
+    const size_t n = 64;
+    std::vector<float> x(n), y(n);
+    for (size_t i = 0; i < n; i++)
+        x[i] = sinf(2.0f * (float)M_PI * 3.0f * (float)i / (float)n);
+    faf_buffer in = faf_buffer_real(x.data(), n);
+    faf_buffer out = faf_buffer_real(y.data(), n);
+    ASSERT_EQ(faf_execute(pipe, &out, &in), 0);
+    for (size_t i = 0; i < n; i++)
+        EXPECT_NEAR(y[i], x[i], 2e-4f) << i;
+    faf_destroy_transform(pipe);
+}

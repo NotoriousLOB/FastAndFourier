@@ -99,27 +99,31 @@ static inline void free_regs(void* ptr) {
 }
 
 static void apply_dwt_interleaved_f32(float *regs, size_t n, size_t length,
-                                      faf_wavelet_family fam, int inv,
+                                      const faf_transform *t,
+                                      faf_wavelet_family fam,
+                                      faf_wavelet_convention conv, int inv,
                                       float *scratch, size_t scratch_n) {
     if (length < 2 || length > n) return;
     float *tmp = (scratch && scratch_n >= length) ? scratch
                  : (float*)alloc_regs(length * sizeof(float));
     if (!tmp) return;
     for (size_t i = 0; i < length; i++) tmp[i] = regs[i * 2];
-    faf_dwt_level_f32(tmp, length, fam, inv);
+    faf_dwt_apply_level_f32(tmp, length, t, fam, conv, inv);
     for (size_t i = 0; i < length; i++) regs[i * 2] = tmp[i];
     if (tmp != scratch) free_regs(tmp);
 }
 
 static void apply_dwt_interleaved_f64(double *regs, size_t n, size_t length,
-                                      faf_wavelet_family fam, int inv,
+                                      const faf_transform *t,
+                                      faf_wavelet_family fam,
+                                      faf_wavelet_convention conv, int inv,
                                       double *scratch, size_t scratch_n) {
     if (length < 2 || length > n) return;
     double *tmp = (scratch && scratch_n >= length) ? scratch
                   : (double*)alloc_regs(length * sizeof(double));
     if (!tmp) return;
     for (size_t i = 0; i < length; i++) tmp[i] = regs[i * 2];
-    faf_dwt_level_f64(tmp, length, fam, inv);
+    faf_dwt_apply_level_f64(tmp, length, t, fam, conv, inv);
     for (size_t i = 0; i < length; i++) regs[i * 2] = tmp[i];
     if (tmp != scratch) free_regs(tmp);
 }
@@ -915,8 +919,9 @@ label_DWT_STAGE:
 #else
     case FAF_DWT_STAGE:
 #endif
-        apply_dwt_interleaved_f32(regs, t->n, inst->a1,
+        apply_dwt_interleaved_f32(regs, t->n, inst->a1, t,
                                   (faf_wavelet_family)inst->a0,
+                                  t->cfg.conv,
                                   (int)(inst->a2 & FAF_DWT_FLAG_INVERSE),
                                   (float *)t->scratch,
                                   t->scratch_size / sizeof(float));
@@ -968,6 +973,12 @@ done:
 int faf_execute_f32(const faf_transform *t,
                       float *restrict out,
                       const float *restrict in) {
+    if (t && (t->flags & FAF_FLAG_BLUESTEIN) &&
+        t->cfg.layout == FAF_LAYOUT_INTERLEAVED) {
+        faf_buffer inb = faf_buffer_interleaved((void *)in, t->n);
+        faf_buffer outb = faf_buffer_interleaved(out, t->n);
+        return faf_execute(t, &outb, &inb);
+    }
     /* Auto-JIT: for large transforms try the cached compiled kernel first */
     if (t->n >= FAF_JIT_AUTO_THRESHOLD) {
         if (faf_execute_jit_cached(t, (void*)out, (const void*)in) == 0)
@@ -1212,8 +1223,9 @@ int faf_vm_execute_f64(const faf_transform *t,
                 bitrev_interleaved_f64(regs, t->n);
                 break;
             case FAF_DWT_STAGE:
-                apply_dwt_interleaved_f64(regs, t->n, inst->a1,
+                apply_dwt_interleaved_f64(regs, t->n, inst->a1, t,
                                           (faf_wavelet_family)inst->a0,
+                                          t->cfg.conv,
                                           (int)(inst->a2 & FAF_DWT_FLAG_INVERSE),
                                           (double *)t->scratch,
                                           t->scratch_size / sizeof(double));
@@ -1248,6 +1260,12 @@ done_f64:
 int faf_execute_f64(const faf_transform *t,
                       double *restrict out,
                       const double *restrict in) {
+    if (t && (t->flags & FAF_FLAG_BLUESTEIN) &&
+        t->cfg.layout == FAF_LAYOUT_INTERLEAVED) {
+        faf_buffer inb = faf_buffer_interleaved((void *)in, t->n);
+        faf_buffer outb = faf_buffer_interleaved(out, t->n);
+        return faf_execute(t, &outb, &inb);
+    }
     /* Use split-plane execution for better performance */
     const size_t n = t->n;
     double *in_re = (double*)alloc_regs(n * sizeof(double));
@@ -1520,8 +1538,10 @@ int faf_execute_split_f32(const faf_transform *t,
             case FAF_DWT_STAGE: {
                 size_t length = inst->a1;
                 if (length >= 2 && length <= t->n) {
-                    faf_dwt_level_f32(regs_re, length, (faf_wavelet_family)inst->a0,
-                                      (int)(inst->a2 & FAF_DWT_FLAG_INVERSE));
+                    faf_dwt_apply_level_f32(regs_re, length, t,
+                                           (faf_wavelet_family)inst->a0,
+                                           t->cfg.conv,
+                                           (int)(inst->a2 & FAF_DWT_FLAG_INVERSE));
                 }
                 break;
             }
@@ -1781,8 +1801,10 @@ int faf_execute_split_f64(const faf_transform *t,
             case FAF_DWT_STAGE: {
                 size_t length = inst->a1;
                 if (length >= 2 && length <= t->n) {
-                    faf_dwt_level_f64(regs_re, length, (faf_wavelet_family)inst->a0,
-                                      (int)(inst->a2 & FAF_DWT_FLAG_INVERSE));
+                    faf_dwt_apply_level_f64(regs_re, length, t,
+                                           (faf_wavelet_family)inst->a0,
+                                           t->cfg.conv,
+                                           (int)(inst->a2 & FAF_DWT_FLAG_INVERSE));
                 }
                 break;
             }

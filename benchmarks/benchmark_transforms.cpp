@@ -203,3 +203,44 @@ BENCHMARK(BM_DWT_Family)
         {3, 0},          /* levels: 3 or full */
         {0, 1}           /* forward / inverse */
     });
+
+static void BM_DWT_Backend(benchmark::State& state) {
+    const size_t n = (size_t)state.range(0);
+    const auto fam = (faf_wavelet_family)state.range(1);
+    const auto backend = (faf_dwt_backend)state.range(2);
+
+    faf_config c = faf_config_init(n);
+    c.family = fam;
+    c.levels = 0;
+    c.layout = FAF_LAYOUT_INTERLEAVED;
+    c.dwt_backend = backend;
+    faf_transform *t = faf_create_dwt(&c);
+    if (!t) {
+        state.SkipWithError("Failed to create DWT");
+        return;
+    }
+
+    float *in = (float *)aligned_alloc(64, 2 * n * sizeof(float));
+    float *out = (float *)aligned_alloc(64, 2 * n * sizeof(float));
+    for (size_t i = 0; i < n; i++) {
+        in[2 * i] = sinf(2.0f * (float)M_PI * (float)i / (float)n);
+        in[2 * i + 1] = 0.0f;
+    }
+
+    for (auto _ : state)
+        faf_execute_f32(t, out, in);
+
+    state.SetItemsProcessed(state.iterations() * (int64_t)n);
+    const char *bname = (backend == FAF_DWT_BACKEND_FIR) ? "F" : "L";
+    state.SetLabel(std::string(faf_wavelet_name(fam)) + "/" + bname);
+
+    free(in); free(out);
+    faf_destroy_transform(t);
+}
+
+BENCHMARK(BM_DWT_Backend)
+    ->ArgsProduct({
+        {1024, 16384, 65536},
+        {0, 1, 4}, /* haar, d4, sym4 */
+        {1, 2}     /* LIFT, FIR */
+    });

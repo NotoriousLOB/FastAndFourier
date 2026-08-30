@@ -5,6 +5,7 @@
 
 #include <benchmark/benchmark.h>
 #include "fastandfourier.h"
+#include "chirp.h"
 #include "bench_util.h"
 #include <cmath>
 #include <cstring>
@@ -341,5 +342,217 @@ static void BM_FFT_Mixed(benchmark::State& state) {
     faf_destroy_transform(t);
 }
 BENCHMARK(BM_FFT_Mixed)
-    ->Arg(4000)->Arg(4096)
+    ->Arg(3840)->Arg(4000)->Arg(4096)
     ->Unit(benchmark::kMicrosecond);
+
+/* rfft_3840 split Hermitian vs interleaved — layout tax. */
+static void BM_RFFT_Layout(benchmark::State& state) {
+    const size_t n = 3840;
+    const size_t nb = n / 2 + 1;
+    const int interleaved = (int)state.range(0);
+    faf_config c = faf_config_init(n);
+    c.layout = interleaved ? FAF_LAYOUT_INTERLEAVED : FAF_LAYOUT_HERMITIAN;
+    faf_transform *t = faf_create_rfft(&c);
+    if (!t) {
+        state.SkipWithError("Failed to create rfft");
+        return;
+    }
+    float *x = (float *)aligned_alloc(64, n * sizeof(float));
+    for (size_t i = 0; i < n; i++)
+        x[i] = sinf(2.0f * (float)M_PI * 4.0f * (float)i / (float)n);
+    faf_buffer in = faf_buffer_real(x, n);
+    float *re = (float *)aligned_alloc(64, (interleaved ? 2 * nb : nb) * sizeof(float));
+    float *im = interleaved ? nullptr
+                            : (float *)aligned_alloc(64, nb * sizeof(float));
+    faf_buffer out;
+    if (interleaved)
+        out = faf_buffer_interleaved(re, nb);
+    else
+        out = faf_buffer_hermitian(re, im, nb);
+    for (auto _ : state) {
+        faf_execute(t, &out, &in);
+        benchmark::DoNotOptimize(re);
+    }
+    state.SetItemsProcessed(state.iterations() * (int64_t)n);
+    free(x); free(re); if (im) free(im);
+    faf_destroy_transform(t);
+}
+BENCHMARK(BM_RFFT_Layout)
+    ->Arg(0)->Arg(1)
+    ->Unit(benchmark::kMicrosecond);
+
+/* Packed Hermitian corr vs unpack-to-full C2C conjugate multiply. */
+static void BM_RFFT_CorrPacked(benchmark::State& state) {
+    const size_t n = 1024;
+    const size_t nb = n / 2 + 1;
+    const int packed = (int)state.range(0);
+    float *x = (float *)aligned_alloc(64, n * sizeof(float));
+    float *h = (float *)aligned_alloc(64, n * sizeof(float));
+    for (size_t i = 0; i < n; i++) {
+        x[i] = sinf(2.0f * (float)M_PI * 3.0f * (float)i / (float)n);
+        h[i] = cosf(2.0f * (float)M_PI * 5.0f * (float)i / (float)n);
+    }
+    if (packed) {
+        faf_config c = faf_config_init(n);
+        faf_transform *fwd = faf_create_rfft(&c);
+        faf_transform *inv = faf_create_inverse(fwd);
+        float *Xr = (float *)aligned_alloc(64, nb * sizeof(float));
+        float *Xi = (float *)aligned_alloc(64, nb * sizeof(float));
+        float *Hr = (float *)aligned_alloc(64, nb * sizeof(float));
+        float *Hi = (float *)aligned_alloc(64, nb * sizeof(float));
+        float *y = (float *)aligned_alloc(64, n * sizeof(float));
+        faf_buffer hin = faf_buffer_real(h, n);
+        faf_buffer Hs = faf_buffer_hermitian(Hr, Hi, nb);
+        faf_execute(fwd, &Hs, &hin);
+        faf_buffer xin = faf_buffer_real(x, n);
+        faf_buffer Xs = faf_buffer_hermitian(Xr, Xi, nb);
+        faf_buffer yb = faf_buffer_real(y, n);
+        for (auto _ : state) {
+            faf_execute(fwd, &Xs, &xin);
+            faf_herm_mul_conj_f32(Xr, Xi, Xr, Xi, Hr, Hi, nb);
+            faf_execute(inv, &yb, &Xs);
+            benchmark::DoNotOptimize(y);
+        }
+        free(Xr); free(Xi); free(Hr); free(Hi); free(y);
+        faf_destroy_transform(fwd);
+        faf_destroy_transform(inv);
+    } else {
+        faf_config c = faf_config_init(n);
+        c.layout = FAF_LAYOUT_SPLIT;
+        faf_transform *fwd = faf_create_fft(&c);
+        faf_transform *inv = faf_create_inverse(fwd);
+        float *xr = (float *)aligned_alloc(64, n * sizeof(float));
+        float *xi = (float *)aligned_alloc(64, n * sizeof(float));
+        float *hr = (float *)aligned_alloc(64, n * sizeof(float));
+        float *hi = (float *)aligned_alloc(64, n * sizeof(float));
+        float *Xr = (float *)aligned_alloc(64, n * sizeof(float));
+        float *Xi = (float *)aligned_alloc(64, n * sizeof(float));
+        float *Hr = (float *)aligned_alloc(64, n * sizeof(float));
+        float *Hi = (float *)aligned_alloc(64, n * sizeof(float));
+        float *zr = (float *)aligned_alloc(64, n * sizeof(float));
+        float *zi = (float *)aligned_alloc(64, n * sizeof(float));
+        memcpy(xr, x, n * sizeof(float));
+        memcpy(hr, h, n * sizeof(float));
+        memset(xi, 0, n * sizeof(float));
+        memset(hi, 0, n * sizeof(float));
+        faf_buffer hin = faf_buffer_split(hr, hi, n);
+        faf_buffer Hs = faf_buffer_split(Hr, Hi, n);
+        faf_execute(fwd, &Hs, &hin);
+        faf_buffer xin = faf_buffer_split(xr, xi, n);
+        faf_buffer Xs = faf_buffer_split(Xr, Xi, n);
+        faf_buffer Ys = faf_buffer_split(zr, zi, n);
+        for (auto _ : state) {
+            memcpy(xr, x, n * sizeof(float));
+            memset(xi, 0, n * sizeof(float));
+            faf_execute(fwd, &Xs, &xin);
+            for (size_t k = 0; k < n; k++) {
+                float ar = Xr[k], ai = Xi[k], br = Hr[k], bi = Hi[k];
+                Xr[k] = ar * br + ai * bi;
+                Xi[k] = ai * br - ar * bi;
+            }
+            faf_execute(inv, &Ys, &Xs);
+            benchmark::DoNotOptimize(zr);
+        }
+        free(xr); free(xi); free(hr); free(hi);
+        free(Xr); free(Xi); free(Hr); free(Hi); free(zr); free(zi);
+        faf_destroy_transform(fwd);
+        faf_destroy_transform(inv);
+    }
+    free(x); free(h);
+    state.SetItemsProcessed(state.iterations() * (int64_t)n);
+}
+BENCHMARK(BM_RFFT_CorrPacked)
+    ->Arg(1)->Arg(0)
+    ->Unit(benchmark::kMicrosecond);
+
+/* Bluestein n=307 vs pad-to-320 vs pad-to-512. */
+static void BM_FFT_Bluestein(benchmark::State& state) {
+    const size_t n = (size_t)state.range(0);
+    const int bluestein = (int)state.range(1);
+    faf_config c = faf_config_init(n);
+    c.layout = FAF_LAYOUT_SPLIT;
+    if (bluestein) c.flags = FAF_FLAG_BLUESTEIN;
+    faf_transform *t = faf_create_fft(&c);
+    if (!t) {
+        state.SkipWithError("Failed to create fft");
+        return;
+    }
+    float *re_in = (float *)aligned_alloc(64, n * sizeof(float));
+    float *im_in = (float *)aligned_alloc(64, n * sizeof(float));
+    float *re_out = (float *)aligned_alloc(64, n * sizeof(float));
+    float *im_out = (float *)aligned_alloc(64, n * sizeof(float));
+    for (size_t i = 0; i < n; i++) {
+        re_in[i] = sinf(2.0f * (float)M_PI * 4.0f * (float)i / (float)n);
+        im_in[i] = 0.0f;
+    }
+    faf_buffer in = faf_buffer_split(re_in, im_in, n);
+    faf_buffer out = faf_buffer_split(re_out, im_out, n);
+    for (auto _ : state) {
+        faf_execute(t, &out, &in);
+        benchmark::DoNotOptimize(re_out);
+    }
+    state.SetItemsProcessed(state.iterations() * (int64_t)n);
+    free(re_in); free(im_in); free(re_out); free(im_out);
+    faf_destroy_transform(t);
+}
+BENCHMARK(BM_FFT_Bluestein)
+    ->Args({307, 1})
+    ->Args({320, 0})
+    ->Args({512, 0})
+    ->Unit(benchmark::kMicrosecond);
+
+/* Fused rfft→spectral→irfft vs unfused (milestone B is already in tree). */
+static void ident_spec(float *re, float *im, size_t n_bins, void *ctx) {
+    (void)re; (void)im; (void)n_bins; (void)ctx;
+}
+static void BM_Pipeline_Fused(benchmark::State& state) {
+    const size_t n = 1024;
+    chirp_register_spectral("ident_bench", ident_spec, nullptr);
+    faf_transform *t = chirp_compile(
+        "(pipeline (rfft :size 1024) (spectral ident_bench) (irfft))");
+    if (!t) {
+        state.SkipWithError("compile failed");
+        return;
+    }
+    float *x = (float *)aligned_alloc(64, n * sizeof(float));
+    float *y = (float *)aligned_alloc(64, n * sizeof(float));
+    for (size_t i = 0; i < n; i++)
+        x[i] = sinf(2.0f * (float)M_PI * 4.0f * (float)i / (float)n);
+    faf_buffer in = faf_buffer_real(x, n);
+    faf_buffer out = faf_buffer_real(y, n);
+    for (auto _ : state) {
+        faf_execute(t, &out, &in);
+        benchmark::DoNotOptimize(y);
+    }
+    state.SetItemsProcessed(state.iterations() * (int64_t)n);
+    free(x); free(y);
+    faf_destroy_transform(t);
+}
+static void BM_Pipeline_Unfused(benchmark::State& state) {
+    const size_t n = 1024;
+    const size_t nb = n / 2 + 1;
+    faf_config c = faf_config_init(n);
+    faf_transform *fwd = faf_create_rfft(&c);
+    faf_transform *inv = faf_create_inverse(fwd);
+    float *x = (float *)aligned_alloc(64, n * sizeof(float));
+    float *y = (float *)aligned_alloc(64, n * sizeof(float));
+    float *re = (float *)aligned_alloc(64, nb * sizeof(float));
+    float *im = (float *)aligned_alloc(64, nb * sizeof(float));
+    for (size_t i = 0; i < n; i++)
+        x[i] = sinf(2.0f * (float)M_PI * 4.0f * (float)i / (float)n);
+    faf_buffer in = faf_buffer_real(x, n);
+    faf_buffer spec = faf_buffer_hermitian(re, im, nb);
+    faf_buffer out = faf_buffer_real(y, n);
+    for (auto _ : state) {
+        faf_execute(fwd, &spec, &in);
+        ident_spec(re, im, nb, nullptr);
+        faf_execute(inv, &out, &spec);
+        benchmark::DoNotOptimize(y);
+    }
+    state.SetItemsProcessed(state.iterations() * (int64_t)n);
+    free(x); free(y); free(re); free(im);
+    faf_destroy_transform(fwd);
+    faf_destroy_transform(inv);
+}
+BENCHMARK(BM_Pipeline_Fused)->Unit(benchmark::kMicrosecond);
+BENCHMARK(BM_Pipeline_Unfused)->Unit(benchmark::kMicrosecond);

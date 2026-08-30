@@ -18,6 +18,7 @@ set(EXAMPLES
     spectral_notch
     fft_convolve
     matched_filter
+    split_corr
     analytic_envelope
     cwt_filterbank
     cwt_reconstruct

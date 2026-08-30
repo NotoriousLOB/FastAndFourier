@@ -92,7 +92,11 @@ typedef enum {
     CHIRP_NODE_CWT,        /* (cwt :n N :wavelet morse ...) */
     CHIRP_NODE_ICWT,       /* (icwt :n N ...) */
     CHIRP_NODE_LITERAL,    /* number or symbol */
-    CHIRP_NODE_LIST        /* generic list */
+    CHIRP_NODE_LIST,       /* generic list */
+    CHIRP_NODE_INVERSE,    /* (inverse) or (inverse NAME) */
+    CHIRP_NODE_LET,        /* (let NAME expr [body…]) */
+    CHIRP_NODE_BIND,       /* (bind NAME :h … :g …) */
+    CHIRP_NODE_PROG        /* implicit begin of top-level forms */
 } chirp_node_type;
 
 /* AST Node */
@@ -110,6 +114,128 @@ typedef struct chirp_node {
     int n_kw;
 } chirp_node;
 
+/* --- Scope (lexical let-bindings for (let NAME expr) / (inverse NAME)) --- */
+
+#define CHIRP_SCOPE_SLOTS 16
+
+typedef struct chirp_scope_entry {
+    char name[64];
+    faf_transform *transform;
+    chirp_node    *node;
+} chirp_scope_entry;
+
+typedef struct chirp_scope {
+    struct chirp_scope  *parent;
+    chirp_scope_entry    entries[CHIRP_SCOPE_SLOTS];
+    int                  count;
+} chirp_scope;
+
+static chirp_scope *chirp_scope_push(chirp_scope *parent) {
+    chirp_scope *s = calloc(1, sizeof(chirp_scope));
+    if (s) s->parent = parent;
+    return s;
+}
+
+static void chirp_scope_pop(chirp_scope *scope) {
+    if (!scope) return;
+    for (int i = 0; i < scope->count; i++) {
+        if (scope->entries[i].transform)
+            faf_destroy_transform(scope->entries[i].transform);
+    }
+    free(scope);
+}
+
+static int chirp_scope_bind(chirp_scope *scope, const char *name,
+                            faf_transform *t, chirp_node *node) {
+    if (!scope || !name) return -1;
+    if (scope->count >= CHIRP_SCOPE_SLOTS) return -1;
+    chirp_scope_entry *e = &scope->entries[scope->count++];
+    strncpy(e->name, name, sizeof(e->name) - 1);
+    e->transform = t;
+    e->node = node;
+    return 0;
+}
+
+static chirp_scope_entry *chirp_scope_lookup(chirp_scope *scope, const char *name) {
+    for (chirp_scope *s = scope; s; s = s->parent) {
+        for (int i = 0; i < s->count; i++) {
+            if (strcmp(s->entries[i].name, name) == 0)
+                return &s->entries[i];
+        }
+    }
+    return NULL;
+}
+
+#define CHIRP_MAX_VECS 32
+#define CHIRP_MAX_TAPSETS 16
+
+typedef struct {
+    char *name;
+    const float *data;
+    int len;
+} chirp_vec;
+
+typedef struct {
+    char *name;
+    const float *h, *g, *ht, *gt;
+    int len_hg, len_syn;
+} chirp_tapset;
+
+static chirp_vec g_vecs[CHIRP_MAX_VECS];
+static int g_n_vecs = 0;
+static chirp_tapset g_taps[CHIRP_MAX_TAPSETS];
+static int g_n_taps = 0;
+
+static chirp_vec *chirp_lookup_vector(const char *name) {
+    if (!name) return NULL;
+    for (int i = 0; i < g_n_vecs; i++) {
+        if (g_vecs[i].name && strcmp(g_vecs[i].name, name) == 0)
+            return &g_vecs[i];
+    }
+    return NULL;
+}
+
+static chirp_tapset *chirp_lookup_taps(const char *name) {
+    if (!name) return NULL;
+    for (int i = 0; i < g_n_taps; i++) {
+        if (g_taps[i].name && strcmp(g_taps[i].name, name) == 0)
+            return &g_taps[i];
+    }
+    return NULL;
+}
+
+int chirp_register_vector(const char *name, const float *data, int len) {
+    if (!name || !data || len < 1) return -1;
+    chirp_vec *v = chirp_lookup_vector(name);
+    if (!v) {
+        if (g_n_vecs >= CHIRP_MAX_VECS) return -1;
+        v = &g_vecs[g_n_vecs++];
+        v->name = strdup(name);
+    }
+    v->data = data;
+    v->len = len;
+    return 0;
+}
+
+int chirp_register_taps(const char *name,
+                        const float *h, const float *g, int len_hg,
+                        const float *ht, const float *gt, int len_syn) {
+    if (!name || !h || !g || len_hg < 1) return -1;
+    chirp_tapset *ts = chirp_lookup_taps(name);
+    if (!ts) {
+        if (g_n_taps >= CHIRP_MAX_TAPSETS) return -1;
+        ts = &g_taps[g_n_taps++];
+        ts->name = strdup(name);
+    }
+    ts->h = h;
+    ts->g = g;
+    ts->len_hg = len_hg;
+    ts->ht = ht;
+    ts->gt = gt;
+    ts->len_syn = (ht && gt) ? len_syn : 0;
+    return 0;
+}
+
 /* Forward declarations */
 static chirp_token chirp_lexer_next(chirp_lexer *lex);
 static chirp_node* chirp_parse_expr(chirp_lexer *lex);
@@ -126,6 +252,20 @@ static void chirp_init_builtins(void) {
 
 /* Public API: Free all registered builtin names and reset */
 void chirp_cleanup(void) {
+    for (int i = 0; i < g_n_vecs; i++) {
+        free(g_vecs[i].name);
+        g_vecs[i].name = NULL;
+        g_vecs[i].data = NULL;
+        g_vecs[i].len = 0;
+    }
+    g_n_vecs = 0;
+    for (int i = 0; i < g_n_taps; i++) {
+        free(g_taps[i].name);
+        g_taps[i].name = NULL;
+        g_taps[i].h = g_taps[i].g = g_taps[i].ht = g_taps[i].gt = NULL;
+        g_taps[i].len_hg = g_taps[i].len_syn = 0;
+    }
+    g_n_taps = 0;
     for (int i = 0; i < g_chirp_count; i++) {
         free(chirp_table[i].name);
         chirp_table[i].name = NULL;
@@ -291,11 +431,7 @@ void chirp_apply_split_f32(const faf_transform *t, uint32_t a0, uint32_t a1,
         size_t m = t->user_aux_n < n ? t->user_aux_n : n;
         const float *hr = (const float *)t->user_aux;
         const float *hi = (const float *)t->user_aux_im;
-        for (size_t i = 0; i < m; i++) {
-            float ar = re[i], ai = im[i];
-            re[i] = ar * hr[i] - ai * hi[i];
-            im[i] = ar * hi[i] + ai * hr[i];
-        }
+        faf_herm_mul_f32(re, im, re, im, hr, hi, m);
         return;
     }
     if (a0 == CHIRP_OP_BANDPASS) {
@@ -347,11 +483,7 @@ void chirp_apply_split_f64(const faf_transform *t, uint32_t a0, uint32_t a1,
         size_t m = t->user_aux_n < n ? t->user_aux_n : n;
         const double *hr = (const double *)t->user_aux;
         const double *hi = (const double *)t->user_aux_im;
-        for (size_t i = 0; i < m; i++) {
-            double ar = re[i], ai = im[i];
-            re[i] = ar * hr[i] - ai * hi[i];
-            im[i] = ar * hi[i] + ai * hr[i];
-        }
+        faf_herm_mul_f64(re, im, re, im, hr, hi, m);
         return;
     }
     if (a0 == CHIRP_OP_BANDPASS) {
@@ -655,6 +787,12 @@ static chirp_node* chirp_parse_expr(chirp_lexer *lex) {
                 node = chirp_node_new(CHIRP_NODE_CWT);
             } else if (strcmp(op.text, "icwt") == 0) {
                 node = chirp_node_new(CHIRP_NODE_ICWT);
+            } else if (strcmp(op.text, "inverse") == 0) {
+                node = chirp_node_new(CHIRP_NODE_INVERSE);
+            } else if (strcmp(op.text, "let") == 0) {
+                node = chirp_node_new(CHIRP_NODE_LET);
+            } else if (strcmp(op.text, "bind") == 0) {
+                node = chirp_node_new(CHIRP_NODE_BIND);
             } else {
                 node = chirp_node_new(CHIRP_NODE_LIST);
                 node->sym = strdup(op.text);
@@ -680,7 +818,17 @@ static chirp_node* chirp_parse_expr(chirp_lexer *lex) {
                 if (c == ':') {
                     int dummy;
                     char *kw_name = chirp_lexer_read_symbol(lex, &dummy);
-                    chirp_node *kw_value = chirp_parse_expr(lex);
+                    chirp_lexer_skip_ws(lex);
+                    char next = chirp_lexer_peek(lex);
+                    chirp_node *kw_value;
+                    /* Bare flags such as :bluestein take no value. */
+                    if (next == ')' || next == ':' || next == '\0') {
+                        kw_value = chirp_node_new(CHIRP_NODE_LITERAL);
+                        kw_value->value = 1;
+                        kw_value->sym = strdup("true");
+                    } else {
+                        kw_value = chirp_parse_expr(lex);
+                    }
                     if (kw_value) {
                         chirp_node_add_kwarg(node, kw_name, kw_value);
                     }
@@ -836,6 +984,15 @@ static int chirp_parse_layout(chirp_node *node, faf_layout *out) {
     return -1;
 }
 
+static int chirp_parse_backend(chirp_node *node, faf_dwt_backend *out) {
+    const char *name = chirp_node_name(node);
+    if (!name) return -1;
+    if (strcmp(name, "auto") == 0) { *out = FAF_DWT_BACKEND_AUTO; return 0; }
+    if (strcmp(name, "lift") == 0) { *out = FAF_DWT_BACKEND_LIFT; return 0; }
+    if (strcmp(name, "fir") == 0)  { *out = FAF_DWT_BACKEND_FIR;  return 0; }
+    return -1;
+}
+
 static int chirp_parse_norm(chirp_node *node, faf_norm *out) {
     const char *name = chirp_node_name(node);
     if (!name) return -1;
@@ -912,10 +1069,170 @@ static void chirp_emit_dwt_stages(faf_transform *t, int *inst_count,
 }
 
 /* Compile an AST node to IR instructions */
-static void chirp_compile_node_emit(chirp_node *node, faf_transform *t, int *inst_count);
+static void chirp_compile_node_emit(chirp_node *node, faf_transform *t, int *inst_count,
+                                    chirp_scope *scope);
 
-static void chirp_compile_node_emit(chirp_node *node, faf_transform *t, int *inst_count) {
+static chirp_node *chirp_resolve(chirp_node *n, chirp_scope *scope) {
+    if (!n || !scope) return n;
+    if (n->type == CHIRP_NODE_INVERSE)
+        return n;
+    const char *nm = chirp_node_name(n);
+    if (!nm && n->sym) nm = n->sym;
+    if (!nm) return n;
+    if (n->type == CHIRP_NODE_LITERAL || n->type == CHIRP_NODE_LIST ||
+        n->type == CHIRP_NODE_CUSTOM) {
+        chirp_scope_entry *e = chirp_scope_lookup(scope, nm);
+        if (e && e->node) return e->node;
+    }
+    return n;
+}
+
+static const char *chirp_let_name(chirp_node *let) {
+    if (!let || let->n_children < 1) return NULL;
+    if (let->children[0]->sym) return let->children[0]->sym;
+    return chirp_node_name(let->children[0]);
+}
+
+static void chirp_bind_lets(chirp_node *n, chirp_scope *scope) {
+    if (!n || !scope) return;
+    if (n->type == CHIRP_NODE_LET) {
+        const char *name = chirp_let_name(n);
+        if (name && n->n_children >= 2)
+            chirp_scope_bind(scope, name, NULL, n->children[1]);
+        for (int i = 2; i < n->n_children; i++)
+            chirp_bind_lets(n->children[i], scope);
+        return;
+    }
+    if (n->type == CHIRP_NODE_PROG || n->type == CHIRP_NODE_PIPELINE) {
+        for (int i = 0; i < n->n_children; i++)
+            chirp_bind_lets(n->children[i], scope);
+    }
+}
+
+static int chirp_eval_bind_node(chirp_node *n) {
+    if (!n || n->type != CHIRP_NODE_BIND) return 0;
+    const char *name = NULL;
+    if (n->n_children > 0)
+        name = n->children[0]->sym ? n->children[0]->sym
+                                   : chirp_node_name(n->children[0]);
+    if (!name) {
+        faf_set_error("Chirp: (bind NAME :h … :g …) requires a name");
+        return -1;
+    }
+    chirp_node *hn = chirp_node_get_kwarg(n, "h");
+    chirp_node *gn = chirp_node_get_kwarg(n, "g");
+    chirp_node *htn = chirp_node_get_kwarg(n, "h-syn");
+    if (!htn) htn = chirp_node_get_kwarg(n, "h_syn");
+    chirp_node *gtn = chirp_node_get_kwarg(n, "g-syn");
+    if (!gtn) gtn = chirp_node_get_kwarg(n, "g_syn");
+    const char *hname = chirp_node_name(hn);
+    const char *gname = chirp_node_name(gn);
+    if (!hname) hname = hn && hn->sym ? hn->sym : NULL;
+    if (!gname) gname = gn && gn->sym ? gn->sym : NULL;
+    chirp_vec *hv = chirp_lookup_vector(hname);
+    chirp_vec *gv = chirp_lookup_vector(gname);
+    if (!hv || !gv) {
+        faf_set_error("Chirp: (bind %s) :h/:g must name registered vectors", name);
+        return -1;
+    }
+    if (hv->len != gv->len) {
+        faf_set_error("Chirp: (bind %s) :h and :g lengths differ", name);
+        return -1;
+    }
+    const float *ht = NULL, *gt = NULL;
+    int ls = 0;
+    if (htn && gtn) {
+        const char *htname = chirp_node_name(htn);
+        const char *gtname = chirp_node_name(gtn);
+        if (!htname) htname = htn->sym;
+        if (!gtname) gtname = gtn->sym;
+        chirp_vec *htv = chirp_lookup_vector(htname);
+        chirp_vec *gtv = chirp_lookup_vector(gtname);
+        if (!htv || !gtv) {
+            faf_set_error("Chirp: (bind %s) :h-syn/:g-syn must name registered vectors",
+                          name);
+            return -1;
+        }
+        ht = htv->data;
+        gt = gtv->data;
+        ls = htv->len;
+    }
+    return chirp_register_taps(name, hv->data, gv->data, hv->len, ht, gt, ls);
+}
+
+static int chirp_eval_binds(chirp_node *n) {
+    if (!n) return 0;
+    if (n->type == CHIRP_NODE_BIND)
+        return chirp_eval_bind_node(n);
+    if (n->type == CHIRP_NODE_PROG || n->type == CHIRP_NODE_PIPELINE ||
+        n->type == CHIRP_NODE_LET) {
+        for (int i = 0; i < n->n_children; i++) {
+            if (chirp_eval_binds(n->children[i]) != 0)
+                return -1;
+        }
+    }
+    return 0;
+}
+
+static chirp_node *chirp_program_main(chirp_node *n) {
+    if (!n) return NULL;
+    if (n->type == CHIRP_NODE_LET) {
+        if (n->n_children >= 3)
+            return chirp_program_main(n->children[n->n_children - 1]);
+        if (n->n_children >= 2)
+            return chirp_program_main(n->children[1]);
+        return n;
+    }
+    if (n->type == CHIRP_NODE_PROG) {
+        chirp_node *main = NULL;
+        for (int i = 0; i < n->n_children; i++) {
+            chirp_node *c = n->children[i];
+            if (c->type == CHIRP_NODE_LET) {
+                if (c->n_children >= 3)
+                    main = chirp_program_main(c);
+            } else if (c->type == CHIRP_NODE_BIND) {
+                continue;
+            } else {
+                main = c;
+            }
+        }
+        return main;
+    }
+    return n;
+}
+
+static chirp_node *chirp_parse_program(chirp_lexer *lex) {
+    chirp_node *first = chirp_parse_expr(lex);
+    if (!first) return NULL;
+    chirp_lexer_skip_ws(lex);
+    if (chirp_lexer_peek(lex) == '\0')
+        return first;
+    chirp_node *prog = chirp_node_new(CHIRP_NODE_PROG);
+    chirp_node_add_child(prog, first);
+    while (1) {
+        chirp_lexer_skip_ws(lex);
+        if (chirp_lexer_peek(lex) == '\0')
+            break;
+        chirp_node *n = chirp_parse_expr(lex);
+        if (!n) break;
+        chirp_node_add_child(prog, n);
+    }
+    return prog;
+}
+
+static void chirp_compile_node_emit(chirp_node *node, faf_transform *t, int *inst_count,
+                                    chirp_scope *scope) {
     if (!node) return;
+
+    if (node->type != CHIRP_NODE_PIPELINE && node->type != CHIRP_NODE_LET &&
+        node->type != CHIRP_NODE_PROG && node->type != CHIRP_NODE_BIND &&
+        node->type != CHIRP_NODE_INVERSE) {
+        chirp_node *r = chirp_resolve(node, scope);
+        if (r != node) {
+            chirp_compile_node_emit(r, t, inst_count, scope);
+            return;
+        }
+    }
     
     faf_inst inst = {0};
     
@@ -923,10 +1240,25 @@ static void chirp_compile_node_emit(chirp_node *node, faf_transform *t, int *ins
         case CHIRP_NODE_PIPELINE: {
             /* Pipeline just sequences its children */
             for (int i = 0; i < node->n_children; i++) {
-                chirp_compile_node_emit(node->children[i], t, inst_count);
+                chirp_compile_node_emit(node->children[i], t, inst_count, scope);
             }
             return;
         }
+        case CHIRP_NODE_PROG: {
+            for (int i = 0; i < node->n_children; i++) {
+                if (node->children[i]->type == CHIRP_NODE_BIND)
+                    continue;
+                chirp_compile_node_emit(node->children[i], t, inst_count, scope);
+            }
+            return;
+        }
+        case CHIRP_NODE_LET: {
+            for (int i = 2; i < node->n_children; i++)
+                chirp_compile_node_emit(node->children[i], t, inst_count, scope);
+            return;
+        }
+        case CHIRP_NODE_BIND:
+            return;
         
         case CHIRP_NODE_RFFT:
         case CHIRP_NODE_IRFFT:
@@ -959,9 +1291,14 @@ static void chirp_compile_node_emit(chirp_node *node, faf_transform *t, int *ins
             t->type = inverse ? FAF_TRANSFORM_IFFT : FAF_TRANSFORM_FFT;
             if (inverse) t->flags |= FAF_FLAG_INVERSE;
             if (n > t->n) t->n = n;
+            if (chirp_node_get_kwarg(node, "bluestein") && !faf_is_5_smooth(n)) {
+                faf_set_error("Chirp: :bluestein is only valid on a "
+                              "standalone (fft)");
+                return;
+            }
             if (!faf_is_5_smooth(n)) {
                 faf_set_error("Chirp: FFT size must be 5-smooth, got %zu; "
-                              "nearest is %zu", n,
+                              "nearest is %zu (or pass :bluestein)", n,
                               faf_get_recommended_size(FAF_TRANSFORM_FFT, n));
                 return;
             }
@@ -1066,7 +1403,10 @@ static void chirp_compile_node_emit(chirp_node *node, faf_transform *t, int *ins
             int inverse = (node->type == CHIRP_NODE_IDWT);
             faf_wavelet_family fam = FAF_WAVELET_HAAR;
             chirp_node *fam_node = chirp_node_get_kwarg(node, "family");
-            if (chirp_parse_family(fam_node, &fam) != 0 && fam_node && fam_node->sym) {
+            const char *fam_name = chirp_node_name(fam_node);
+            int family_custom = (fam_name && strcmp(fam_name, "custom") == 0);
+            if (!family_custom &&
+                chirp_parse_family(fam_node, &fam) != 0 && fam_node && fam_node->sym) {
                 faf_set_error("Chirp: unknown wavelet family '%s'", fam_node->sym);
                 return;
             }
@@ -1074,6 +1414,11 @@ static void chirp_compile_node_emit(chirp_node *node, faf_transform *t, int *ins
             chirp_node *size_node = chirp_node_get_kwarg(node, "size");
             if (size_node) n = (size_t)chirp_node_int(size_node, (int)n);
             if (n == 0) n = 64;
+            if (!faf_is_power_of_2(n) || n < 2) {
+                faf_set_error("Chirp: DWT size must be a power of 2, got %zu; "
+                              "see docs/DWT.md", n);
+                return;
+            }
             if (n > t->n) t->n = n;
 
             size_t max_levels = chirp_log2_size(n);
@@ -1086,8 +1431,64 @@ static void chirp_compile_node_emit(chirp_node *node, faf_transform *t, int *ins
             if (levels > max_levels) levels = max_levels;
             if (levels == 0) levels = max_levels;
 
+            faf_wavelet_convention conv = FAF_CONV_UNSPEC;
+            chirp_node *conv_node = chirp_node_get_kwarg(node, "conv");
+            if (conv_node) {
+                const char *cname = chirp_node_name(conv_node);
+                if (!cname || faf_convention_from_name(cname, &conv) != 0) {
+                    faf_set_error("Chirp: unknown convention '%s'",
+                                 cname ? cname : "(null)");
+                    return;
+                }
+                if (faf_validate_convention(fam, conv) != 0) {
+                    faf_set_error("Chirp: convention '%s' incompatible with family '%s'",
+                                 cname, faf_wavelet_name(fam));
+                    return;
+                }
+            }
+            if (conv == FAF_CONV_UNSPEC)
+                conv = family_custom ? FAF_CONV_CUSTOM_PR
+                                     : faf_convention_default(fam);
+
+            faf_dwt_backend backend = FAF_DWT_BACKEND_AUTO;
+            chirp_node *be_node = chirp_node_get_kwarg(node, "backend");
+            if (be_node) {
+                const char *bname = chirp_node_name(be_node);
+                if (!bname || chirp_parse_backend(be_node, &backend) != 0) {
+                    faf_set_error("Chirp: unknown DWT backend '%s'",
+                                 bname ? bname : "(null)");
+                    return;
+                }
+            }
+            if (faf_dwt_resolve_backend(fam, conv, backend, &backend) != 0)
+                return;
+
+            chirp_node *taps_node = chirp_node_get_kwarg(node, "taps");
+            if (taps_node) {
+                const char *tname = chirp_node_name(taps_node);
+                if (!tname) tname = taps_node->sym;
+                chirp_tapset *ts = chirp_lookup_taps(tname);
+                if (!ts) {
+                    faf_set_error("Chirp: unknown tap set '%s'",
+                                 tname ? tname : "(null)");
+                    return;
+                }
+                t->cfg.conv = conv;
+                t->cfg.dwt_backend = backend;
+                t->family = fam;
+                if (faf_dwt_set_taps((faf_transform *)t, ts->h, ts->g, ts->len_hg,
+                                     ts->ht, ts->gt, ts->len_syn) != 0)
+                    return;
+                conv = t->cfg.conv; /* may become ANALYSIS_ONLY */
+            } else if (conv == FAF_CONV_CUSTOM_PR || conv == FAF_CONV_ANALYSIS_ONLY) {
+                faf_set_error("Chirp: custom DWT requires :taps NAME or C faf_dwt_set_taps");
+                return;
+            }
+
             t->family = fam;
             t->levels = levels;
+            t->cfg.conv = conv;
+            t->cfg.dwt_backend = backend;
             t->type = (fam == FAF_WAVELET_HAAR) ? FAF_TRANSFORM_HAAR :
                       (fam == FAF_WAVELET_D4) ? FAF_TRANSFORM_DAUBECHIES4 :
                       (fam == FAF_WAVELET_CDF53) ? FAF_TRANSFORM_CDF53 :
@@ -1179,10 +1580,51 @@ static void chirp_compile_node_emit(chirp_node *node, faf_transform *t, int *ins
             break;
         }
         
+        case CHIRP_NODE_INVERSE: {
+            chirp_node *size_kw = chirp_node_get_kwarg(node, "size");
+            if (size_kw) {
+                faf_set_error("Chirp: (inverse) inherits size from the "
+                              "forward transform; delete :size (inherited)");
+                return;
+            }
+            const char *iname = NULL;
+            if (node->n_children > 0) {
+                iname = node->children[0]->sym
+                            ? node->children[0]->sym
+                            : chirp_node_name(node->children[0]);
+            }
+            if (iname) {
+                chirp_scope_entry *e = chirp_scope_lookup(scope, iname);
+                if (!e || !e->node) {
+                    faf_set_error("Chirp: (inverse %s) is not bound", iname);
+                    return;
+                }
+                if (e->node->type == CHIRP_NODE_DWT ||
+                    e->node->type == CHIRP_NODE_IDWT) {
+                    chirp_node tmp = *e->node;
+                    tmp.type = CHIRP_NODE_IDWT;
+                    chirp_compile_node_emit(&tmp, t, inst_count, scope);
+                    return;
+                }
+                faf_set_error("Chirp: (inverse %s) is not an invertible DWT; "
+                              "use a fused (pipeline F … (inverse F)) for RFFT",
+                              iname);
+                return;
+            }
+            if (t->family >= FAF_WAVELET_COUNT || t->n == 0) {
+                faf_set_error("Chirp: (inverse) has no preceding invertible "
+                              "stage in this pipeline");
+                return;
+            }
+            chirp_emit_dwt_stages(t, inst_count, t->family, t->n,
+                                  t->levels, /*inverse=*/1);
+            return;
+        }
+
         default:
             return;
     }
-    
+
     chirp_emit_inst(t, inst, inst_count);
 }
 
@@ -1215,12 +1657,82 @@ static faf_transform *chirp_compile_rfft_node(chirp_node *node) {
         faf_set_error("Chirp: unknown :norm for rfft");
         return NULL;
     }
+    if (c.norm == FAF_NORM_JPEG2000 || c.norm == FAF_NORM_LAZY) {
+        faf_set_error("Chirp: :norm jpeg2000/lazy is not valid on (rfft); "
+                      "use none|ortho|forward");
+        return NULL;
+    }
     chirp_node *lay_node = chirp_node_get_kwarg(node, "layout");
     if (lay_node && chirp_parse_layout(lay_node, &c.layout) != 0) {
         faf_set_error("Chirp: unknown :layout for rfft");
         return NULL;
     }
+    chirp_node *prec_node = chirp_node_get_kwarg(node, "precision");
+    if (prec_node) {
+        const char *pname = chirp_node_name(prec_node);
+        if (pname && strcmp(pname, "f32") == 0) c.precision = FAF_PREC_FP32;
+        else if (pname && strcmp(pname, "f64") == 0) c.precision = FAF_PREC_FP64;
+        else {
+            faf_set_error("Chirp: (rfft) :precision must be f32 or f64");
+            return NULL;
+        }
+    }
+    if (chirp_node_get_kwarg(node, "bluestein")) {
+        faf_set_error("Chirp: (rfft) does not support :bluestein; use "
+                      "(fft :bluestein) on a real buffer");
+        return NULL;
+    }
     return faf_create_rfft(&c);
+}
+
+static faf_transform *chirp_compile_fft_node(chirp_node *node) {
+    faf_config c = faf_config_init(0);
+    c.layout = FAF_LAYOUT_INTERLEAVED; /* Chirp default */
+    chirp_node *size_node = chirp_node_get_kwarg(node, "size");
+    if (size_node && size_node->type == CHIRP_NODE_LITERAL)
+        c.n = (size_t)size_node->value;
+    else if (node->n_children > 0 &&
+             node->children[0]->type == CHIRP_NODE_LITERAL)
+        c.n = (size_t)node->children[0]->value;
+    if (c.n == 0)
+        c.n = 64;
+    if (node->value != 0)
+        c.dir = FAF_DIR_INVERSE;
+
+    chirp_node *norm_node = chirp_node_get_kwarg(node, "norm");
+    if (norm_node && chirp_parse_norm(norm_node, &c.norm) != 0) {
+        faf_set_error("Chirp: unknown :norm for fft");
+        return NULL;
+    }
+    chirp_node *lay_node = chirp_node_get_kwarg(node, "layout");
+    if (lay_node && chirp_parse_layout(lay_node, &c.layout) != 0) {
+        faf_set_error("Chirp: unknown :layout for fft");
+        return NULL;
+    }
+    chirp_node *prec_node = chirp_node_get_kwarg(node, "precision");
+    if (prec_node) {
+        const char *pname = chirp_node_name(prec_node);
+        if (pname && strcmp(pname, "f32") == 0) c.precision = FAF_PREC_FP32;
+        else if (pname && strcmp(pname, "f64") == 0) c.precision = FAF_PREC_FP64;
+        else {
+            faf_set_error("Chirp: (fft) :precision must be f32 or f64");
+            return NULL;
+        }
+    }
+    if (chirp_node_get_kwarg(node, "bluestein"))
+        c.flags |= FAF_FLAG_BLUESTEIN;
+    return faf_create_fft(&c);
+}
+
+static int chirp_ast_has_bluestein(const chirp_node *n) {
+    if (!n) return 0;
+    if (chirp_node_get_kwarg((chirp_node *)n, "bluestein"))
+        return 1;
+    for (int i = 0; i < n->n_children; i++) {
+        if (chirp_ast_has_bluestein(n->children[i]))
+            return 1;
+    }
+    return 0;
 }
 
 static faf_transform *chirp_compile_cwt_node(chirp_node *node) {
@@ -1404,13 +1916,35 @@ static int chirp_emit_pipe_op(chirp_node *n, faf_inst *out) {
     return 0;
 }
 
-static faf_transform *chirp_compile_spectral_pipeline(chirp_node *ast) {
+static faf_transform *chirp_compile_spectral_pipeline(chirp_node *ast,
+                                                      chirp_scope *scope) {
     chirp_node **kids = ast->children;
     int nch = ast->n_children;
-    if (nch < 1 || kids[0]->type != CHIRP_NODE_RFFT)
+    if (nch < 1) return NULL;
+    chirp_node *head = chirp_resolve(kids[0], scope);
+    if (!head || head->type != CHIRP_NODE_RFFT)
         return NULL;
 
-    int has_irfft = (nch >= 2 && kids[nch - 1]->type == CHIRP_NODE_IRFFT);
+    chirp_node *tail = (nch >= 2) ? kids[nch - 1] : NULL;
+    int has_irfft = 0;
+    if (tail) {
+        if (tail->type == CHIRP_NODE_IRFFT)
+            has_irfft = 1;
+        else if (tail->type == CHIRP_NODE_INVERSE) {
+            has_irfft = 1;
+            if (tail->n_children > 0) {
+                const char *iname = tail->children[0]->sym
+                    ? tail->children[0]->sym
+                    : chirp_node_name(tail->children[0]);
+                chirp_scope_entry *e = chirp_scope_lookup(scope, iname);
+                if (!e || chirp_resolve(e->node, scope) != head) {
+                    faf_set_error("Chirp: (inverse %s) does not match the "
+                                  "pipeline's (rfft)", iname ? iname : "?");
+                    return NULL;
+                }
+            }
+        }
+    }
     int mid0 = 1;
     int mid1 = has_irfft ? nch - 1 : nch;
     for (int i = mid0; i < mid1; i++) {
@@ -1421,19 +1955,30 @@ static faf_transform *chirp_compile_spectral_pipeline(chirp_node *ast) {
         }
     }
 
-    faf_transform *fwd = chirp_compile_rfft_node(kids[0]);
+    faf_transform *fwd = chirp_compile_rfft_node(head);
     if (!fwd) return NULL;
 
     faf_transform *inv = NULL;
     if (has_irfft) {
         chirp_node *inode = kids[nch - 1];
-        chirp_node *sz = chirp_node_get_kwarg(inode, "size");
-        if (!sz && inode->n_children == 0) {
-            /* inherit size/norm/layout from the forward rfft */
+        if (inode->type == CHIRP_NODE_INVERSE) {
+            chirp_node *size_kw = chirp_node_get_kwarg(inode, "size");
+            if (size_kw) {
+                faf_set_error("Chirp: (inverse) inherits size from the "
+                              "forward transform; delete :size (inherited)");
+                faf_destroy_transform(fwd);
+                return NULL;
+            }
             faf_config ic = faf_config_inverse(fwd->cfg);
             inv = faf_create_rfft(&ic);
         } else {
-            inv = chirp_compile_rfft_node(inode);
+            chirp_node *sz = chirp_node_get_kwarg(inode, "size");
+            if (!sz && inode->n_children == 0) {
+                faf_config ic = faf_config_inverse(fwd->cfg);
+                inv = faf_create_rfft(&ic);
+            } else {
+                inv = chirp_compile_rfft_node(inode);
+            }
         }
         if (!inv) {
             faf_destroy_transform(fwd);
@@ -1512,9 +2057,9 @@ faf_transform* chirp_compile(const char *source) {
     
     chirp_init_builtins();
     
-    /* Parse the source */
+    /* Parse the source (one form, or several top-level lets + a body). */
     chirp_lexer lex = chirp_lexer_new(source);
-    chirp_node *ast = chirp_parse_expr(&lex);
+    chirp_node *ast = chirp_parse_program(&lex);
     
     if (!ast) {
         faf_set_error("Chirp: failed to parse program");
@@ -1522,41 +2067,88 @@ faf_transform* chirp_compile(const char *source) {
         return NULL;
     }
 
+    chirp_scope *scope = chirp_scope_push(NULL);
+    chirp_bind_lets(ast, scope);
+    if (chirp_eval_binds(ast) != 0) {
+        chirp_scope_pop(scope);
+        chirp_node_free(ast);
+        return NULL;
+    }
+    chirp_node *main = chirp_program_main(ast);
+    if (!main) main = ast;
+
     /* Standalone (rfft)/(irfft), or a fused R2C → spectral C → C2R pipeline. */
     chirp_node *rfft_node = NULL;
-    if (ast->type == CHIRP_NODE_RFFT || ast->type == CHIRP_NODE_IRFFT)
-        rfft_node = ast;
-    else if (ast->type == CHIRP_NODE_PIPELINE && ast->n_children == 1 &&
-             (ast->children[0]->type == CHIRP_NODE_RFFT ||
-              ast->children[0]->type == CHIRP_NODE_IRFFT))
-        rfft_node = ast->children[0];
+    if (main->type == CHIRP_NODE_RFFT || main->type == CHIRP_NODE_IRFFT)
+        rfft_node = main;
+    else if (main->type == CHIRP_NODE_PIPELINE && main->n_children == 1) {
+        chirp_node *c0 = chirp_resolve(main->children[0], scope);
+        if (c0 && (c0->type == CHIRP_NODE_RFFT || c0->type == CHIRP_NODE_IRFFT))
+            rfft_node = c0;
+    }
     if (rfft_node) {
         faf_transform *rt = chirp_compile_rfft_node(rfft_node);
+        chirp_scope_pop(scope);
         chirp_node_free(ast);
         return rt;
     }
-    if (ast->type == CHIRP_NODE_PIPELINE && ast->n_children >= 1 &&
-        ast->children[0]->type == CHIRP_NODE_RFFT) {
-        faf_transform *pt = chirp_compile_spectral_pipeline(ast);
+    if (main->type == CHIRP_NODE_PIPELINE && main->n_children >= 1 &&
+        chirp_resolve(main->children[0], scope)->type == CHIRP_NODE_RFFT) {
+        faf_transform *pt = chirp_compile_spectral_pipeline(main, scope);
+        chirp_scope_pop(scope);
         chirp_node_free(ast);
         return pt;
     }
-    if (chirp_ast_has_rfft(ast)) {
+    if (chirp_ast_has_rfft(ast) || chirp_ast_has_rfft(main)) {
         faf_set_error("Chirp: (rfft)/(irfft) must lead a fused pipeline "
                       "(rfft … irfft); they cannot mix with FFT IR stages");
+        chirp_scope_pop(scope);
         chirp_node_free(ast);
         return NULL;
     }
 
+    /* Standalone (fft :bluestein) — nested C2C, not IR emit. */
+    {
+        chirp_node *fft_node = NULL;
+        if (main->type == CHIRP_NODE_FFT)
+            fft_node = main;
+        else if (main->type == CHIRP_NODE_PIPELINE && main->n_children == 1 &&
+                 main->children[0]->type == CHIRP_NODE_FFT)
+            fft_node = main->children[0];
+        if (fft_node && chirp_node_get_kwarg(fft_node, "bluestein")) {
+            faf_transform *ft = chirp_compile_fft_node(fft_node);
+            chirp_scope_pop(scope);
+            chirp_node_free(ast);
+            return ft;
+        }
+        if (chirp_ast_has_bluestein(ast) || chirp_ast_has_bluestein(main)) {
+            faf_set_error("Chirp: :bluestein is only valid on a standalone (fft)");
+            chirp_scope_pop(scope);
+            chirp_node_free(ast);
+            return NULL;
+        }
+    }
+
     /* Standalone (cwt)/(icwt) — not composable in pipelines. */
-    if (ast->type == CHIRP_NODE_CWT || ast->type == CHIRP_NODE_ICWT) {
-        faf_transform *ct = chirp_compile_cwt_node(ast);
+    if (main->type == CHIRP_NODE_CWT || main->type == CHIRP_NODE_ICWT) {
+        faf_transform *ct = chirp_compile_cwt_node(main);
+        chirp_scope_pop(scope);
         chirp_node_free(ast);
         return ct;
     }
-    if (chirp_ast_has_cwt(ast)) {
+    if (chirp_ast_has_cwt(ast) || chirp_ast_has_cwt(main)) {
         faf_set_error("Chirp: (cwt)/(icwt) must be standalone; "
                       "they cannot appear inside a pipeline");
+        chirp_scope_pop(scope);
+        chirp_node_free(ast);
+        return NULL;
+    }
+
+    /* Standalone (inverse) with no pipeline context is an error. */
+    if (main->type == CHIRP_NODE_INVERSE) {
+        faf_set_error("Chirp: (inverse) has no preceding invertible "
+                      "stage — it must appear inside a pipeline");
+        chirp_scope_pop(scope);
         chirp_node_free(ast);
         return NULL;
     }
@@ -1565,11 +2157,18 @@ faf_transform* chirp_compile(const char *source) {
     faf_transform *t = calloc(1, sizeof(faf_transform));
     t->precision = FAF_PREC_FP32;
     t->n = 0; /* filled in by (fft/:dwt :size) or defaulted after the first pass */
-    
+
     /* First pass: count instructions and resolve the transform size from
      * high-level forms like (fft :size N). */
+    faf_clear_error();
     int ast_inst_count = 0;
-    chirp_compile_node_emit(ast, t, &ast_inst_count);
+    chirp_compile_node_emit(main, t, &ast_inst_count, scope);
+    if (faf_get_error() && faf_get_error()[0] != '\0') {
+        chirp_scope_pop(scope);
+        chirp_node_free(ast);
+        free(t);
+        return NULL;
+    }
     if (t->n == 0) t->n = 64;
     
     /* Wrap the user pipeline with LOAD/STORE so it operates on real input and
@@ -1582,6 +2181,7 @@ faf_transform* chirp_compile(const char *source) {
     if (!t->code) {
         faf_set_error("Chirp: failed to allocate instruction array");
         fprintf(stderr, "Chirp: failed to allocate instruction array\n");
+        chirp_scope_pop(scope);
         chirp_node_free(ast);
         free(t);
         return NULL;
@@ -1598,7 +2198,7 @@ faf_transform* chirp_compile(const char *source) {
         t->code[inst_count++] = load;
     }
     
-    chirp_compile_node_emit(ast, t, &inst_count);
+    chirp_compile_node_emit(main, t, &inst_count, scope);
     
     for (size_t i = 0; i < io_count; i++) {
         faf_inst store = {0};
@@ -1612,14 +2212,33 @@ faf_transform* chirp_compile(const char *source) {
     faf_inst end_inst = {0};
     end_inst.packed = FAF_END;
     t->code[inst_count] = end_inst;
+
+    /* Create-time DWT scratch so Backend F never mallocs on execute. */
+    if (t->n > 0 && t->family < FAF_WAVELET_COUNT &&
+        (t->type == FAF_TRANSFORM_HAAR || t->type == FAF_TRANSFORM_DAUBECHIES4 ||
+         t->type == FAF_TRANSFORM_CDF53 || t->type == FAF_TRANSFORM_CDF97 ||
+         t->type == FAF_TRANSFORM_SYM4) && !t->scratch) {
+        size_t bytes = t->n * sizeof(float);
+        bytes = (bytes + 63u) & ~(size_t)63u;
+        t->scratch = aligned_alloc(64, bytes);
+        if (t->scratch) {
+            t->scratch_size = bytes;
+            memset(t->scratch, 0, bytes);
+        }
+    }
     
-    /* Cleanup AST */
+    chirp_scope_pop(scope);
     chirp_node_free(ast);
 
     /* Resolved config so faf_execute / create_inverse work on Chirp programs.
      * Default layout stays interleaved so existing faf_execute_f32 helpers
      * keep working; (fft :layout split) overrides during emit. */
     faf_layout lay = t->cfg.layout;
+    faf_wavelet_convention saved_conv = t->cfg.conv;
+    faf_dwt_backend saved_backend = t->cfg.dwt_backend;
+    const float *ch = t->custom_h, *cg = t->custom_g, *cht = t->custom_ht,
+                *cgt = t->custom_gt;
+    int clh = t->custom_len_hg, cls = t->custom_len_syn;
     t->cfg = faf_config_init(t->n);
     t->cfg.precision = t->precision;
     t->cfg.layout = (lay == FAF_LAYOUT_DEFAULT) ? FAF_LAYOUT_INTERLEAVED : lay;
@@ -1628,6 +2247,14 @@ faf_transform* chirp_compile(const char *source) {
         t->cfg.dir = FAF_DIR_INVERSE;
     t->cfg.family = t->family;
     t->cfg.levels = t->levels;
+    t->cfg.conv = saved_conv;
+    t->cfg.dwt_backend = saved_backend;
+    t->custom_h = ch;
+    t->custom_g = cg;
+    t->custom_ht = cht;
+    t->custom_gt = cgt;
+    t->custom_len_hg = clh;
+    t->custom_len_syn = cls;
 
     return t;
 }
