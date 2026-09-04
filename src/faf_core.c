@@ -11,6 +11,7 @@
 #include <stdarg.h>
 #include <stdbool.h>
 #include <math.h>
+#include <time.h>
 #include <dlfcn.h>
 #include <unistd.h>
 
@@ -376,7 +377,8 @@ bool faf_is_size_supported(faf_transform_type type, size_t n) {
     switch (type) {
         case FAF_TRANSFORM_FFT:
         case FAF_TRANSFORM_IFFT:
-            return faf_is_5_smooth(n);
+            return faf_is_5_smooth(n) || faf_fft_is_codelet_size(n) ||
+                   faf_rader_eligible(n);
         case FAF_TRANSFORM_HAAR:
         case FAF_TRANSFORM_DAUBECHIES4:
         case FAF_TRANSFORM_CDF53:
@@ -410,6 +412,11 @@ size_t faf_get_recommended_size(faf_transform_type type, size_t min_size) {
     if (type == FAF_TRANSFORM_FFT || type == FAF_TRANSFORM_IFFT ||
         type == FAF_TRANSFORM_RFFT || type == FAF_TRANSFORM_IRFFT ||
         type == FAF_TRANSFORM_CWT || type == FAF_TRANSFORM_ICWT) {
+        if (type == FAF_TRANSFORM_FFT || type == FAF_TRANSFORM_IFFT) {
+            if (faf_is_5_smooth(min_size) || faf_fft_is_codelet_size(min_size) ||
+                faf_rader_eligible(min_size))
+                return min_size;
+        }
         size_t n = faf_next_5_smooth(min_size);
         if (type == FAF_TRANSFORM_RFFT || type == FAF_TRANSFORM_IRFFT ||
             type == FAF_TRANSFORM_CWT || type == FAF_TRANSFORM_ICWT) {
@@ -488,23 +495,101 @@ static faf_transform* alloc_transform(void) {
     return t;
 }
 
+static double monotonic_s(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (double)ts.tv_sec + 1e-9 * (double)ts.tv_nsec;
+}
+
+static double time_fft_fn(const faf_transform *t,
+                          int (*fn)(const faf_transform *, void *, void *,
+                                    const void *, const void *)) {
+    size_t n = t->n;
+    size_t elem = (t->precision == FAF_PREC_FP64) ? sizeof(double)
+                                                   : sizeof(float);
+    size_t bytes = ((n * elem) + 63u) & ~(size_t)63u;
+    void *re = aligned_alloc(64, bytes);
+    void *im = aligned_alloc(64, bytes);
+    void *ore = aligned_alloc(64, bytes);
+    void *oim = aligned_alloc(64, bytes);
+    if (!re || !im || !ore || !oim) {
+        free(re); free(im); free(ore); free(oim);
+        return 1e300;
+    }
+    memset(re, 0, bytes);
+    memset(im, 0, bytes);
+    if (t->precision == FAF_PREC_FP64) {
+        double *x = (double *)re;
+        for (size_t i = 0; i < n; i++) x[i] = (double)(i % 7);
+    } else {
+        float *x = (float *)re;
+        for (size_t i = 0; i < n; i++) x[i] = (float)(i % 7);
+    }
+    int niter = (n >= 4096) ? 8 : 24;
+    for (int i = 0; i < 3; i++)
+        fn(t, ore, oim, re, im);
+    double t0 = monotonic_s();
+    for (int i = 0; i < niter; i++)
+        fn(t, ore, oim, re, im);
+    double ns = (monotonic_s() - t0) * 1e9 / (double)niter;
+    free(re); free(im); free(ore); free(oim);
+    return ns;
+}
+
+static void maybe_measure_pot2(faf_transform *t, int inverse) {
+    if (!t || !(t->cfg.flags & FAF_FLAG_MEASURE) || t->n < 32)
+        return;
+    size_t n = t->n;
+    size_t elem = (t->precision == FAF_PREC_FP64) ? sizeof(double)
+                                                   : sizeof(float);
+    size_t bytes = 2 * n * elem;
+    bytes = (bytes + 63u) & ~(size_t)63u;
+    t->twiddles[2] = aligned_alloc(64, bytes);
+    if (!t->twiddles[2]) return;
+    memset(t->twiddles[2], 0, bytes);
+    t->twiddle_sizes[2] = n;
+    if (t->precision == FAF_PREC_FP64)
+        faf_gen_twiddles_full_f64((double *)t->twiddles[2], n, inverse);
+    else
+        faf_gen_twiddles_full_f32((float *)t->twiddles[2], n, inverse);
+
+    double sr_ns = time_fft_fn(t, faf_fft_sr_dif_execute);
+    double dit_ns = time_fft_fn(t, faf_fft_dit_execute);
+    if (dit_ns < sr_ns * 0.95)
+        t->execute_func = faf_fft_dit_execute;
+    else {
+        free(t->twiddles[2]);
+        t->twiddles[2] = NULL;
+        t->twiddle_sizes[2] = 0;
+    }
+}
+
 /* Transform creation functions */
 faf_transform* faf_create_fft(const faf_config *cfg) {
+    return faf_create_fft_ex(cfg, 0);
+}
+
+faf_transform* faf_create_fft_ex(const faf_config *cfg, int allow_7smooth) {
     if (!cfg) {
         set_error("faf_create_fft: cfg is NULL");
         return NULL;
     }
     faf_config c = *cfg;
     int use_bluestein = 0;
-    if (!faf_is_5_smooth(c.n)) {
-        if (c.flags & FAF_FLAG_BLUESTEIN) {
-            use_bluestein = 1;
-        } else {
-            set_error("FFT size must be 5-smooth (2^a 3^b 5^c), got %zu; "
-                      "nearest is %zu (or set FAF_FLAG_BLUESTEIN)", c.n,
-                      faf_get_recommended_size(FAF_TRANSFORM_FFT, c.n));
-            return NULL;
-        }
+    int use_rader = 0;
+    if (faf_is_5_smooth(c.n) || faf_fft_is_codelet_size(c.n) ||
+        (allow_7smooth && faf_is_7_smooth(c.n))) {
+        /* legal mixed / codelet / inner 7-smooth */
+    } else if (faf_rader_eligible(c.n)) {
+        use_rader = 1;
+    } else if (c.flags & FAF_FLAG_BLUESTEIN) {
+        use_bluestein = 1;
+    } else {
+        set_error("FFT size must be 5-smooth (2^a 3^b 5^c), a Rader prime "
+                  "(n-1 7-smooth), or a small codelet; got %zu; nearest "
+                  "5-smooth is %zu (or set FAF_FLAG_BLUESTEIN)", c.n,
+                  faf_get_recommended_size(FAF_TRANSFORM_FFT, c.n));
+        return NULL;
     }
     if (c.layout == FAF_LAYOUT_DEFAULT)
         c.layout = FAF_LAYOUT_SPLIT;
@@ -518,9 +603,10 @@ faf_transform* faf_create_fft(const faf_config *cfg) {
         set_error("FFT does not support norm '%s'", faf_norm_name(c.norm));
         return NULL;
     }
-    if (use_bluestein &&
+    if ((use_bluestein || use_rader) &&
         c.precision != FAF_PREC_FP32 && c.precision != FAF_PREC_FP64) {
-        set_error("Bluestein supports FP32 and FP64 only");
+        set_error("%s supports FP32 and FP64 only",
+                  use_rader ? "Rader" : "Bluestein");
         return NULL;
     }
 
@@ -541,8 +627,75 @@ faf_transform* faf_create_fft(const faf_config *cfg) {
         return t;
     }
 
+    if (use_rader) {
+        if (faf_fft_init_rader(t) != 0) {
+            faf_destroy_transform(t);
+            return NULL;
+        }
+        size_t elem = (t->precision == FAF_PREC_FP64) ? sizeof(double)
+                                                       : sizeof(float);
+        if (alloc_scratch(t, 4 * c.n * elem) != 0) {
+            faf_destroy_transform(t);
+            return NULL;
+        }
+        return t;
+    }
+
+    /* Small FFTW-style codelets: 2,3,4,5,6,7,8,9,10,12 */
+    if (faf_fft_is_codelet_size(c.n)) {
+        t->execute_func = faf_fft_kernel_execute;
+        size_t elem = (t->precision == FAF_PREC_FP64) ? sizeof(double)
+                                                       : sizeof(float);
+        if (alloc_scratch(t, 4 * c.n * elem) != 0) {
+            faf_destroy_transform(t);
+            return NULL;
+        }
+        return t;
+    }
+
+    /* Pot2 N>=16: split-radix DIF, bypasses VM */
+    if (faf_is_power_of_2(c.n) && c.n >= 16) {
+        size_t elem = (t->precision == FAF_PREC_FP64) ? sizeof(double)
+                                                       : sizeof(float);
+        size_t tw_count = faf_sr_twiddle_count(c.n);
+        size_t tw_bytes = tw_count * elem;
+        tw_bytes = (tw_bytes + 63u) & ~(size_t)63u;
+        t->twiddles[0] = aligned_alloc(64, tw_bytes);
+        if (!t->twiddles[0]) {
+            set_error("Failed to allocate split-radix twiddles");
+            faf_destroy_transform(t);
+            return NULL;
+        }
+        memset(t->twiddles[0], 0, tw_bytes);
+        t->twiddle_sizes[0] = tw_count;
+        if (t->precision == FAF_PREC_FP64)
+            faf_gen_sr_twiddles_f64((double *)t->twiddles[0], c.n, inverse);
+        else
+            faf_gen_sr_twiddles_f32((float *)t->twiddles[0], c.n, inverse);
+
+        /* Recursion work: n re + n im, kept off t->scratch so interleaved
+         * execute can use scratch as the four convert planes. */
+        size_t work_bytes = 2 * c.n * elem;
+        work_bytes = (work_bytes + 63u) & ~(size_t)63u;
+        t->twiddles[1] = aligned_alloc(64, work_bytes);
+        if (!t->twiddles[1]) {
+            set_error("Failed to allocate split-radix work");
+            faf_destroy_transform(t);
+            return NULL;
+        }
+        memset(t->twiddles[1], 0, work_bytes);
+        t->twiddle_sizes[1] = 2 * c.n;
+
+        t->execute_func = faf_fft_sr_dif_execute;
+        if (alloc_scratch(t, 4 * c.n * elem) != 0) {
+            faf_destroy_transform(t);
+            return NULL;
+        }
+        maybe_measure_pot2(t, inverse);
+        return t;
+    }
+
     if (faf_is_power_of_2(c.n)) {
-        /* Pow2 path is frozen: existing radix-2 stage emitter. */
         faf_gen_fft_radix2(t, c.n, inverse);
     } else {
         faf_gen_fft_mixed(t, c.n, inverse);
@@ -551,6 +704,16 @@ faf_transform* faf_create_fft(const faf_config *cfg) {
         set_error("Failed to generate FFT bytecode");
         faf_destroy_transform(t);
         return NULL;
+    }
+
+    /* Execute-time scratch so the hot path never mallocs */
+    if (!t->scratch) {
+        size_t elem = (t->precision == FAF_PREC_FP64) ? sizeof(double)
+                                                       : sizeof(float);
+        if (alloc_scratch(t, 4 * t->n * elem) != 0) {
+            faf_destroy_transform(t);
+            return NULL;
+        }
     }
     return t;
 }
@@ -1116,7 +1279,8 @@ static int apply_fft_norm(const faf_transform *t, faf_buffer *out) {
 }
 
 static int execute_untyped(const faf_transform *t, void *out, const void *in) {
-    if (t->cfg.backend != FAF_BACKEND_VM &&
+    if (!t->execute_func && t->code && t->n_inst > 0 &&
+        t->cfg.backend != FAF_BACKEND_VM &&
         t->precision == FAF_PREC_FP32 && t->n >= FAF_JIT_AUTO_THRESHOLD) {
         int ret = faf_execute_jit_cached(t, out, in);
         if (ret == 0) return 0;
@@ -1148,6 +1312,7 @@ int faf_execute(const faf_transform *t, faf_buffer *out, const faf_buffer *in) {
         if (bret != 0) return bret;
         return apply_fft_norm(t, out);
     }
+
 
     if (t->type == FAF_TRANSFORM_CWT)
         return faf_cwt_execute(t, out, in);

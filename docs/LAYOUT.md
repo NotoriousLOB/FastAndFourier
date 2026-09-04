@@ -13,6 +13,11 @@ Four layouts. The library never converts for you.
 `faf_deinterleave_f32` / `faf_interleave_f32`. JIT kernels flagged
 `FAF_FLAG_JIT_SPLIT_PLANE` never see interleaved pointers.
 
+Small-N codelets and split-radix DIF are split-plane only. Interleaved
+`faf_execute_f32` deinterleaves into create-time scratch, runs the
+kernel, and reinterleaves — one convert, not a register file. Scratch
+size is fixed at create; execute does not malloc on the FFT hot path.
+
 ## Why split / Hermitian is the fast path
 
 A complex multiply, a conjugate, a Hermitian multiply, and a CWT row

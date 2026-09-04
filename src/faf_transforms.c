@@ -146,7 +146,7 @@ void faf_gen_fft_radix4(faf_transform *t, size_t n, bool inverse) {
  */
 void faf_gen_fft_mixed(faf_transform *t, size_t n, bool inverse) {
     int fac[16], nf = 0;
-    if (n == 0 || faf_factor_5smooth(n, fac, &nf) != 0) {
+    if (n == 0 || faf_factor_7smooth(n, fac, &nf) != 0) {
         t->code = NULL;
         return;
     }

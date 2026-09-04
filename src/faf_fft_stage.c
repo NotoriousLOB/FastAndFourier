@@ -1,15 +1,16 @@
 /**
  * @file faf_fft_stage.c
- * @brief Mixed-radix FFT stage kernels (radix 2/3/4/5)
+ * @brief Mixed-radix FFT stage kernels (radix 2/3/4/5/7)
  *
  * Legacy radix-2 stages keep a1 == 1 (group size in a0). Mixed-radix
- * stages set a1 to 3, 4, or 5. Twiddles are W_n^k in interleaved pairs;
- * mixed-radix tables store n bins so 2k indices stay in range.
+ * stages set a1 to 3, 4, 5, or 7. Radix-7 is for Rader inner FFTs
+ * (7-smooth n-1), not a public 7-smooth size policy.
  */
 
 #include "faf.h"
 #include <math.h>
 #include <stdlib.h>
+#include <stdint.h>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -29,15 +30,86 @@ int faf_is_5_smooth(size_t n) {
     return n == 1;
 }
 
-int faf_factor_5smooth(size_t n, int *factors, int *n_factors) {
+int faf_is_7_smooth(size_t n) {
+    if (n == 0) return 0;
+    while ((n % 2u) == 0) n /= 2u;
+    while ((n % 3u) == 0) n /= 3u;
+    while ((n % 5u) == 0) n /= 5u;
+    while ((n % 7u) == 0) n /= 7u;
+    return n == 1;
+}
+
+int faf_is_prime(size_t n) {
+    if (n < 2) return 0;
+    if ((n % 2u) == 0) return n == 2;
+    for (size_t d = 3; d * d <= n; d += 2u)
+        if ((n % d) == 0) return 0;
+    return 1;
+}
+
+int faf_rader_eligible(size_t n) {
+    return n >= 11 && faf_is_prime(n) && faf_is_7_smooth(n - 1);
+}
+
+static size_t modpow_sz(size_t b, size_t e, size_t m) {
+    uint64_t r = 1, base = (uint64_t)b % (uint64_t)m;
+    while (e) {
+        if (e & 1u)
+            r = (r * base) % (uint64_t)m;
+        base = (base * base) % (uint64_t)m;
+        e >>= 1;
+    }
+    return (size_t)r;
+}
+
+size_t faf_primitive_root(size_t p) {
+    if (!faf_is_prime(p) || p < 3) return 0;
+    size_t phi = p - 1;
+    size_t fac[16];
+    int nf = 0;
+    size_t m = phi;
+    if ((m % 2u) == 0) {
+        fac[nf++] = 2;
+        while ((m % 2u) == 0) m /= 2u;
+    }
+    for (size_t d = 3; d * d <= m; d += 2u) {
+        if ((m % d) == 0) {
+            fac[nf++] = d;
+            while ((m % d) == 0) m /= d;
+        }
+    }
+    if (m > 1) fac[nf++] = m;
+    for (size_t g = 2; g < p; g++) {
+        int ok = 1;
+        for (int i = 0; i < nf; i++) {
+            if (modpow_sz(g, phi / fac[i], p) == 1) {
+                ok = 0;
+                break;
+            }
+        }
+        if (ok) return g;
+    }
+    return 0;
+}
+
+int faf_factor_7smooth(size_t n, int *factors, int *n_factors) {
     int nf = 0;
     if (!factors || !n_factors || n == 0) return -1;
     while ((n % 4u) == 0 && nf < 16) { factors[nf++] = 4; n /= 4u; }
     while ((n % 2u) == 0 && nf < 16) { factors[nf++] = 2; n /= 2u; }
     while ((n % 3u) == 0 && nf < 16) { factors[nf++] = 3; n /= 3u; }
     while ((n % 5u) == 0 && nf < 16) { factors[nf++] = 5; n /= 5u; }
+    while ((n % 7u) == 0 && nf < 16) { factors[nf++] = 7; n /= 7u; }
     *n_factors = nf;
     return n == 1 ? 0 : -1;
+}
+
+int faf_factor_5smooth(size_t n, int *factors, int *n_factors) {
+    int rc = faf_factor_7smooth(n, factors, n_factors);
+    if (rc != 0) return rc;
+    for (int i = 0; i < *n_factors; i++)
+        if (factors[i] == 7) return -1;
+    return 0;
 }
 
 size_t faf_digit_reverse(size_t i, const int *factors, int n_factors) {
@@ -64,7 +136,7 @@ size_t faf_next_5_smooth(size_t min) {
 
 void faf_digitrev_split_f32(float *re, float *im, size_t n) {
     int fac[16], nf = 0;
-    if (faf_factor_5smooth(n, fac, &nf) != 0) return;
+    if (faf_factor_7smooth(n, fac, &nf) != 0) return;
     for (size_t i = 0; i < n; i++) {
         size_t j = faf_digit_reverse(i, fac, nf);
         if (j > i) {
@@ -77,7 +149,7 @@ void faf_digitrev_split_f32(float *re, float *im, size_t n) {
 
 void faf_digitrev_split_f64(double *re, double *im, size_t n) {
     int fac[16], nf = 0;
-    if (faf_factor_5smooth(n, fac, &nf) != 0) return;
+    if (faf_factor_7smooth(n, fac, &nf) != 0) return;
     for (size_t i = 0; i < n; i++) {
         size_t j = faf_digit_reverse(i, fac, nf);
         if (j > i) {
@@ -251,6 +323,56 @@ static void radix5_split_f32(float *re, float *im, size_t n, size_t group,
     }
 }
 
+static void dft7_f32(float *yr, float *yi,
+                     const float *ar, const float *ai, int inverse) {
+    float sign = inverse ? 1.0f : -1.0f;
+    const float c1 = 0.62348980185873353052f, s1 = 0.78183148246802980870f;
+    const float c2 = -0.22252093395631440428f, s2 = 0.97492791218182360701f;
+    const float c3 = -0.90096886790241912623f, s3 = 0.43388373911755812047f;
+    float wr[7] = { 1.0f, c1, c2, c3, c3, c2, c1 };
+    float wi[7] = { 0.0f, sign * s1, sign * s2, sign * s3,
+                    -sign * s3, -sign * s2, -sign * s1 };
+    for (int k = 0; k < 7; k++) {
+        float sr = 0.0f, si = 0.0f;
+        for (int j = 0; j < 7; j++) {
+            int e = (j * k) % 7;
+            sr += ar[j] * wr[e] - ai[j] * wi[e];
+            si += ar[j] * wi[e] + ai[j] * wr[e];
+        }
+        yr[k] = sr;
+        yi[k] = si;
+    }
+}
+
+static void radix7_split_f32(float *re, float *im, size_t n, size_t group,
+                             size_t tw_step, const float *tw, size_t ntw,
+                             int inverse) {
+    size_t m = group / 7;
+    if (m == 0) return;
+    size_t ngroups = n / group;
+    for (size_t g = 0; g < ngroups; g++) {
+        size_t base = g * group;
+        for (size_t j = 0; j < m; j++) {
+            size_t i0 = base + j;
+            float ar[7], ai[7], yr[7], yi[7];
+            for (int p = 0; p < 7; p++) {
+                size_t ix = i0 + (size_t)p * m;
+                ar[p] = re[ix];
+                ai[p] = im[ix];
+                if (p > 0)
+                    twiddle_mul_f32(&ar[p], &ai[p], tw, j * (size_t)p * tw_step,
+                                    ntw);
+            }
+            dft7_f32(yr, yi, ar, ai, inverse);
+            for (int p = 0; p < 7; p++) {
+                size_t ix = i0 + (size_t)p * m;
+                re[ix] = yr[p];
+                im[ix] = yi[p];
+            }
+        }
+    }
+}
+
 void faf_fft_stage_split_f32(float *re, float *im, size_t n,
                              uint32_t a0, uint32_t a1, uint32_t a2,
                              const float *tw, size_t ntw, int inverse) {
@@ -267,10 +389,20 @@ void faf_fft_stage_split_f32(float *re, float *im, size_t n,
         radix5_split_f32(re, im, n, a0, a2, tw, ntw, inverse);
         return;
     }
+    if (a1 == 7) {
+        radix7_split_f32(re, im, n, a0, a2, tw, ntw, inverse);
+        return;
+    }
     /* a1 == 1 (or 2): legacy / mixed radix-2 */
     size_t stride = (a1 == 0) ? 1 : ((a1 == 2) ? 1 : a1);
     if (a1 == 1 || a1 == 2)
         stride = 1;
+#ifdef FAF_ARCH_AARCH64
+    if (stride == 1) {
+        faf_radix2_split_neon_f32(re, im, n, a0, stride, a2, tw, ntw);
+        return;
+    }
+#endif
     radix2_split_f32(re, im, n, a0, stride, a2, tw, ntw);
 }
 
@@ -410,6 +542,56 @@ static void radix5_split_f64(double *re, double *im, size_t n, size_t group,
     }
 }
 
+static void dft7_f64(double *yr, double *yi,
+                     const double *ar, const double *ai, int inverse) {
+    double sign = inverse ? 1.0 : -1.0;
+    const double c1 = 0.62348980185873353052, s1 = 0.78183148246802980870;
+    const double c2 = -0.22252093395631440428, s2 = 0.97492791218182360701;
+    const double c3 = -0.90096886790241912623, s3 = 0.43388373911755812047;
+    double wr[7] = { 1.0, c1, c2, c3, c3, c2, c1 };
+    double wi[7] = { 0.0, sign * s1, sign * s2, sign * s3,
+                     -sign * s3, -sign * s2, -sign * s1 };
+    for (int k = 0; k < 7; k++) {
+        double sr = 0.0, si = 0.0;
+        for (int j = 0; j < 7; j++) {
+            int e = (j * k) % 7;
+            sr += ar[j] * wr[e] - ai[j] * wi[e];
+            si += ar[j] * wi[e] + ai[j] * wr[e];
+        }
+        yr[k] = sr;
+        yi[k] = si;
+    }
+}
+
+static void radix7_split_f64(double *re, double *im, size_t n, size_t group,
+                             size_t tw_step, const double *tw, size_t ntw,
+                             int inverse) {
+    size_t m = group / 7;
+    if (m == 0) return;
+    size_t ngroups = n / group;
+    for (size_t g = 0; g < ngroups; g++) {
+        size_t base = g * group;
+        for (size_t j = 0; j < m; j++) {
+            size_t i0 = base + j;
+            double ar[7], ai[7], yr[7], yi[7];
+            for (int p = 0; p < 7; p++) {
+                size_t ix = i0 + (size_t)p * m;
+                ar[p] = re[ix];
+                ai[p] = im[ix];
+                if (p > 0)
+                    twiddle_mul_f64(&ar[p], &ai[p], tw, j * (size_t)p * tw_step,
+                                    ntw);
+            }
+            dft7_f64(yr, yi, ar, ai, inverse);
+            for (int p = 0; p < 7; p++) {
+                size_t ix = i0 + (size_t)p * m;
+                re[ix] = yr[p];
+                im[ix] = yi[p];
+            }
+        }
+    }
+}
+
 void faf_fft_stage_split_f64(double *re, double *im, size_t n,
                              uint32_t a0, uint32_t a1, uint32_t a2,
                              const double *tw, size_t ntw, int inverse) {
@@ -417,7 +599,17 @@ void faf_fft_stage_split_f64(double *re, double *im, size_t n,
     if (a1 == 3) { radix3_split_f64(re, im, n, a0, a2, tw, ntw, inverse); return; }
     if (a1 == 4) { radix4_split_f64(re, im, n, a0, a2, tw, ntw, inverse); return; }
     if (a1 == 5) { radix5_split_f64(re, im, n, a0, a2, tw, ntw, inverse); return; }
-    radix2_split_f64(re, im, n, a0, 1, a2, tw, ntw);
+    if (a1 == 7) { radix7_split_f64(re, im, n, a0, a2, tw, ntw, inverse); return; }
+    size_t stride = (a1 == 0) ? 1 : ((a1 == 2) ? 1 : a1);
+    if (a1 == 1 || a1 == 2)
+        stride = 1;
+#ifdef FAF_ARCH_AARCH64
+    if (stride == 1) {
+        faf_radix2_split_neon_f64(re, im, n, a0, stride, a2, tw, ntw);
+        return;
+    }
+#endif
+    radix2_split_f64(re, im, n, a0, stride, a2, tw, ntw);
 }
 
 void faf_fft_stage_interleaved_f32(float *regs, size_t n,

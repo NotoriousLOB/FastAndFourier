@@ -223,6 +223,68 @@ Inverse (`icwt`) accepts the same keywords plus `:inverse dual|l1` (default `dua
 (icwt :n 4096 :inverse dual)
 ```
 
+#### `(cwt :n N …)` / `(icwt :n N …)`
+
+Continuous Wavelet Transform (Fourier-domain CQT filter bank). **Standalone
+only** — cannot appear inside a `(pipeline …)`.
+
+Keywords:
+
+| Keyword | Default | Description |
+|---------|---------|-------------|
+| `:n N` | *required* | Signal length (even, 5-smooth) |
+| `:fs F` | `1.0` | Sample rate |
+| `:wavelet name` | `morse` | `morlet`, `morse`, `bump`, `shannon`, `meyer` |
+| `:voices V` | `10` | Voices per octave |
+| `:fmin F` | auto | Lowest center frequency |
+| `:fmax F` | auto | Highest center frequency |
+| `:gamma G` | `3.0` | Morse γ parameter |
+| `:beta B` | `20.0` | Morse β (Lilly–Olhede). MATLAB TimeBandwidth=60 is β=20, not 60. |
+| `:mu M` | `6.0` | Morlet μ parameter |
+| `:norm kind` | `l1` | `l1`, `l2`, `bandpass` |
+| `:precision p` | `f32` | `f32` or `f64` |
+| `:lowpass off` | on | Omit the residual lowpass row |
+| `:allow-untiled` | — | Permit LP certification to fail |
+
+Inverse (`icwt`) accepts the same keywords plus `:inverse dual|l1` (default `dual`).
+
+```scheme
+(cwt :n 4096 :wavelet morse)
+(cwt :n 1024 :wavelet morlet :mu 6.0 :voices 12 :precision f64)
+(icwt :n 4096 :inverse dual)
+```
+
+#### `(cwt :n N …)` / `(icwt :n N …)`
+
+Continuous Wavelet Transform (Fourier-domain CQT filter bank). **Standalone
+only** — cannot appear inside a `(pipeline …)`.
+
+Keywords:
+
+| Keyword | Default | Description |
+|---------|---------|-------------|
+| `:n N` | *required* | Signal length (even, 5-smooth) |
+| `:fs F` | `1.0` | Sample rate |
+| `:wavelet name` | `morse` | `morlet`, `morse`, `bump`, `shannon`, `meyer` |
+| `:voices V` | `10` | Voices per octave |
+| `:fmin F` | auto | Lowest center frequency |
+| `:fmax F` | auto | Highest center frequency |
+| `:gamma G` | `3.0` | Morse γ parameter |
+| `:beta B` | `20.0` | Morse β (Lilly–Olhede). MATLAB TimeBandwidth=60 is β=20, not 60. |
+| `:mu M` | `6.0` | Morlet μ parameter |
+| `:norm kind` | `l1` | `l1`, `l2`, `bandpass` |
+| `:precision p` | `f32` | `f32` or `f64` |
+| `:lowpass off` | on | Omit the residual lowpass row |
+| `:allow-untiled` | — | Permit LP certification to fail |
+
+Inverse (`icwt`) accepts the same keywords plus `:inverse dual|l1` (default `dual`).
+
+```scheme
+(cwt :n 4096 :wavelet morse)
+(cwt :n 1024 :wavelet morlet :mu 6.0 :voices 12 :precision f64)
+(icwt :n 4096 :inverse dual)
+```
+
 #### `(threshold :mode soft|hard :lambda λ)`
 
 Apply a hard or soft threshold to **detail** coefficients (everything after the coarsest `N / 2^L` approximation).

@@ -171,50 +171,53 @@ advantage on real-valued inputs. The gap narrows sharply at large sizes.
 The N=65536 FAF spike (10.4 GFLOP) confirms JIT-generated code engaging the AVX2
 vectorization path for large transforms. FFTW3 benefits from decades of codelet tuning.
 
-### aarch64 re-run vs NotoriousFFT v1.0.1 (2026-08-30)
+### aarch64 re-run vs NotoriousFFT v1.0.1 (2026-09-03)
 
 Machine: Linux aarch64, 6 × 1728 MHz, L1 64 KiB, L2 256 KiB × 6, L3 2 MiB.
-Build: Release (`-O3 -march=native`). FP64 C2C, same binary. CPU frequency
-scaling was on, so treat absolute µs as noisy; **ratios** are the signal.
+Build: Release (`-O3 -march=native`). FP64 C2C interleaved
+(`faf_execute_f64`). Same binary. CPU frequency scaling was on; treat
+absolute µs as noisy, **ratios** as the signal. The 2026-08-30 table
+was the VM + register-file shuttle; this one is codelets + split-radix
+DIF + Rader.
 
 **Single-transform time (µs, C2C FP64):**
 
 | Size | FastAndFourier | KissFFT | NotoriousFFT v1.0.1 | FAF / Nott |
 |-----:|---------------:|--------:|--------------------:|-----------:|
-|    16 |          1.03 |   0.149 |               0.076 |      13.6× |
-|    64 |          2.41 |   0.847 |               0.495 |       4.9× |
-|   256 |          8.98 |    4.42 |                2.71 |       3.3× |
-|  1024 |          35.6 |    21.6 |                13.8 |       2.6× |
-|  4096 |           165 |     110 |                68.6 |       2.4× |
-| 16384 |           891 |     550 |                 344 |       2.6× |
-| 65536 |          1963 |    3180 |                1631 |       1.20× |
+|    16 |          0.161 |   0.149 |               0.075 |       2.15× |
+|    64 |          0.778 |   0.850 |               0.495 |       1.57× |
+|   256 |           3.58 |    4.43 |                2.71 |       1.32× |
+|  1024 |           16.5 |    21.7 |                13.8 |       1.20× |
+|  4096 |           80.8 |     110 |                68.7 |       1.18× |
+| 16384 |            453 |     548 |                 342 |       1.32× |
+| 65536 |           2238 |    2735 |                1620 |       1.38× |
 
 **Small-N latency (ns):**
 
 | Size | FastAndFourier | KissFFT | NotoriousFFT v1.0.1 |
 |-----:|---------------:|--------:|--------------------:|
-|    8 |            835 |    94.7 |                30.6 |
-|   16 |            949 |     149 |                75.8 |
-|   32 |           1392 |     522 |                 205 |
-|   64 |           2288 |     849 |                 495 |
-|  128 |           5112 |    2578 |                1176 |
-|  256 |           9002 |    4424 |                2710 |
-|  512 |          17389 |   12328 |                6150 |
+|    8 |           53.8 |    95.3 |                30.8 |
+|   16 |            163 |     149 |                76.3 |
+|   32 |            359 |     524 |                 206 |
+|   64 |            779 |     850 |                 496 |
+|  128 |           1671 |    2583 |                1178 |
+|   256 |           3579 |    4435 |                2710 |
+|   512 |           7670 |   12353 |                6157 |
 
-v1.0.1 on this box is the fastest of the three at every size except FAF
-catches KissFFT at 64K (JIT). The 8-point gap (FAF 835 ns vs Notorious 31 ns)
-is the VM + register-file tax, not arithmetic.
+N=8 is under 60 ns and faster than Kiss. Mid sizes went from 3–14× behind
+Notorious to ~1.2–1.6×. 64K is still theirs: recursive split-radix on split
+planes plus the interleaved convert. Split-plane execute is the fast path.
 
 ## Performance Summary
 
 ### Key Findings
 
-1. **FastAndFourier has a ~1 µs VM overhead floor** for small N (< 512). The interpreter
-   dispatch cost is unavoidable on the scalar VM path. Use KissFFT or FFTW3 for
-   latency-critical sub-512-point transforms.
+1. **The old ~1 µs VM floor is gone.** Small-N codelets (N ≤ 12) and split-radix DIF
+   (pot2 N ≥ 16) bypass the VM entirely. N=8 FP64 is 54 ns; N=64 is 779 ns.
+   FAF beats KissFFT at every size from N=32 upward on aarch64.
 
-2. **At N=65536, FastAndFourier beats KissFFT by 3.2×**, indicating JIT compilation
-   activates for large transforms and AVX2 vectorization becomes effective.
+2. **At N=65536, FastAndFourier beats KissFFT by 1.2×** on aarch64 (codelets + split-radix)
+   and by 3.2× on x86 (JIT + AVX2).
 
 3. **FFTW3 (measure) is the fastest in absolute terms** across all sizes tested, with
    up to 10× advantage over KissFFT and up to 60× over FastAndFourier. Its planning
@@ -223,9 +226,9 @@ is the VM + register-file tax, not arithmetic.
 4. **FFTW3 (estimate) provides 3–8× speedup over KissFFT** with zero planning cost,
    making it the go-to for mixed-size workloads.
 
-5. **FastAndFourier's gap closes rapidly with N**, from 19× slower than KissFFT at N=16
-   to 3× *faster* at N=65536. The crossover point (where FAF matches KissFFT) is
-   approximately N=32768 on this machine.
+5. **NotoriousFFT v1.0.1 is 1.2–2.2× ahead of FAF** on aarch64 across the range.
+   The remaining gap is split-plane native execute vs interleaved convert overhead,
+   plus Notorious's more aggressive codelet unrolling at N=16.
 
 ## Architecture-Specific Results
 

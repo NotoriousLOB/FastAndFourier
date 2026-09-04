@@ -6,7 +6,7 @@ Size is a create-time contract. `faf_execute` never pads.
 
 | Transform | Legal `n` |
 |-----------|-----------|
-| FFT C2C | 5-smooth, `n ≥ 1` (`2^a · 3^b · 5^c`) |
+| FFT C2C | 5-smooth, a small codelet (2,3,4,5,6,7,8,9,10,12), or a Rader prime (`n ≥ 11` prime and `n−1` 7-smooth) |
 | RFFT / IRFFT | even 5-smooth, `n ≥ 2` |
 | CWT / ICWT | even 5-smooth (rides RFFT) |
 | DWT (both backends), dyadic | power of two, `n ≥ 2` |
@@ -16,7 +16,10 @@ Size is a create-time contract. `faf_execute` never pads.
 5-smooth means the mixed-radix 2/3/4/5 kernels can factor `n`. That is
 the physics of the buffer, not a power-of-two religion. `3840`
 (`2^8 · 3 · 5`), `4000` (`2^5 · 5^3`), and `4096` (`2^12`) are all
-legal FFT sizes. `4097` is not, unless Bluestein is on.
+legal FFT sizes. `7` is a codelet, `11`/`13`/`17`/`31` are Rader.
+`14`, `21`, `49` stay illegal — 7-smooth composites are not a public
+size policy; radix-7 exists so Rader's inner `n−1` (e.g. `28` for
+`n=29`) can factor. `23` and `4097` need Bluestein.
 
 Helpers:
 
@@ -28,6 +31,19 @@ faf_get_recommended_size(FAF_TRANSFORM_RFFT, n_min); /* next even 5-smooth */
 
 Chirp: `(fft :size 3840)` and `(rfft :size 3840)` compile. `(dwt :size
 3840)` is illegal — DWT is a dyadic Mallat bank, see [DWT.md](DWT.md).
+
+## How a legal FFT is executed
+
+| `n` | Path |
+|-----|------|
+| `2,3,4,5,6,7,8,9,10,12` | Hardcoded split-plane codelet. No IR, no VM. |
+| pot2, `n ≥ 16` | Recursive split-radix DIF, natural-order out. `FAF_FLAG_MEASURE` / Chirp `:measure` may pick iterative DIT instead. |
+| other 5-smooth | Mixed radix 2/3/4/5 (bytecode + VM, or JIT). |
+| prime, `n ≥ 11`, `n−1` 7-smooth | Rader: two FFTs of `n−1`. Inner may be 7-smooth. |
+| anything else | Refused unless `FAF_FLAG_BLUESTEIN`. |
+
+`(fft :size 8)` and `(fft :size 17)` just work. No new keywords except
+optional `:measure` on a power-of-two FFT.
 
 ## When to set `FAF_FLAG_BLUESTEIN`
 
@@ -49,7 +65,8 @@ faf_transform *t = faf_create_fft(&cfg);
 
 Rules:
 
-- Without the flag, non-5-smooth → create error.
+- Without the flag, sizes that are not 5-smooth, not a codelet, and
+  not a Rader prime → create error.
 - With the flag, `M =` next 5-smooth `≥ 2n−1`. Scratch is on the
   transform (`t->scratch_size`), allocated at create, not execute.
 - Chirp: `(fft :size 307 :bluestein)` explicit. No `:bluestein auto`.

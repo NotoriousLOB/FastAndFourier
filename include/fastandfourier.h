@@ -9,7 +9,7 @@
  * - Multiple precision levels (FP8, FP16, FP32, FP64)
  * - Comprehensive transform support (FFT, DCT, DST, STFT, MDCT, DWT, CWT)
  * 
- * @version 1.1.0
+ * @version 1.2.0
  * @author adri4n <yo@adri4n.net>
  * @license MIT
  */
@@ -43,9 +43,9 @@ extern "C" {
 
 /* Version information */
 #define FASTANDFOURIER_VERSION_MAJOR 1
-#define FASTANDFOURIER_VERSION_MINOR 1
+#define FASTANDFOURIER_VERSION_MINOR 2
 #define FASTANDFOURIER_VERSION_PATCH 0
-#define FASTANDFOURIER_VERSION_STRING "1.1.0"
+#define FASTANDFOURIER_VERSION_STRING "1.2.0"
 
 /* Public utility macros */
 #define FAF_GET_OP(packed)      ((uint8_t)((packed) & 0xFF))
@@ -172,43 +172,6 @@ typedef enum {
 #define FAF_THRESH_HARD  0u
 #define FAF_THRESH_SOFT  1u
 
-/**
- * @brief Named wavelet convention (filters + normalization as a single contract)
- *
- * A convention is not a family: Haar-ortho, Haar-lazy, and Haar-mean are
- * different operators with different coefficients and different inverse
- * contracts.  Setting conv at create time selects the exact operator and
- * enables create-time rejection of illegal family/convention/norm combos.
- *
- * FAF_CONV_UNSPEC (0) resolves to the family default at create time.
- */
-typedef enum {
-    FAF_CONV_UNSPEC = 0,         /**< Resolve from family at create time */
-    FAF_CONV_HAAR_ORTHO,         /**< (1/√2)(1,1), (1/√2)(1,-1) — adjoint inverse */
-    FAF_CONV_HAAR_LAZY,          /**< (1,1), (1,-1) — divide by 2 on recon */
-    FAF_CONV_HAAR_MEAN,          /**< (½,½), (1,-1) — documented dual */
-    FAF_CONV_D4_ORTHO,           /**< Published D4 orthonormal QMF */
-    FAF_CONV_SYM4_ORTHO,         /**< Published Sym4 orthonormal QMF */
-    FAF_CONV_CDF53_INT,          /**< JPEG 2000 5/3 reversible lifting */
-    FAF_CONV_CDF53_ENERGY,       /**< Scaled 5/3 energy pair (if shipped) */
-    FAF_CONV_CDF97_JPEG,         /**< Annex 9/7 irreversible lifting */
-    FAF_CONV_CDF97_ORTHO,        /**< Energy-normalized 9/7 pair (if shipped) */
-    FAF_CONV_CUSTOM_PR,          /**< User-supplied h, g, h̃, g̃ */
-    FAF_CONV_ANALYSIS_ONLY       /**< User-supplied h, g — inverse illegal */
-} faf_wavelet_convention;
-
-/**
- * @brief DWT algorithm backend
- *
- * AUTO selects lifting for the five short built-in families and FIR
- * for custom taps, long filters, and analysis-only atoms.
- */
-typedef enum {
-    FAF_DWT_BACKEND_AUTO = 0,    /**< Rule-based selection (see docs/DWT.md) */
-    FAF_DWT_BACKEND_LIFT = 1,    /**< Lifting scheme (in-place, PR by construction) */
-    FAF_DWT_BACKEND_FIR  = 2     /**< Polyphase FIR (explicit filter taps) */
-} faf_dwt_backend;
-
 /* --- CWT FILTER BANK TYPES --- */
 
 /**
@@ -260,10 +223,48 @@ typedef enum {
 #define FAF_CWT_FLAG_INCLUDE_LOWPASS  0x0001u /**< Residual φ fills the DC hole (default) */
 #define FAF_CWT_FLAG_ALLOW_UNTILED    0x0002u /**< Create even if LP certification fails */
 #define FAF_CWT_FLAG_VALIDATE_STRICT  0x0020u /**< Fail create on LP/wrap failure (default) */
-/* Reserved; ignored in 1.1.0 (SSQ / alternative output layouts). */
+/* Reserved; ignored in 1.2.0 (SSQ / alternative output layouts). */
 #define FAF_CWT_FLAG_FIXED_LOWPASS    0x0004u
 #define FAF_CWT_FLAG_KEEP_SPECTRUM    0x0008u
 #define FAF_CWT_FLAG_REAL_OUTPUT      0x0010u
+
+/**
+ * @brief Named wavelet convention (filters + normalization as a single contract)
+ *
+ * A convention is not a family: Haar-ortho, Haar-lazy, and Haar-mean are
+ * different operators with different coefficients and different inverse
+ * contracts.  Setting conv at create time selects the exact operator and
+ * enables create-time rejection of illegal family/convention/norm combos.
+ *
+ * FAF_CONV_UNSPEC (0) resolves to the family default at create time.
+ */
+typedef enum {
+    FAF_CONV_UNSPEC = 0,         /**< Resolve from family at create time */
+    FAF_CONV_HAAR_ORTHO,         /**< (1/√2)(1,1), (1/√2)(1,-1) — adjoint inverse */
+    FAF_CONV_HAAR_LAZY,          /**< (1,1), (1,-1) — divide by 2 on recon */
+    FAF_CONV_HAAR_MEAN,          /**< (½,½), (1,-1) — documented dual */
+    FAF_CONV_D4_ORTHO,           /**< Published D4 orthonormal QMF */
+    FAF_CONV_SYM4_ORTHO,         /**< Published Sym4 orthonormal QMF */
+    FAF_CONV_CDF53_INT,          /**< JPEG 2000 5/3 reversible lifting */
+    FAF_CONV_CDF53_ENERGY,       /**< Scaled 5/3 energy pair (if shipped) */
+    FAF_CONV_CDF97_JPEG,         /**< Annex 9/7 irreversible lifting */
+    FAF_CONV_CDF97_ORTHO,        /**< Energy-normalized 9/7 pair (if shipped) */
+    FAF_CONV_CUSTOM_PR,          /**< User-supplied h, g, h̃, g̃ */
+    FAF_CONV_ANALYSIS_ONLY       /**< User-supplied h, g — inverse illegal */
+} faf_wavelet_convention;
+
+/**
+ * @brief DWT algorithm backend
+ *
+ * AUTO selects lifting for the five short built-in families and FIR
+ * for custom taps, long filters, and analysis-only atoms.
+ */
+typedef enum {
+    FAF_DWT_BACKEND_AUTO = 0,    /**< Rule-based selection (see docs/DWT.md) */
+    FAF_DWT_BACKEND_LIFT = 1,    /**< Lifting scheme (in-place, PR by construction) */
+    FAF_DWT_BACKEND_FIR  = 2     /**< Polyphase FIR (explicit filter taps) */
+} faf_dwt_backend;
+
 
 /**
  * @brief Buffer / spectrum layout
@@ -488,6 +489,9 @@ typedef struct faf_transform {
     faf_config cfg;            /**< Resolved create-time configuration */
     void *scratch;             /**< Aligned workspace (DWT, packing) */
     size_t scratch_size;       /**< Bytes allocated at scratch */
+    int (*execute_func)(const struct faf_transform *t,
+                        void *out_re, void *out_im,
+                        const void *in_re, const void *in_im);
     struct faf_transform *inner; /**< Nested C2C for R2C (n/2), NULL otherwise */
     struct faf_transform *inner_inv; /**< Nested inverse (fused R2C pipeline) */
     void *user_aux;            /**< Bound spectrum re[] (mul-spectrum) */
@@ -668,14 +672,15 @@ size_t faf_spectrum_len(const faf_transform *t);
 faf_transform* faf_create(faf_transform_type type, const faf_config *cfg);
 
 /**
- * @brief Create an FFT (C2C). n must be 5-smooth (2^a 3^b 5^c).
+ * @brief Create an FFT (C2C).
  *
- * Power-of-2 sizes use the existing radix-2 kernel. Other 5-smooth
- * sizes use mixed-radix 2/3/4/5. Default layout SPLIT, default norm NONE.
+ * Legal n: 5-smooth, a small codelet (2,3,4,5,6,7,8,9,10,12), or a
+ * Rader prime (n ≥ 11 prime, n−1 7-smooth). Default layout SPLIT,
+ * default norm NONE.
  *
- * Non-5-smooth n is accepted only with cfg->flags |= FAF_FLAG_BLUESTEIN
- * (chirp-z via two length-M FFTs, M = next 5-smooth ≥ 2n−1). Scratch is
- * allocated at create, not execute. RFFT+Bluestein is refused.
+ * Anything else needs cfg->flags |= FAF_FLAG_BLUESTEIN. Composite
+ * 7-smooth sizes (14, 21, 49, …) are not public; radix-7 exists only
+ * as an inner factor of Rader. RFFT+Bluestein is refused.
  */
 faf_transform* faf_create_fft(const faf_config *cfg);
 
@@ -751,6 +756,57 @@ int faf_wavelet_taps(faf_wavelet_family family);
  * @return 0 on success
  */
 int faf_wavelet_from_name(const char *name, faf_wavelet_family *out);
+
+/* --- CWT FILTER BANK --- */
+
+/**
+ * @brief Zero a CWT config and fill Morse / L1 / geometric defaults
+ */
+faf_cwt_config faf_cwt_config_init(size_t n);
+
+/**
+ * @brief Create a CWT analysis transform
+ *
+ * Forward execute: REAL x[n] → REAL W[n_rows · n], row-major, row 0 is
+ * the residual lowpass (if enabled), then coarse → fine wavelet scales.
+ * @return Transform or NULL (see `faf_get_error`)
+ */
+faf_transform* faf_create_cwt(const faf_cwt_config *cfg);
+
+/**
+ * @brief Create a CWT inverse transform from a config
+ *
+ * Dual-frame inverse is valid for every analysis norm. L1 one-integral
+ * inverse requires `cfg->norm == FAF_CWT_NORM_L1`. Prefer
+ * `faf_create_inverse(fwd)` to inherit the forward bank's resolved config.
+ */
+faf_transform* faf_create_icwt(const faf_cwt_config *cfg, faf_cwt_inverse_kind kind);
+
+const faf_cwt_lp_report* faf_cwt_bank_report(const faf_transform *t);
+size_t faf_cwt_n_scales(const faf_transform *t);
+size_t faf_cwt_n_rows(const faf_transform *t);
+size_t faf_cwt_n_bins(const faf_transform *t); /**< Packed Hermitian length n/2+1 */
+int faf_cwt_has_lowpass(const faf_transform *t);
+
+/**
+ * @brief Copy up to `cap` center frequencies (Hz) or scales
+ * @return Number of values written, or -1 on error
+ */
+int faf_cwt_freqs(const faf_transform *t, double *hz, size_t cap);
+int faf_cwt_scales(const faf_transform *t, double *s, size_t cap);
+void faf_cwt_report_fprint(FILE *fp, const faf_cwt_lp_report *r);
+
+/**
+ * @brief Frequency-domain wavelet row (packed Hermitian, length `n/2+1`)
+ *
+ * `scale_index` is 0 = coarsest wavelet, not counting the lowpass row.
+ * The pointer is valid until `faf_destroy_transform`. Do not stride
+ * between scales with `n/2+1`; rows are internally padded.
+ */
+const float  *faf_cwt_psi_f32(const faf_transform *t, size_t scale_index);
+const double *faf_cwt_psi_f64(const faf_transform *t, size_t scale_index);
+const float  *faf_cwt_phi_f32(const faf_transform *t);
+const double *faf_cwt_phi_f64(const faf_transform *t);
 
 /**
  * @brief Convention name string (e.g. "haar-ortho", "cdf97-jpeg")
@@ -833,6 +889,7 @@ const float  *faf_cwt_psi_f32(const faf_transform *t, size_t scale_index);
 const double *faf_cwt_psi_f64(const faf_transform *t, size_t scale_index);
 const float  *faf_cwt_phi_f32(const faf_transform *t);
 const double *faf_cwt_phi_f64(const faf_transform *t);
+
 
 /**
  * @brief Destroy a transform and free resources
@@ -972,6 +1029,13 @@ int faf_execute_fp8(const faf_transform *t,
  * RFFT and DWT refuse this flag. See docs/SIZES.md.
  */
 #define FAF_FLAG_BLUESTEIN       (1u << 12)
+
+/**
+ * Opt-in plan MEASURE for power-of-two FFT: time split-radix DIF against
+ * iterative DIT at create and keep the winner. Never default. Chirp:
+ * `(fft :size 64 :measure)`.
+ */
+#define FAF_FLAG_MEASURE         (1u << 13)
 
 /**
  * @brief Create a JIT compilation context

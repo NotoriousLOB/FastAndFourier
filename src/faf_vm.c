@@ -8,6 +8,9 @@
  */
 
 #include "faf.h"
+#ifdef FAF_ARCH_AARCH64
+#include <arm_neon.h>
+#endif
 #include "chirp.h"
 #include <string.h>
 #include <stdlib.h>
@@ -979,45 +982,103 @@ int faf_execute_f32(const faf_transform *t,
         faf_buffer outb = faf_buffer_interleaved(out, t->n);
         return faf_execute(t, &outb, &inb);
     }
-    /* Auto-JIT: for large transforms try the cached compiled kernel first */
-    if (t->n >= FAF_JIT_AUTO_THRESHOLD) {
+    /* Auto-JIT: bytecode transforms only. Small-N / split-radix set
+     * execute_func and have no IR to compile. */
+    if (!t->execute_func && t->code && t->n_inst > 0 &&
+        t->n >= FAF_JIT_AUTO_THRESHOLD) {
         if (faf_execute_jit_cached(t, (void*)out, (const void*)in) == 0)
             return 0;
         /* JIT unavailable or failed — fall through to split-plane VM */
     }
 
-    /* Use split-plane execution for better performance */
     const size_t n = t->n;
-    float *in_re = (float*)alloc_regs(n * sizeof(float));
-    float *in_im = (float*)alloc_regs(n * sizeof(float));
-    float *out_re = (float*)alloc_regs(n * sizeof(float));
-    float *out_im = (float*)alloc_regs(n * sizeof(float));
-    
-    if (!in_re || !in_im || !out_re || !out_im) {
-        free_regs(in_re); free_regs(in_im);
-        free_regs(out_re); free_regs(out_im);
-        return faf_vm_execute_f32(t, out, in);  /* Fallback to interleaved */
+
+    /* Codelet / split-radix: deinterleave into two planes, run in-place. */
+    if (t->execute_func) {
+        float *re, *im;
+        int heap = 0;
+        if (t->scratch && t->scratch_size >= 2 * n * sizeof(float)) {
+            re = (float *)t->scratch;
+            im = re + n;
+        } else {
+            re = (float *)alloc_regs(n * sizeof(float));
+            im = (float *)alloc_regs(n * sizeof(float));
+            if (!re || !im) {
+                free_regs(re); free_regs(im);
+                return -1;
+            }
+            heap = 1;
+        }
+        size_t i = 0;
+#ifdef FAF_ARCH_AARCH64
+        for (; i + 3 < n; i += 4) {
+            float32x4x2_t p = vld2q_f32(&in[2 * i]);
+            vst1q_f32(re + i, p.val[0]);
+            vst1q_f32(im + i, p.val[1]);
+        }
+#endif
+        for (; i < n; i++) {
+            re[i] = in[i * 2];
+            im[i] = in[i * 2 + 1];
+        }
+        int result = t->execute_func(t, re, im, re, im);
+        if (result == 0) {
+            i = 0;
+#ifdef FAF_ARCH_AARCH64
+            for (; i + 3 < n; i += 4) {
+                float32x4x2_t p = {{vld1q_f32(re + i), vld1q_f32(im + i)}};
+                vst2q_f32(&out[2 * i], p);
+            }
+#endif
+            for (; i < n; i++) {
+                out[i * 2]     = re[i];
+                out[i * 2 + 1] = im[i];
+            }
+        }
+        if (heap) { free_regs(re); free_regs(im); }
+        return result;
     }
-    
-    /* Deinterleave input */
+
+    float *s_in_re, *s_in_im, *s_out_re, *s_out_im;
+    int heap_scratch = 0;
+
+    if (t->scratch && t->scratch_size >= 4 * n * sizeof(float)) {
+        float *s = (float *)t->scratch;
+        s_in_re  = s;
+        s_in_im  = s + n;
+        s_out_re = s + 2 * n;
+        s_out_im = s + 3 * n;
+    } else {
+        s_in_re  = (float*)alloc_regs(n * sizeof(float));
+        s_in_im  = (float*)alloc_regs(n * sizeof(float));
+        s_out_re = (float*)alloc_regs(n * sizeof(float));
+        s_out_im = (float*)alloc_regs(n * sizeof(float));
+        if (!s_in_re || !s_in_im || !s_out_re || !s_out_im) {
+            free_regs(s_in_re); free_regs(s_in_im);
+            free_regs(s_out_re); free_regs(s_out_im);
+            return faf_vm_execute_f32(t, out, in);
+        }
+        heap_scratch = 1;
+    }
+
     for (size_t i = 0; i < n; i++) {
-        in_re[i] = in[i * 2];
-        in_im[i] = in[i * 2 + 1];
+        s_in_re[i] = in[i * 2];
+        s_in_im[i] = in[i * 2 + 1];
     }
-    
-    /* Execute split-plane */
-    int result = faf_execute_split_f32(t, out_re, out_im, in_re, in_im);
-    
-    /* Reinterleave output */
+
+    int result = faf_execute_split_f32(t, s_out_re, s_out_im, s_in_re, s_in_im);
+
     if (result == 0) {
         for (size_t i = 0; i < n; i++) {
-            out[i * 2] = out_re[i];
-            out[i * 2 + 1] = out_im[i];
+            out[i * 2]     = s_out_re[i];
+            out[i * 2 + 1] = s_out_im[i];
         }
     }
-    
-    free_regs(in_re); free_regs(in_im);
-    free_regs(out_re); free_regs(out_im);
+
+    if (heap_scratch) {
+        free_regs(s_in_re); free_regs(s_in_im);
+        free_regs(s_out_re); free_regs(s_out_im);
+    }
     return result;
 }
 
@@ -1266,38 +1327,93 @@ int faf_execute_f64(const faf_transform *t,
         faf_buffer outb = faf_buffer_interleaved(out, t->n);
         return faf_execute(t, &outb, &inb);
     }
-    /* Use split-plane execution for better performance */
     const size_t n = t->n;
-    double *in_re = (double*)alloc_regs(n * sizeof(double));
-    double *in_im = (double*)alloc_regs(n * sizeof(double));
-    double *out_re = (double*)alloc_regs(n * sizeof(double));
-    double *out_im = (double*)alloc_regs(n * sizeof(double));
-    
-    if (!in_re || !in_im || !out_re || !out_im) {
-        free_regs(in_re); free_regs(in_im);
-        free_regs(out_re); free_regs(out_im);
-        return faf_vm_execute_f64(t, out, in);  /* Fallback to interleaved */
+
+    if (t->execute_func) {
+        double *re, *im;
+        int heap = 0;
+        if (t->scratch && t->scratch_size >= 2 * n * sizeof(double)) {
+            re = (double *)t->scratch;
+            im = re + n;
+        } else {
+            re = (double *)alloc_regs(n * sizeof(double));
+            im = (double *)alloc_regs(n * sizeof(double));
+            if (!re || !im) {
+                free_regs(re); free_regs(im);
+                return -1;
+            }
+            heap = 1;
+        }
+        size_t i = 0;
+#ifdef FAF_ARCH_AARCH64
+        for (; i + 1 < n; i += 2) {
+            float64x2x2_t p = vld2q_f64(&in[2 * i]);
+            vst1q_f64(re + i, p.val[0]);
+            vst1q_f64(im + i, p.val[1]);
+        }
+#endif
+        for (; i < n; i++) {
+            re[i] = in[i * 2];
+            im[i] = in[i * 2 + 1];
+        }
+        int result = t->execute_func(t, re, im, re, im);
+        if (result == 0) {
+            i = 0;
+#ifdef FAF_ARCH_AARCH64
+            for (; i + 1 < n; i += 2) {
+                float64x2x2_t p = {{vld1q_f64(re + i), vld1q_f64(im + i)}};
+                vst2q_f64(&out[2 * i], p);
+            }
+#endif
+            for (; i < n; i++) {
+                out[i * 2]     = re[i];
+                out[i * 2 + 1] = im[i];
+            }
+        }
+        if (heap) { free_regs(re); free_regs(im); }
+        return result;
     }
-    
-    /* Deinterleave input */
+
+    double *s_in_re, *s_in_im, *s_out_re, *s_out_im;
+    int heap_scratch = 0;
+
+    if (t->scratch && t->scratch_size >= 4 * n * sizeof(double)) {
+        double *s = (double *)t->scratch;
+        s_in_re  = s;
+        s_in_im  = s + n;
+        s_out_re = s + 2 * n;
+        s_out_im = s + 3 * n;
+    } else {
+        s_in_re  = (double*)alloc_regs(n * sizeof(double));
+        s_in_im  = (double*)alloc_regs(n * sizeof(double));
+        s_out_re = (double*)alloc_regs(n * sizeof(double));
+        s_out_im = (double*)alloc_regs(n * sizeof(double));
+        if (!s_in_re || !s_in_im || !s_out_re || !s_out_im) {
+            free_regs(s_in_re); free_regs(s_in_im);
+            free_regs(s_out_re); free_regs(s_out_im);
+            return faf_vm_execute_f64(t, out, in);
+        }
+        heap_scratch = 1;
+    }
+
     for (size_t i = 0; i < n; i++) {
-        in_re[i] = in[i * 2];
-        in_im[i] = in[i * 2 + 1];
+        s_in_re[i] = in[i * 2];
+        s_in_im[i] = in[i * 2 + 1];
     }
-    
-    /* Execute split-plane */
-    int result = faf_execute_split_f64(t, out_re, out_im, in_re, in_im);
-    
-    /* Reinterleave output */
+
+    int result = faf_execute_split_f64(t, s_out_re, s_out_im, s_in_re, s_in_im);
+
     if (result == 0) {
         for (size_t i = 0; i < n; i++) {
-            out[i * 2] = out_re[i];
-            out[i * 2 + 1] = out_im[i];
+            out[i * 2]     = s_out_re[i];
+            out[i * 2 + 1] = s_out_im[i];
         }
     }
-    
-    free_regs(in_re); free_regs(in_im);
-    free_regs(out_re); free_regs(out_im);
+
+    if (heap_scratch) {
+        free_regs(s_in_re); free_regs(s_in_im);
+        free_regs(s_out_re); free_regs(s_out_im);
+    }
     return result;
 }
 
@@ -1313,25 +1429,45 @@ int faf_execute_split_f32(const faf_transform *t,
                              const float *restrict in_re,
                              const float *restrict in_im) {
     if (!t || !out_re || !out_im || !in_re || !in_im) return -1;
+    if (t->execute_func)
+        return t->execute_func(t, out_re, out_im, in_re, in_im);
     if (!t->code || t->n_inst == 0) return -1;
-    
-    /* Allocate separate register planes */
-    float *regs_re = (float*)alloc_regs(t->n * sizeof(float));
-    float *regs_im = (float*)alloc_regs(t->n * sizeof(float));
-    if (!regs_re || !regs_im) {
-        free_regs(regs_re);
-        free_regs(regs_im);
-        return -1;
+
+    /* Register file: use output buffers directly when out-of-place,
+     * scratch for in-place input copy. */
+    float *regs_re, *regs_im;
+    const float *load_re = in_re, *load_im = in_im;
+    int heap_regs = 0;
+
+    if (in_re != out_re && in_im != out_im) {
+        regs_re = out_re;
+        regs_im = out_im;
+    } else if (t->scratch && t->scratch_size >= 2 * t->n * sizeof(float)) {
+        float *s = (float *)t->scratch;
+        memcpy(s, in_re, t->n * sizeof(float));
+        memcpy(s + t->n, in_im, t->n * sizeof(float));
+        load_re = s;
+        load_im = s + t->n;
+        regs_re = out_re;
+        regs_im = out_im;
+    } else {
+        regs_re = (float*)alloc_regs(t->n * sizeof(float));
+        regs_im = (float*)alloc_regs(t->n * sizeof(float));
+        if (!regs_re || !regs_im) {
+            free_regs(regs_re); free_regs(regs_im);
+            return -1;
+        }
+        heap_regs = 1;
     }
     memset(regs_re, 0, t->n * sizeof(float));
     memset(regs_im, 0, t->n * sizeof(float));
-    
+
     const float *tw = (const float *)t->twiddles[0];
-    
+
     for (size_t ip = 0; ip < t->n_inst; ip++) {
         const faf_inst *inst = &t->code[ip];
         uint8_t op = FAF_GET_OP(inst->packed);
-        
+
         switch (op) {
             case FAF_NOP:
                 break;
@@ -1339,8 +1475,8 @@ int faf_execute_split_f32(const faf_transform *t,
                 size_t in_idx = inst->a1;
                 size_t reg_idx = inst->a0;
                 if (reg_idx < t->n && in_idx < t->n) {
-                    regs_re[reg_idx] = in_re[in_idx];
-                    regs_im[reg_idx] = in_im[in_idx];
+                    regs_re[reg_idx] = load_re[in_idx];
+                    regs_im[reg_idx] = load_im[in_idx];
                 }
                 break;
             }
@@ -1559,15 +1695,14 @@ int faf_execute_split_f32(const faf_transform *t,
     }
     
 done_split:
-    free_regs(regs_re);
-    free_regs(regs_im);
+    if (heap_regs) { free_regs(regs_re); free_regs(regs_im); }
     return 0;
 }
 
 
 /**
  * @brief Split-plane FP64 execution (separate real/imag arrays)
- * 
+ *
  * Double precision variant for higher accuracy requirements.
  */
 int faf_execute_split_f64(const faf_transform *t,
@@ -1576,25 +1711,43 @@ int faf_execute_split_f64(const faf_transform *t,
                              const double *restrict in_re,
                              const double *restrict in_im) {
     if (!t || !out_re || !out_im || !in_re || !in_im) return -1;
+    if (t->execute_func)
+        return t->execute_func(t, out_re, out_im, in_re, in_im);
     if (!t->code || t->n_inst == 0) return -1;
-    
-    /* Allocate separate register planes */
-    double *regs_re = (double*)alloc_regs(t->n * sizeof(double));
-    double *regs_im = (double*)alloc_regs(t->n * sizeof(double));
-    if (!regs_re || !regs_im) {
-        free_regs(regs_re);
-        free_regs(regs_im);
-        return -1;
+
+    double *regs_re, *regs_im;
+    const double *load_re = in_re, *load_im = in_im;
+    int heap_regs = 0;
+
+    if (in_re != out_re && in_im != out_im) {
+        regs_re = out_re;
+        regs_im = out_im;
+    } else if (t->scratch && t->scratch_size >= 2 * t->n * sizeof(double)) {
+        double *s = (double *)t->scratch;
+        memcpy(s, in_re, t->n * sizeof(double));
+        memcpy(s + t->n, in_im, t->n * sizeof(double));
+        load_re = s;
+        load_im = s + t->n;
+        regs_re = out_re;
+        regs_im = out_im;
+    } else {
+        regs_re = (double*)alloc_regs(t->n * sizeof(double));
+        regs_im = (double*)alloc_regs(t->n * sizeof(double));
+        if (!regs_re || !regs_im) {
+            free_regs(regs_re); free_regs(regs_im);
+            return -1;
+        }
+        heap_regs = 1;
     }
     memset(regs_re, 0, t->n * sizeof(double));
     memset(regs_im, 0, t->n * sizeof(double));
-    
+
     const double *tw = (const double *)t->twiddles[0];
-    
+
     for (size_t ip = 0; ip < t->n_inst; ip++) {
         const faf_inst *inst = &t->code[ip];
         uint8_t op = FAF_GET_OP(inst->packed);
-        
+
         switch (op) {
             case FAF_NOP:
                 break;
@@ -1602,8 +1755,8 @@ int faf_execute_split_f64(const faf_transform *t,
                 size_t in_idx = inst->a1;
                 size_t reg_idx = inst->a0;
                 if (reg_idx < t->n && in_idx < t->n) {
-                    regs_re[reg_idx] = in_re[in_idx];
-                    regs_im[reg_idx] = in_im[in_idx];
+                    regs_re[reg_idx] = load_re[in_idx];
+                    regs_im[reg_idx] = load_im[in_idx];
                 }
                 break;
             }
@@ -1822,7 +1975,6 @@ int faf_execute_split_f64(const faf_transform *t,
     }
     
 done_split_f64:
-    free_regs(regs_re);
-    free_regs(regs_im);
+    if (heap_regs) { free_regs(regs_re); free_regs(regs_im); }
     return 0;
 }

@@ -38,7 +38,7 @@ The honest way to evaluate a library is the way you would evaluate a ride: what 
 ## What it costs
 
 - **The JIT needs a system C compiler at runtime** (`cc`/`gcc`/`clang`). On a locked-down target without one, every transform still runs — it just runs on the interpreter. Set `cfg.backend = FAF_BACKEND_VM` or build with `-DFASTANDFOURIER_SINGLE_HEADER=ON` to make that choice permanent.
-- **Small transforms pay interpreter overhead.** Below roughly N = 512 there is a ~1 µs dispatch floor on the VM path. The JIT threshold defaults to N ≥ 128 (`FAF_JIT_AUTO_THRESHOLD`) and can be tuned.
+- **Mixed-radix 5-smooth still visits the VM** (or the JIT above `FAF_JIT_AUTO_THRESHOLD` = 128). Power-of-two and the small codelets (2–12) do not. The old ~1 µs N=8 floor is gone.
 - **The register file is sized for transforms up to 2^16 points.** That is a design choice, not a bug: it keeps the VM state small and the JIT output cache-friendly.
 
 ## Where it breaks
@@ -61,9 +61,16 @@ The case for FastAndFourier is different: you want transforms you can *compose, 
 - **Two DWT backends.** Lifting for the five short PR families, polyphase FIR
   for custom taps and analysis-only atoms. AUTO is a rule, not a heuristic.
   See [docs/DWT.md](docs/DWT.md).
-- **Optional Bluestein.** Non-5-smooth FFT lengths only with
-  `FAF_FLAG_BLUESTEIN` / Chirp `:bluestein`. Off by default. RFFT and DWT
-  refuse it. See [docs/SIZES.md](docs/SIZES.md).
+- **Optional Bluestein.** Lengths that are not 5-smooth, not a small
+  codelet, and not a Rader prime need `FAF_FLAG_BLUESTEIN` / Chirp
+  `:bluestein`. Off by default. RFFT and DWT refuse it. See
+  [docs/SIZES.md](docs/SIZES.md).
+- **Small-N codelets, split-radix DIF, Rader.** N=2/3/4/5/6/7/8/9/10/12
+  are hardcoded split-plane kernels. Pot2 N≥16 is recursive split-radix
+  DIF (optional `FAF_FLAG_MEASURE` may pick iterative DIT). Primes whose
+  N−1 is 7-smooth (11, 13, 17, 31, …) go through Rader — two FFTs of
+  N−1, with radix-7 only as an inner factor. `(fft :size 8)` and
+  `(fft :size 17)` need no new keywords.
 - **Split-plane correlator.** Packed Hermitian multiply and
   [`examples/split_corr.c`](examples/split_corr.c). Layout FAQ in
   [docs/LAYOUT.md](docs/LAYOUT.md).
@@ -72,7 +79,11 @@ The case for FastAndFourier is different: you want transforms you can *compose, 
 
 - **Config-based creation.** One `faf_config` struct drives every transform type: `faf_config_init(n)`, set the knobs you care about, call `faf_create_*(&cfg)`. Defaults are sensible (FP32, split layout, NumPy norm) and every default is visible in `t->cfg`.
 - **Real-input FFT.** `faf_create_rfft` gives a true R2C with a packed Hermitian spectrum of `n/2 + 1` bins — not a C2C with a zeroed imaginary plane. `faf_create_inverse(fwd)` hands back the matching C2R with every knob inherited. Details in [docs/RFFT.md](docs/RFFT.md).
-- **Mixed-radix sizes.** FFT length must be 5-smooth (`2^a · 3^b · 5^c`), not a power of two. `faf_is_size_supported` and `faf_get_recommended_size` answer the practical questions. Optional Bluestein (`FAF_FLAG_BLUESTEIN`) is opt-in for primes; see [docs/SIZES.md](docs/SIZES.md).
+- **Mixed-radix sizes.** FFT length is 5-smooth (`2^a · 3^b · 5^c`), a
+  small codelet, or a Rader prime. `faf_is_size_supported` and
+  `faf_get_recommended_size` answer the practical questions. Optional
+  Bluestein (`FAF_FLAG_BLUESTEIN`) is opt-in for everything else; see
+  [docs/SIZES.md](docs/SIZES.md).
 - **Fused spectral pipelines.** `(pipeline (rfft) (spectral f) (irfft))` compiles to a single fused REAL → REAL transform. Bind an external spectrum with `chirp_bind` and `(mul-spectrum)` gives you convolution and matched filtering without touching a twiddle.
 - **Cached JIT execution.** `faf_execute_jit_cached` compiles once, pins the kernel to the transform, and takes a compare-and-swap fast path thereafter.
 
@@ -353,6 +364,18 @@ What to take from this table:
 - **Small N is not our race.** Below ~512 points the VM dispatch floor (~1 µs) dominates; at N = 8 that is 24× behind KissFFT. If you need a fast 64-point transform, use KissFFT and keep the change.
 - **The gap closes with N, then inverts.** Crossover against KissFFT is ≈ N = 32768 on this machine; at N = 65536 FastAndFourier is **3.2–3.6× faster than KissFFT**, because the JIT engages and the AVX2 kernels do the work the interpreter used to schedule.
 - **FFTW3 wins overall.** `FFTW_MEASURE` is 3–10× ahead of everything on this table. It has twenty-five years of codelet tuning behind it; respect where respect is due.
+
+**Same libraries, Linux aarch64, 6 × 1.73 GHz, `-O3 -march=native`, FP64 C2C interleaved, measured 2026-09-03** (CPU scaling on; ratios matter more than absolute µs):
+
+| Size | FastAndFourier | KissFFT | NotoriousFFT v1.0.1 | FAF / Nott |
+|-----:|---------------:|--------:|--------------------:|-----------:|
+| 8 (ns) |          53.8 |    95.3 |                30.8 |       1.75× |
+|    16 |          0.161 |   0.149 |               0.075 |       2.15× |
+|    64 |          0.778 |   0.850 |               0.495 |       1.57× |
+|  1024 |           16.5 |    21.7 |                13.8 |       1.20× |
+| 65536 |           2238 |    2735 |                1620 |       1.38× |
+
+N=8 is under 60 ns and faster than Kiss. Mid sizes closed the old 3–14× Notorious hole down to ~1.2–1.6×. 64K is still theirs (recursive split-radix on split planes plus the interleaved convert); split-plane is the fast path. The x86 2026-02-22 table above is the old VM-floor story — leave it; this row is the codelet/split-radix/Rader machine.
 
 Reproduce or extend: `cmake -S . -B build -DBUILD_BENCHMARKS=ON`, then `./build/benchmarks/fastandfourier_benchmarks`. Comparisons against KissFFT, PocketFFT, MinFFT, muFFT, NotoriousFFT, and FFTW3 build with `-DENABLE_EXTERNAL_BENCHMARKS=ON`. Full methodology and more tables: [benchmarks/README.md](benchmarks/README.md).
 

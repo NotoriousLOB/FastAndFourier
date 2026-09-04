@@ -54,14 +54,21 @@ TEST(SizePolicy, FftAcceptsFiveSmooth) {
 }
 
 TEST(SizePolicy, FftRejectsNonFiveSmoothWithoutFlag) {
-    faf_config c7 = faf_config_init(7);
-    EXPECT_EQ(faf_create_fft(&c7), nullptr);
+    /* 7 is a codelet; 11 is Rader. 14 and 23 stay illegal without Bluestein. */
+    faf_config c14 = faf_config_init(14);
+    EXPECT_EQ(faf_create_fft(&c14), nullptr);
     EXPECT_STRNE(faf_get_error(), "");
+
+    faf_config c23 = faf_config_init(23);
+    EXPECT_EQ(faf_create_fft(&c23), nullptr);
 
     faf_config c4097 = faf_config_init(4097);
     EXPECT_EQ(faf_create_fft(&c4097), nullptr);
-    EXPECT_FALSE(faf_is_size_supported(FAF_TRANSFORM_FFT, 7));
+    EXPECT_FALSE(faf_is_size_supported(FAF_TRANSFORM_FFT, 14));
+    EXPECT_FALSE(faf_is_size_supported(FAF_TRANSFORM_FFT, 23));
     EXPECT_FALSE(faf_is_size_supported(FAF_TRANSFORM_FFT, 4097));
+    EXPECT_TRUE(faf_is_size_supported(FAF_TRANSFORM_FFT, 7));
+    EXPECT_TRUE(faf_is_size_supported(FAF_TRANSFORM_FFT, 11));
 }
 
 TEST(SizePolicy, RfftRejectsOddIncludingFiveSmooth) {
@@ -117,7 +124,7 @@ static faf_transform *make_bluestein(size_t n, bool inverse, faf_precision prec)
 }
 
 TEST(Bluestein, MatchesNaiveDft) {
-    const size_t sizes[] = {7, 97, 307};
+    const size_t sizes[] = {23, 47, 307};
     for (size_t n : sizes) {
         faf_transform *t = make_bluestein(n, false, FAF_PREC_FP32);
         ASSERT_NE(t, nullptr) << "n=" << n;
@@ -148,7 +155,7 @@ TEST(Bluestein, MatchesNaiveDft) {
 }
 
 TEST(Bluestein, Roundtrip) {
-    const size_t n = 97;
+    const size_t n = 47;
     faf_transform *fwd = make_bluestein(n, false, FAF_PREC_FP32);
     faf_transform *inv = faf_create_inverse(fwd);
     ASSERT_NE(fwd, nullptr);
@@ -190,7 +197,7 @@ TEST(Bluestein, DwtRefused) {
 }
 
 TEST(Bluestein, InterleavedExecute) {
-    const size_t n = 7;
+    const size_t n = 23;
     faf_config c = faf_config_init(n);
     c.layout = FAF_LAYOUT_INTERLEAVED;
     c.flags = FAF_FLAG_BLUESTEIN;
@@ -207,20 +214,20 @@ TEST(Bluestein, InterleavedExecute) {
 }
 
 TEST(Bluestein, ChirpKeyword) {
-    faf_transform *no = chirp_compile("(fft :size 7)");
+    faf_transform *no = chirp_compile("(fft :size 23)");
     EXPECT_EQ(no, nullptr);
 
-    faf_transform *t = chirp_compile("(fft :size 7 :bluestein :layout split)");
+    faf_transform *t = chirp_compile("(fft :size 23 :bluestein :layout split)");
     ASSERT_NE(t, nullptr);
     EXPECT_NE(t->flags & FAF_FLAG_BLUESTEIN, 0u);
-    EXPECT_EQ(t->n, 7u);
+    EXPECT_EQ(t->n, 23u);
 
-    std::vector<float> xr(7, 0.0f), xi(7, 0.0f), yr(7), yi(7);
+    std::vector<float> xr(23, 0.0f), xi(23, 0.0f), yr(23), yi(23);
     xr[0] = 1.0f;
-    faf_buffer in = faf_buffer_split(xr.data(), xi.data(), 7);
-    faf_buffer out = faf_buffer_split(yr.data(), yi.data(), 7);
+    faf_buffer in = faf_buffer_split(xr.data(), xi.data(), 23);
+    faf_buffer out = faf_buffer_split(yr.data(), yi.data(), 23);
     ASSERT_EQ(faf_execute(t, &out, &in), 0);
-    for (size_t k = 0; k < 7; k++) {
+    for (size_t k = 0; k < 23; k++) {
         EXPECT_NEAR(yr[k], 1.0f, 1e-4f) << k;
         EXPECT_NEAR(yi[k], 0.0f, 1e-4f) << k;
     }

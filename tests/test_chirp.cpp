@@ -9,6 +9,7 @@
 
 #include <gtest/gtest.h>
 #include "fastandfourier.h"
+#include "faf.h"
 #include "chirp.h"
 #include "chirp_builtins.h"
 
@@ -113,7 +114,9 @@ TEST(ChirpTest, CompileSimpleFFT) {
     EXPECT_EQ(t->type, FAF_TRANSFORM_FFT);
     EXPECT_EQ(t->n, 64u);
     EXPECT_EQ(t->precision, FAF_PREC_FP32);
-    EXPECT_TRUE(has_opcode(t, FAF_FFT_STAGE));
+    /* Standalone (fft) uses the C create path: codelet / split-radix, no IR. */
+    EXPECT_NE(t->execute_func, nullptr);
+    EXPECT_EQ(t->code, nullptr);
 
     faf_destroy_transform(t);
 }
@@ -124,7 +127,7 @@ TEST(ChirpTest, FFTDefaultSize) {
     faf_transform *t = chirp_compile("(fft)");
     ASSERT_NE(t, nullptr);
     EXPECT_EQ(t->n, 64u);
-    EXPECT_TRUE(has_opcode(t, FAF_FFT_STAGE));
+    EXPECT_NE(t->execute_func, nullptr);
 
     faf_destroy_transform(t);
 }
@@ -136,7 +139,7 @@ TEST(ChirpTest, FFTViaPositionalArg) {
     faf_transform *t = chirp_compile("(fft 128)");
     ASSERT_NE(t, nullptr);
     EXPECT_EQ(t->n, 128u);
-    EXPECT_TRUE(has_opcode(t, FAF_FFT_STAGE));
+    EXPECT_NE(t->execute_func, nullptr);
 
     faf_destroy_transform(t);
 }
@@ -513,12 +516,12 @@ TEST(ChirpTest, ExecuteFFTPipelineDoesNotCrash) {
 TEST(ChirpTest, ChirpFFTInstructionMatchesRequestedSize) {
     ChirpRegistryGuard guard;
 
-    /* Verify that the high-level FFT form emits a staged transform of size N. */
+    /* Standalone (fft :size 128) is split-radix, same as faf_create_fft. */
     faf_transform *t = chirp_compile("(fft :size 128)");
     ASSERT_NE(t, nullptr);
     EXPECT_EQ(t->n, 128u);
-    EXPECT_EQ(count_opcodes(t, FAF_FFT_STAGE), 7u);
-    EXPECT_TRUE(has_opcode(t, FAF_BITREV));
+    EXPECT_EQ(t->execute_func, faf_fft_sr_dif_execute);
+    EXPECT_EQ(t->code, nullptr);
 
     faf_destroy_transform(t);
 }
@@ -564,11 +567,12 @@ TEST(ChirpTest, UnbalancedParens) {
     ChirpRegistryGuard guard;
 
     /* The current parser emits a warning to stderr but returns a partial
-     * transform for unbalanced input. We verify it does not crash and that
-     * the returned transform has at least the instructions that were parsed. */
+     * transform for unbalanced input. A recovered one-child (fft) pipeline
+     * is the standalone FFT create path. */
     faf_transform *t = chirp_compile("(pipeline (fft :size 64)");
     ASSERT_NE(t, nullptr);
-    EXPECT_TRUE(has_opcode(t, FAF_FFT_STAGE));
+    EXPECT_EQ(t->n, 64u);
+    EXPECT_NE(t->execute_func, nullptr);
     faf_destroy_transform(t);
 }
 
@@ -602,7 +606,8 @@ TEST(ChirpTest, CommentsAreIgnored) {
 TEST(ChirpTest, TransformEndsWithEND) {
     ChirpRegistryGuard guard;
 
-    faf_transform *t = chirp_compile("(fft :size 64)");
+    /* Pipelines still emit IR; standalone (fft) does not. */
+    faf_transform *t = chirp_compile("(pipeline (fft :size 60) twiddle)");
     ASSERT_NE(t, nullptr);
     ASSERT_GT(t->n_inst, 0u);
     EXPECT_EQ(FAF_GET_OP(t->code[t->n_inst - 1].packed), FAF_END);

@@ -23,8 +23,38 @@ TEST(JITTest, ContextLifecycle) {
 }
 
 /* Test JIT compilation of simple transform */
-TEST(JITTest, CompileFFT) {
+TEST(JITTest, CompilePot2ExecuteFunc) {
     const size_t n = 64;
+    faf_transform *t = test_fft_n(n);
+    ASSERT_NE(t, nullptr);
+    ASSERT_NE(t->execute_func, nullptr);
+    faf_jit_ctx *ctx = faf_jit_create();
+    ASSERT_NE(ctx, nullptr);
+    ASSERT_EQ(faf_jit_compile(ctx, t), 0) << (faf_get_error() ? faf_get_error() : "");
+    faf_kernel_fn fn = faf_jit_get_kernel(ctx);
+    ASSERT_NE(fn, nullptr);
+    float *in = (float *)aligned_alloc(64, 2 * n * sizeof(float));
+    float *out = (float *)aligned_alloc(64, 2 * n * sizeof(float));
+    ASSERT_NE(in, nullptr);
+    ASSERT_NE(out, nullptr);
+    for (size_t i = 0; i < n; i++) {
+        in[2 * i] = (i == 0) ? 1.0f : 0.0f;
+        in[2 * i + 1] = 0.0f;
+    }
+    fn(out, in, n, t->twiddles[0]);
+    for (size_t i = 0; i < n; i++) {
+        EXPECT_NEAR(out[2 * i], 1.0f, 1e-4f) << i;
+        EXPECT_NEAR(out[2 * i + 1], 0.0f, 1e-4f) << i;
+    }
+    free(in);
+    free(out);
+    faf_jit_destroy(ctx);
+    faf_destroy_transform(t);
+}
+
+TEST(JITTest, CompileFFT) {
+    /* Mixed-radix still has IR. */
+    const size_t n = 60;
     
     /* Create transform */
     faf_transform* t = test_fft_n(n);
@@ -51,7 +81,7 @@ TEST(JITTest, CompileFFT) {
 
 /* Test JIT execution if available */
 TEST(JITTest, ExecuteJIT) {
-    const size_t n = 64;
+    const size_t n = 60;
     
     faf_transform* t = test_fft_n(n);
     ASSERT_NE(t, nullptr);
@@ -121,7 +151,7 @@ TEST(JITTest, CompileWavelet) {
 
 /* Test JIT with different sizes */
 TEST(JITTest, VariousSizes) {
-    size_t sizes[] = {16, 32, 64, 128, 256};
+    size_t sizes[] = {12, 15, 20, 30, 48, 60};
     
     for (size_t n : sizes) {
         faf_transform* t = test_fft_n(n);
@@ -141,7 +171,7 @@ TEST(JITTest, VariousSizes) {
 
 /* Test JIT with double precision */
 TEST(JITTest, DoublePrecisionJIT) {
-    const size_t n = 64;
+    const size_t n = 60;
     
     faf_transform* t = test_fft(n, false, FAF_PREC_FP64);
     ASSERT_NE(t, nullptr);
@@ -158,7 +188,7 @@ TEST(JITTest, DoublePrecisionJIT) {
 
 /* Test JIT with SIMD intrinsics */
 TEST(JITTest, SIMDCompilation) {
-    const size_t n = 64;
+    const size_t n = 60;
     
     faf_transform* t = test_fft_n(n);
     ASSERT_NE(t, nullptr);
@@ -176,7 +206,7 @@ TEST(JITTest, SIMDCompilation) {
 
 /* Test JIT with in-place execution */
 TEST(JITTest, InPlaceExecution) {
-    const size_t n = 64;
+    const size_t n = 60;
     
     faf_transform* t = test_fft_n(n);
     ASSERT_NE(t, nullptr);
@@ -219,7 +249,7 @@ TEST(JITTest, InPlaceExecution) {
 
 /* Test JIT with SIMD + in-place combined */
 TEST(JITTest, SIMDInPlaceCombined) {
-    const size_t n = 64;
+    const size_t n = 60;
     
     faf_transform* t = test_fft_n(n);
     ASSERT_NE(t, nullptr);

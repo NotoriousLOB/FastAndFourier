@@ -130,23 +130,30 @@ TEST_F(MixedRadixTest, InverseRoundtrip) {
 }
 
 TEST_F(MixedRadixTest, Pow2Unchanged) {
-    const size_t n = 32;
-    faf_transform *t = make_fft(n, false);
-    ASSERT_NE(t, nullptr);
-    std::vector<float> xr(n, 0.0f), xi(n, 0.0f), yr(n), yi(n);
-    xr[0] = 1.0f;
-    faf_buffer in = faf_buffer_split(xr.data(), xi.data(), n);
-    faf_buffer out = faf_buffer_split(yr.data(), yi.data(), n);
-    ASSERT_EQ(faf_execute(t, &out, &in), 0);
-    for (size_t k = 0; k < n; k++) {
-        EXPECT_NEAR(yr[k], 1.0f, 1e-5f);
-        EXPECT_NEAR(yi[k], 0.0f, 1e-5f);
+    const size_t sizes[] = {16, 32, 64, 256, 1024};
+    for (size_t n : sizes) {
+        faf_transform *t = make_fft(n, false);
+        ASSERT_NE(t, nullptr) << "n=" << n;
+        std::vector<float> xr(n), xi(n, 0.0f), yr(n), yi(n);
+        for (size_t i = 0; i < n; i++)
+            xr[i] = sinf(2.0f * (float)M_PI * 3.0f * (float)i / (float)n);
+        faf_buffer in = faf_buffer_split(xr.data(), xi.data(), n);
+        faf_buffer out = faf_buffer_split(yr.data(), yi.data(), n);
+        ASSERT_EQ(faf_execute(t, &out, &in), 0) << "n=" << n;
+        std::vector<float> dr, di;
+        naive_dft(xr.data(), xi.data(), n, &dr, &di, 0);
+        float tol = (n >= 256) ? 3e-3f : 5e-4f;
+        for (size_t k = 0; k < n; k++) {
+            EXPECT_NEAR(yr[k], dr[k], tol) << "n=" << n << " re k=" << k;
+            EXPECT_NEAR(yi[k], di[k], tol) << "n=" << n << " im k=" << k;
+        }
+        faf_destroy_transform(t);
     }
-    faf_destroy_transform(t);
 }
 
 TEST_F(MixedRadixTest, RejectsPrime) {
-    faf_config c = faf_config_init(11);
+    /* 23: prime, 22 = 2·11 is not 7-smooth → not Rader, not 5-smooth. */
+    faf_config c = faf_config_init(23);
     EXPECT_EQ(faf_create_fft(&c), nullptr);
     EXPECT_STRNE(faf_get_error(), "");
 }

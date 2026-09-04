@@ -1721,6 +1721,8 @@ static faf_transform *chirp_compile_fft_node(chirp_node *node) {
     }
     if (chirp_node_get_kwarg(node, "bluestein"))
         c.flags |= FAF_FLAG_BLUESTEIN;
+    if (chirp_node_get_kwarg(node, "measure"))
+        c.flags |= FAF_FLAG_MEASURE;
     return faf_create_fft(&c);
 }
 
@@ -1734,6 +1736,7 @@ static int chirp_ast_has_bluestein(const chirp_node *n) {
     }
     return 0;
 }
+
 
 static faf_transform *chirp_compile_cwt_node(chirp_node *node) {
     size_t n = 0;
@@ -2107,7 +2110,9 @@ faf_transform* chirp_compile(const char *source) {
         return NULL;
     }
 
-    /* Standalone (fft :bluestein) — nested C2C, not IR emit. */
+    /* Standalone (fft) — same create path as the C API (codelets / split-radix
+     * / mixed-radix / Bluestein). Pipelines with more than one child still
+     * emit IR. */
     {
         chirp_node *fft_node = NULL;
         if (main->type == CHIRP_NODE_FFT)
@@ -2115,7 +2120,7 @@ faf_transform* chirp_compile(const char *source) {
         else if (main->type == CHIRP_NODE_PIPELINE && main->n_children == 1 &&
                  main->children[0]->type == CHIRP_NODE_FFT)
             fft_node = main->children[0];
-        if (fft_node && chirp_node_get_kwarg(fft_node, "bluestein")) {
+        if (fft_node) {
             faf_transform *ft = chirp_compile_fft_node(fft_node);
             chirp_scope_pop(scope);
             chirp_node_free(ast);
@@ -2227,6 +2232,20 @@ faf_transform* chirp_compile(const char *source) {
         }
     }
     
+    /* Create-time FFT scratch so the hot path never mallocs. */
+    if (t->n > 0 && !t->scratch &&
+        (t->type == FAF_TRANSFORM_FFT || t->type == FAF_TRANSFORM_IFFT)) {
+        size_t elem = (t->precision == FAF_PREC_FP64) ? sizeof(double)
+                                                       : sizeof(float);
+        size_t bytes = 4 * t->n * elem;
+        bytes = (bytes + 63u) & ~(size_t)63u;
+        t->scratch = aligned_alloc(64, bytes);
+        if (t->scratch) {
+            t->scratch_size = bytes;
+            memset(t->scratch, 0, bytes);
+        }
+    }
+
     chirp_scope_pop(scope);
     chirp_node_free(ast);
 

@@ -177,9 +177,12 @@ void faf_x86_avx512_execute_f32(const faf_transform *t,
 
 /* ARM kernels */
 #ifdef FAF_ARCH_AARCH64
-void faf_arm_neon_execute_f32(const faf_transform *t,
-                                 float *FAF_RESTRICT out,
-                                 const float *FAF_RESTRICT in);
+void faf_radix2_split_neon_f32(float *re, float *im, size_t n,
+                                size_t group, size_t stride, size_t tw_step,
+                                const float *tw, size_t ntw);
+void faf_radix2_split_neon_f64(double *re, double *im, size_t n,
+                                size_t group, size_t stride, size_t tw_step,
+                                const double *tw, size_t ntw);
 #ifdef FAF_HAVE_SVE
 void faf_arm_sve_execute_f32(const faf_transform *t,
                                 float *FAF_RESTRICT out,
@@ -193,6 +196,55 @@ void faf_cuda_execute_f32(const faf_transform *t,
                              float *FAF_RESTRICT out,
                              const float *FAF_RESTRICT in);
 #endif
+
+/* Small-N FFT kernels (split-plane, in-place) */
+void faf_fft_kernel_2_f32(float *re, float *im, int inverse);
+void faf_fft_kernel_3_f32(float *re, float *im, int inverse);
+void faf_fft_kernel_4_f32(float *re, float *im, int inverse);
+void faf_fft_kernel_5_f32(float *re, float *im, int inverse);
+void faf_fft_kernel_6_f32(float *re, float *im, int inverse);
+void faf_fft_kernel_7_f32(float *re, float *im, int inverse);
+void faf_fft_kernel_8_f32(float *re, float *im, int inverse);
+void faf_fft_kernel_9_f32(float *re, float *im, int inverse);
+void faf_fft_kernel_10_f32(float *re, float *im, int inverse);
+void faf_fft_kernel_12_f32(float *re, float *im, int inverse);
+void faf_fft_kernel_2_f64(double *re, double *im, int inverse);
+void faf_fft_kernel_3_f64(double *re, double *im, int inverse);
+void faf_fft_kernel_4_f64(double *re, double *im, int inverse);
+void faf_fft_kernel_5_f64(double *re, double *im, int inverse);
+void faf_fft_kernel_6_f64(double *re, double *im, int inverse);
+void faf_fft_kernel_7_f64(double *re, double *im, int inverse);
+void faf_fft_kernel_8_f64(double *re, double *im, int inverse);
+void faf_fft_kernel_9_f64(double *re, double *im, int inverse);
+void faf_fft_kernel_10_f64(double *re, double *im, int inverse);
+void faf_fft_kernel_12_f64(double *re, double *im, int inverse);
+int faf_fft_is_codelet_size(size_t n);
+int faf_fft_kernel_execute(const faf_transform *t,
+                           void *out_re, void *out_im,
+                           const void *in_re, const void *in_im);
+
+/* Split-radix DIF (pot2 N>=16, split-plane) */
+size_t faf_sr_twiddle_count(size_t n);
+void faf_gen_sr_twiddles_f32(float *tw, size_t n, int inverse);
+void faf_gen_sr_twiddles_f64(double *tw, size_t n, int inverse);
+int faf_fft_sr_dif_execute(const faf_transform *t,
+                           void *out_re, void *out_im,
+                           const void *in_re, const void *in_im);
+int faf_fft_dit_execute(const faf_transform *t,
+                        void *out_re, void *out_im,
+                        const void *in_re, const void *in_im);
+
+/* Rader prime FFT */
+int faf_is_7_smooth(size_t n);
+int faf_is_prime(size_t n);
+int faf_rader_eligible(size_t n);
+size_t faf_primitive_root(size_t p);
+int faf_factor_7smooth(size_t n, int *factors, int *n_factors);
+int faf_fft_init_rader(faf_transform *t);
+int faf_fft_rader_execute(const faf_transform *t,
+                          void *out_re, void *out_im,
+                          const void *in_re, const void *in_im);
+faf_transform *faf_create_fft_ex(const faf_config *cfg, int allow_7smooth);
 
 /* Bytecode generators */
 void faf_gen_fft_radix2(faf_transform *t, size_t n, bool inverse);

@@ -402,12 +402,52 @@ static int faf_jit_generate_pipeline_c(faf_transform *t, const char *path) {
     return 0;
 }
 
+/* Codelet / split-radix / Rader: no IR. Emit a trampoline that
+ * deinterleaves into t->scratch, calls execute_func, reinterleaves.
+ * Pointer-baked — process-local, not disk-cached. */
+static void faf_jit_generate_execute_func_c(faf_transform *t, const char *path) {
+    FILE *f = fopen(path, "w");
+    if (!f) return;
+    int f64 = (t->precision == FAF_PREC_FP64);
+    const char *ty = f64 ? "double" : "float";
+    fprintf(f, "/* Auto-generated JIT trampoline for t->execute_func */\n");
+    fprintf(f, "#include <stddef.h>\n#include <stdint.h>\n\n");
+    fprintf(f, "__attribute__((visibility(\"default\")))\n");
+    fprintf(f, "void faf_jit_kernel(void *restrict out, const void *restrict in,\n");
+    fprintf(f, "                    size_t n, const void *restrict tw) {\n");
+    fprintf(f, "    (void)n; (void)tw;\n");
+    fprintf(f, "    %s *out_f = (%s *)out;\n", ty, ty);
+    fprintf(f, "    const %s *in_f = (const %s *)in;\n", ty, ty);
+    fprintf(f, "    typedef int (*_ex)(const void*,void*,void*,const void*,const void*);\n");
+    fprintf(f, "    _ex _fn = (_ex)(uintptr_t)%lluULL;\n",
+            (unsigned long long)(uintptr_t)t->execute_func);
+    fprintf(f, "    const void *_self = (const void *)(uintptr_t)%lluULL;\n",
+            (unsigned long long)(uintptr_t)t);
+    fprintf(f, "    %s *_s = (%s *)(uintptr_t)%lluULL;\n", ty, ty,
+            (unsigned long long)(uintptr_t)t->scratch);
+    fprintf(f, "    const size_t _n = %zu;\n", t->n);
+    fprintf(f, "    %s *_re = _s, *_im = _s + _n;\n", ty);
+    fprintf(f, "    for (size_t i = 0; i < _n; i++) {\n");
+    fprintf(f, "        _re[i] = in_f[2*i]; _im[i] = in_f[2*i+1];\n");
+    fprintf(f, "    }\n");
+    fprintf(f, "    _fn(_self, _re, _im, _re, _im);\n");
+    fprintf(f, "    for (size_t i = 0; i < _n; i++) {\n");
+    fprintf(f, "        out_f[2*i] = _re[i]; out_f[2*i+1] = _im[i];\n");
+    fprintf(f, "    }\n");
+    fprintf(f, "}\n");
+    fclose(f);
+}
+
 static void faf_jit_generate_c_ex(faf_transform *t, 
                                      const char *path,
                                      faf_arch_type arch,
                                      uint32_t flags) {
     if (t->type == FAF_TRANSFORM_PIPELINE) {
         faf_jit_generate_pipeline_c(t, path);
+        return;
+    }
+    if (t->execute_func && (!t->code || t->n_inst == 0) && t->scratch) {
+        faf_jit_generate_execute_func_c(t, path);
         return;
     }
     FILE *f = fopen(path, "w");
@@ -772,50 +812,21 @@ static void faf_jit_generate_c_ex(faf_transform *t,
                 }
                 break;
                 
-            case FAF_FFT_STAGE:
-                if (inst->a1 == 3 || inst->a1 == 4 || inst->a1 == 5) {
-                    int inverse = (t->cfg.dir == FAF_DIR_INVERSE) ||
-                                  (t->flags & FAF_FLAG_INVERSE);
-                    fprintf(f, "    {\n");
-                    fprintf(f, "        typedef void (*_stfn)(float*,float*,size_t,"
-                               "uint32_t,uint32_t,uint32_t,const float*,size_t,int);\n");
-                    fprintf(f, "        _stfn _st = (_stfn)(uintptr_t)%lluULL;\n",
-                            (unsigned long long)(uintptr_t)faf_fft_stage_split_f32);
-                    fprintf(f, "        _st(regs_re, regs_im, %zu, %uu, %uu, %uu, "
-                               "tw, %zu, %d);\n",
-                            t->n, inst->a0, inst->a1, inst->a2,
-                            t->twiddle_sizes[0], inverse);
-                    fprintf(f, "    }\n");
-                    break;
-                }
-                /* Split-plane complex FFT stage with looped emission
-                 * a0 = group_size (radix), a1 = stride, a2 = twiddle_step
-                 * Pairs elements at (base+r) and (base+r+half), with
-                 * twiddle at index r*tw_step in the interleaved twiddle array.
-                 */
+            case FAF_FFT_STAGE: {
+                int inverse = (t->cfg.dir == FAF_DIR_INVERSE) ||
+                              (t->flags & FAF_FLAG_INVERSE);
                 fprintf(f, "    {\n");
-                fprintf(f, "        const size_t radix = %u;\n", inst->a0);
-                fprintf(f, "        const size_t stride = %u;\n", inst->a1);
-                fprintf(f, "        const size_t tw_step = %u;\n", inst->a2);
-                fprintf(f, "        const size_t half = radix / 2;\n");
-                fprintf(f, "        const size_t ngroups = %zu / (radix * stride);\n", t->n);
-                fprintf(f, "        for (size_t g = 0; g < ngroups; g++) {\n");
-                fprintf(f, "            size_t base = g * radix * stride;\n");
-                fprintf(f, "            for (size_t r = 0; r < half; r++) {\n");
-                fprintf(f, "                size_t i1 = base + r * stride;\n");
-                fprintf(f, "                size_t i2 = i1 + half * stride;\n");
-                fprintf(f, "                float ar = regs_re[i1], ai = regs_im[i1];\n");
-                fprintf(f, "                float br = regs_re[i2], bi = regs_im[i2];\n");
-                fprintf(f, "                float wr = tw[(r * tw_step) * 2];\n");
-                fprintf(f, "                float wi = tw[(r * tw_step) * 2 + 1];\n");
-                fprintf(f, "                float tr = br*wr - bi*wi;\n");
-                fprintf(f, "                float ti = br*wi + bi*wr;\n");
-                fprintf(f, "                regs_re[i1] = ar + tr; regs_im[i1] = ai + ti;\n");
-                fprintf(f, "                regs_re[i2] = ar - tr; regs_im[i2] = ai - ti;\n");
-                fprintf(f, "            }\n");
-                fprintf(f, "        }\n");
+                fprintf(f, "        typedef void (*_stfn)(float*,float*,size_t,"
+                           "uint32_t,uint32_t,uint32_t,const float*,size_t,int);\n");
+                fprintf(f, "        _stfn _st = (_stfn)(uintptr_t)%lluULL;\n",
+                        (unsigned long long)(uintptr_t)faf_fft_stage_split_f32);
+                fprintf(f, "        _st(regs_re, regs_im, %zu, %uu, %uu, %uu, "
+                           "tw, %zu, %d);\n",
+                        t->n, inst->a0, inst->a1, inst->a2,
+                        t->twiddle_sizes[0], inverse);
                 fprintf(f, "    }\n");
                 break;
+            }
                 
             case FAF_BITREV: {
                 if (!faf_is_power_of_2(t->n)) {
@@ -1024,13 +1035,27 @@ static int faf_jit_compile_c(faf_jit_ctx *ctx, const char *c_path,
 /**
  * @brief Compile a transform to native code with flags
  */
+static int ir_bakes_process_pointers(const faf_transform *t) {
+    if (t->type == FAF_TRANSFORM_PIPELINE) return 1;
+    for (size_t i = 0; i < t->n_inst; i++) {
+        if (FAF_GET_OP(t->code[i].packed) == FAF_FFT_STAGE)
+            return 1;
+    }
+    return 0;
+}
+
 int faf_jit_compile_ex(faf_jit_ctx *ctx, faf_transform *t, uint32_t flags) {
     if (!ctx || !t) return -1;
+    int has_ir = t->code && t->n_inst > 0;
+    int has_exec = t->execute_func && t->scratch;
+    if (!has_ir && !has_exec)
+        return -1;
 
     ctx->from_cache = 0;
-    
-    /* Pointer-baked pipeline / mixed-radix kernels are process-local. */
-    if (t->type != FAF_TRANSFORM_PIPELINE && faf_is_power_of_2(t->n) &&
+
+    /* FFT_STAGE and execute_func trampolines bake process-local pointers. */
+    int pointer_baked = has_exec || (has_ir && ir_bakes_process_pointers(t));
+    if (!pointer_baked && faf_is_power_of_2(t->n) &&
         try_load_cached_kernel(ctx, t, flags)) {
         ctx->flags = flags;
         return 0;
@@ -1081,8 +1106,7 @@ int faf_jit_compile_ex(faf_jit_ctx *ctx, faf_transform *t, uint32_t flags) {
         return -1;
     }
     
-    /* Save to persistent cache for future use (not pointer-baked pipelines) */
-    if (t->type != FAF_TRANSFORM_PIPELINE && faf_is_power_of_2(t->n))
+    if (!pointer_baked && faf_is_power_of_2(t->n))
         save_kernel_to_cache(ctx, t, flags);
     
     return 0;

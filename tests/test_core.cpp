@@ -16,7 +16,7 @@
 TEST(CoreTest, Version) {
     const char* version = faf_version();
     EXPECT_NE(version, nullptr);
-    EXPECT_STREQ(version, "1.1.0");
+    EXPECT_STREQ(version, "1.2.0");
 }
 
 /* Test architecture detection */
@@ -78,8 +78,10 @@ TEST(CoreTest, SizeSupport) {
     EXPECT_TRUE(faf_is_size_supported(FAF_TRANSFORM_FFT, 12));
     EXPECT_TRUE(faf_is_size_supported(FAF_TRANSFORM_FFT, 100));
     EXPECT_TRUE(faf_is_size_supported(FAF_TRANSFORM_FFT, 1024));
-    EXPECT_FALSE(faf_is_size_supported(FAF_TRANSFORM_FFT, 7));
-    EXPECT_FALSE(faf_is_size_supported(FAF_TRANSFORM_FFT, 11));
+    EXPECT_TRUE(faf_is_size_supported(FAF_TRANSFORM_FFT, 7));   /* codelet */
+    EXPECT_TRUE(faf_is_size_supported(FAF_TRANSFORM_FFT, 11));  /* Rader */
+    EXPECT_FALSE(faf_is_size_supported(FAF_TRANSFORM_FFT, 14));
+    EXPECT_FALSE(faf_is_size_supported(FAF_TRANSFORM_FFT, 23));
 
     /* R2C: even and 5-smooth, at least 2 */
     EXPECT_TRUE(faf_is_size_supported(FAF_TRANSFORM_RFFT, 2));
@@ -106,10 +108,11 @@ TEST(CoreTest, RecommendedSize) {
     EXPECT_EQ(faf_get_recommended_size(FAF_TRANSFORM_FFT, 1), 1);
     EXPECT_EQ(faf_get_recommended_size(FAF_TRANSFORM_FFT, 2), 2);
     EXPECT_EQ(faf_get_recommended_size(FAF_TRANSFORM_FFT, 3), 3);
-    EXPECT_EQ(faf_get_recommended_size(FAF_TRANSFORM_FFT, 7), 8);
+    EXPECT_EQ(faf_get_recommended_size(FAF_TRANSFORM_FFT, 7), 7);
     EXPECT_EQ(faf_get_recommended_size(FAF_TRANSFORM_FFT, 100), 100);
     EXPECT_EQ(faf_get_recommended_size(FAF_TRANSFORM_FFT, 1000), 1000);
-    EXPECT_EQ(faf_get_recommended_size(FAF_TRANSFORM_FFT, 11), 12);
+    EXPECT_EQ(faf_get_recommended_size(FAF_TRANSFORM_FFT, 11), 11);
+    EXPECT_EQ(faf_get_recommended_size(FAF_TRANSFORM_FFT, 23), 24);
 }
 
 /* Test error handling */
@@ -118,7 +121,7 @@ TEST(CoreTest, ErrorHandling) {
     EXPECT_STREQ(faf_get_error(), "");
     
     /* Create an invalid transform to trigger error */
-    faf_transform* t = test_fft_n(7);
+    faf_transform* t = test_fft_n(23);
     EXPECT_EQ(t, nullptr);
     EXPECT_STRNE(faf_get_error(), "");
     

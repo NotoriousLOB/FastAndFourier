@@ -22,7 +22,7 @@ A high-performance Digital Signal Processing (DSP) library featuring Intermediat
   - CWT / CQT filter bank (Morse, Morlet, bump, Shannon, Meyer) with Littlewood–Paley certification — see [CWT.md](CWT.md)
   - Real FFT (R2C/C2R): [RFFT.md](RFFT.md)
   - Buffer layouts (split / Hermitian / interleaved): [LAYOUT.md](LAYOUT.md)
-  - Size policy (5-smooth, optional Bluestein): [SIZES.md](SIZES.md)
+  - Size policy (5-smooth, codelets, Rader, optional Bluestein): [SIZES.md](SIZES.md)
 
 ## Building
 
