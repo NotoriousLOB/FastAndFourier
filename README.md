@@ -142,7 +142,7 @@ cmake --install build   # static lib + headers + CMake package config
 
 ---
 
-## The C API in five minutes
+## The C API in ten seconds
 
 Every transform follows the same four steps: init a config, create the transform, wrap your buffers, execute.
 
@@ -210,7 +210,7 @@ DC and Nyquist are real by construction (`im[0] == im[nb-1] == 0` within roundin
 
 ---
 
-## Chirp in five minutes
+## Chirp in ten seconds
 
 Chirp is the same engine, driven by a string instead of a config struct. Include `<chirp.h>`, register the builtins, compile, execute.
 
